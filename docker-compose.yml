@@ -1,3 +1,5 @@
+name: applications
+
 services:
   # ---------------------------------------------------------------------------
   # NestJS Backend API
@@ -9,7 +11,7 @@ services:
     container_name: uvd_app_server
     restart: unless-stopped
     ports:
-      - '${PORT:-3000}:3000'
+      - '${BACKEND_EXTERNAL_PORT:-3001}:3000'
     environment:
       - PORT=3000
       - NODE_ENV=${NODE_ENV:-development}
@@ -48,7 +50,7 @@ services:
       minio:
         condition: service_healthy
     networks:
-      - uvd_network
+      - uvd_app_network
 
   # ---------------------------------------------------------------------------
   # PostgreSQL Database
@@ -71,7 +73,7 @@ services:
       timeout: 5s
       retries: 5
     networks:
-      - uvd_network
+      - uvd_app_network
 
   # ---------------------------------------------------------------------------
   # Redis Cache & Session Store
@@ -90,15 +92,17 @@ services:
       timeout: 5s
       retries: 5
     networks:
-      - uvd_network
+      - uvd_app_network
 
   # ---------------------------------------------------------------------------
   # MinIO S3 Object Storage
   # ---------------------------------------------------------------------------
   minio:
-    image: minio/minio:RELEASE.2024-06-13T22-53-53Z
+    image: cgr.dev/chainguard/minio:latest
     container_name: uvd_app_minio
+    user: "0:0"
     restart: unless-stopped
+    entrypoint: minio
     command: server /data --console-address ":9001"
     ports:
       - '${MINIO_EXTERNAL_PORT:-9200}:9000' # MinIO S3 API
@@ -114,7 +118,7 @@ services:
       timeout: 5s
       retries: 5
     networks:
-      - uvd_network
+      - uvd_app_network
 
 volumes:
   postgres_data:
@@ -125,6 +129,6 @@ volumes:
     name: uvd_app_minio_data
 
 networks:
-  uvd_network:
-    name: uvd_network
+  uvd_app_network:
+    name: uvd_app_network
     driver: bridge
