@@ -654,4 +654,402 @@ export class ApplicationsService {
     await this.applicationRepo.remove(application);
     return { success: true, message: "Ariza muvaffaqiyatli o'chirildi" };
   }
+
+  async getStatistics(period = 'month', startDate?: string, endDate?: string) {
+    const now = new Date();
+    let start: Date;
+    let end: Date = new Date();
+
+    if (period === 'today') {
+      start = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 0, 0, 0, 0);
+      end = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 23, 59, 59, 999);
+    } else if (period === 'week') {
+      start = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
+      start.setHours(0, 0, 0, 0);
+    } else if (period === 'month') {
+      start = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000);
+      start.setHours(0, 0, 0, 0);
+    } else if (period === 'year') {
+      start = new Date(now.getFullYear(), 0, 1, 0, 0, 0, 0);
+    } else if (period === 'custom' && startDate) {
+      start = new Date(startDate);
+      start.setHours(0, 0, 0, 0);
+      if (endDate) {
+        end = new Date(endDate);
+        end.setHours(23, 59, 59, 999);
+      }
+    } else if (period === 'all') {
+      start = new Date(2020, 0, 1, 0, 0, 0, 0);
+    } else {
+      start = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000);
+      start.setHours(0, 0, 0, 0);
+    }
+
+    const durationMs = Math.max(end.getTime() - start.getTime(), 1000);
+    const prevStart = new Date(start.getTime() - durationMs);
+    const prevEnd = new Date(start.getTime() - 1);
+
+    // 1. Current period applications with relations
+    const applications = await this.applicationRepo
+      .createQueryBuilder('app')
+      .leftJoinAndSelect('app.transfer', 'transfer')
+      .leftJoinAndSelect('app.citizen', 'citizen')
+      .leftJoinAndSelect('app.district', 'district')
+      .leftJoinAndSelect('app.crime', 'crime')
+      .leftJoinAndSelect('transfer.payment_provider', 'payment_provider')
+      .leftJoinAndSelect('app.custom_fields', 'custom_fields')
+      .where('COALESCE(app.date, app.created_at) BETWEEN :start AND :end', { start, end })
+      .orderBy('COALESCE(app.date, app.created_at)', 'ASC')
+      .getMany();
+
+    // 2. Previous period summary for comparison
+    const prevRaw = await this.applicationRepo
+      .createQueryBuilder('app')
+      .leftJoin('app.transfer', 'transfer')
+      .select('COUNT(app.id)', 'count')
+      .addSelect('COALESCE(SUM(transfer.amount), 0)', 'loss')
+      .where('COALESCE(app.date, app.created_at) BETWEEN :prevStart AND :prevEnd', {
+        prevStart,
+        prevEnd,
+      })
+      .getRawOne<{ count?: string | number; loss?: string | number }>();
+
+    const prevCount = Number(prevRaw?.count ?? 0);
+    const prevLoss = Number(prevRaw?.loss ?? 0);
+
+    // 3. Summaries computation
+    let totalLoss = 0;
+    let resolvedLoss = 0;
+    let maxLoss = 0;
+    let newCount = 0;
+    let inProgressCount = 0;
+    let resolvedCount = 0;
+    let rejectedCount = 0;
+
+    const districtMap = new Map<
+      string,
+      { id: string; name: string; code: string | null; count: number; totalLoss: number }
+    >();
+    const crimeMap = new Map<
+      string,
+      { id: string; article: string; title: string | null; gravity: string | null; count: number }
+    >();
+    const providerMap = new Map<string, { name: string; count: number; totalAmount: number }>();
+
+    for (const app of applications) {
+      if (app.status === ApplicationStatus.YANGI) newCount++;
+      else if (app.status === ApplicationStatus.JARAYONDA) inProgressCount++;
+      else if (app.status === ApplicationStatus.HAL_QILINDI) resolvedCount++;
+      else if (app.status === ApplicationStatus.RAD_ETILDI) rejectedCount++;
+
+      const amount = Number(app.transfer?.amount || 0);
+      if (amount > 0) {
+        totalLoss += amount;
+        if (amount > maxLoss) maxLoss = amount;
+        if (app.status === ApplicationStatus.HAL_QILINDI) {
+          resolvedLoss += amount;
+        }
+      }
+
+      if (app.district) {
+        const d = districtMap.get(app.district.id) || {
+          id: app.district.id,
+          name: app.district.name || 'Noma‘lum tuman',
+          code: app.district.code || null,
+          count: 0,
+          totalLoss: 0,
+        };
+        d.count++;
+        d.totalLoss += amount;
+        districtMap.set(app.district.id, d);
+      }
+
+      if (app.crime) {
+        const c = crimeMap.get(app.crime.id) || {
+          id: app.crime.id,
+          article: app.crime.article || 'Noma‘lum modda',
+          title: app.crime.title || null,
+          gravity: app.crime.gravity || null,
+          count: 0,
+        };
+        c.count++;
+        crimeMap.set(app.crime.id, c);
+      }
+
+      if (app.transfer?.payment_provider) {
+        const pName = app.transfer.payment_provider.name || 'Boshqa';
+        const p = providerMap.get(pName) || { name: pName, count: 0, totalAmount: 0 };
+        p.count++;
+        p.totalAmount += amount;
+        providerMap.set(pName, p);
+      }
+    }
+
+    const totalApplications = applications.length;
+    const avgLoss = totalApplications > 0 ? Math.round(totalLoss / totalApplications) : 0;
+    const resolutionRate =
+      totalApplications > 0 ? Math.round((resolvedCount / totalApplications) * 100) : 0;
+
+    const totalPercentChange =
+      prevCount === 0
+        ? totalApplications > 0
+          ? 100
+          : 0
+        : Math.round(((totalApplications - prevCount) / prevCount) * 100);
+
+    const lossPercentChange =
+      prevLoss === 0
+        ? totalLoss > 0
+          ? 100
+          : 0
+        : Math.round(((totalLoss - prevLoss) / prevLoss) * 100);
+
+    // 4. Timeline buckets
+    const timeline: Array<{
+      date: string;
+      label: string;
+      total: number;
+      resolved: number;
+      in_progress: number;
+      new: number;
+      loss: number;
+    }> = [];
+
+    const durationDays = durationMs / (1000 * 60 * 60 * 24);
+
+    if (period === 'today') {
+      for (let h = 0; h < 24; h += 2) {
+        const hourStr = `${String(h).padStart(2, '0')}:00`;
+        timeline.push({
+          date: hourStr,
+          label: hourStr,
+          total: 0,
+          resolved: 0,
+          in_progress: 0,
+          new: 0,
+          loss: 0,
+        });
+      }
+      for (const app of applications) {
+        const appDate = new Date(app.date || app.created_at);
+        const h = appDate.getHours();
+        const bucketIndex = Math.min(Math.floor(h / 2), timeline.length - 1);
+        if (timeline[bucketIndex]) {
+          timeline[bucketIndex].total++;
+          timeline[bucketIndex].loss += Number(app.transfer?.amount || 0);
+          if (app.status === ApplicationStatus.HAL_QILINDI) timeline[bucketIndex].resolved++;
+          else if (app.status === ApplicationStatus.JARAYONDA) timeline[bucketIndex].in_progress++;
+          else if (app.status === ApplicationStatus.YANGI) timeline[bucketIndex].new++;
+        }
+      }
+    } else if (durationDays <= 35) {
+      const cur = new Date(start);
+      const months = [
+        'Yan',
+        'Fev',
+        'Mar',
+        'Apr',
+        'May',
+        'Iyn',
+        'Iyl',
+        'Avg',
+        'Sen',
+        'Okt',
+        'Noy',
+        'Dek',
+      ];
+      while (cur <= end) {
+        const y = cur.getFullYear();
+        const m = String(cur.getMonth() + 1).padStart(2, '0');
+        const d = String(cur.getDate()).padStart(2, '0');
+        const key = `${y}-${m}-${d}`;
+        const label = `${d} ${months[cur.getMonth()]}`;
+        timeline.push({
+          date: key,
+          label,
+          total: 0,
+          resolved: 0,
+          in_progress: 0,
+          new: 0,
+          loss: 0,
+        });
+        cur.setDate(cur.getDate() + 1);
+      }
+
+      const timelineMap = new Map<string, (typeof timeline)[0]>();
+      timeline.forEach((t) => timelineMap.set(t.date, t));
+
+      for (const app of applications) {
+        const appDate = new Date(app.date || app.created_at);
+        const key = `${appDate.getFullYear()}-${String(appDate.getMonth() + 1).padStart(2, '0')}-${String(appDate.getDate()).padStart(2, '0')}`;
+        const item = timelineMap.get(key);
+        if (item) {
+          item.total++;
+          item.loss += Number(app.transfer?.amount || 0);
+          if (app.status === ApplicationStatus.HAL_QILINDI) item.resolved++;
+          else if (app.status === ApplicationStatus.JARAYONDA) item.in_progress++;
+          else if (app.status === ApplicationStatus.YANGI) item.new++;
+        }
+      }
+    } else {
+      const cur = new Date(start);
+      cur.setDate(1);
+      const months = [
+        'Yanvar',
+        'Fevral',
+        'Mart',
+        'Aprel',
+        'May',
+        'Iyun',
+        'Iyul',
+        'Avgust',
+        'Sentabr',
+        'Oktabr',
+        'Noyabr',
+        'Dekabr',
+      ];
+      while (cur <= end) {
+        const y = cur.getFullYear();
+        const m = String(cur.getMonth() + 1).padStart(2, '0');
+        const key = `${y}-${m}`;
+        const label = `${months[cur.getMonth()]} ${y}`;
+        timeline.push({
+          date: key,
+          label,
+          total: 0,
+          resolved: 0,
+          in_progress: 0,
+          new: 0,
+          loss: 0,
+        });
+        cur.setMonth(cur.getMonth() + 1);
+      }
+
+      const timelineMap = new Map<string, (typeof timeline)[0]>();
+      timeline.forEach((t) => timelineMap.set(t.date, t));
+
+      for (const app of applications) {
+        const appDate = new Date(app.date || app.created_at);
+        const key = `${appDate.getFullYear()}-${String(appDate.getMonth() + 1).padStart(2, '0')}`;
+        const item = timelineMap.get(key);
+        if (item) {
+          item.total++;
+          item.loss += Number(app.transfer?.amount || 0);
+          if (app.status === ApplicationStatus.HAL_QILINDI) item.resolved++;
+          else if (app.status === ApplicationStatus.JARAYONDA) item.in_progress++;
+          else if (app.status === ApplicationStatus.YANGI) item.new++;
+        }
+      }
+    }
+
+    // 5. byStatus
+    const byStatus = [
+      {
+        status: ApplicationStatus.YANGI,
+        label: 'Yangi',
+        count: newCount,
+        percent: totalApplications > 0 ? Math.round((newCount / totalApplications) * 100) : 0,
+        color: '#3b82f6',
+      },
+      {
+        status: ApplicationStatus.JARAYONDA,
+        label: 'Jarayonda',
+        count: inProgressCount,
+        percent:
+          totalApplications > 0 ? Math.round((inProgressCount / totalApplications) * 100) : 0,
+        color: '#f59e0b',
+      },
+      {
+        status: ApplicationStatus.HAL_QILINDI,
+        label: 'Hal qilindi',
+        count: resolvedCount,
+        percent: totalApplications > 0 ? Math.round((resolvedCount / totalApplications) * 100) : 0,
+        color: '#10b981',
+      },
+      {
+        status: ApplicationStatus.RAD_ETILDI,
+        label: 'Rad etildi',
+        count: rejectedCount,
+        percent: totalApplications > 0 ? Math.round((rejectedCount / totalApplications) * 100) : 0,
+        color: '#ef4444',
+      },
+    ];
+
+    // 6. byDistrict
+    const byDistrict = Array.from(districtMap.values())
+      .sort((a, b) => b.count - a.count)
+      .slice(0, 8)
+      .map((d) => ({
+        ...d,
+        percent: totalApplications > 0 ? Math.round((d.count / totalApplications) * 100) : 0,
+      }));
+
+    // 7. byCrime
+    const byCrime = Array.from(crimeMap.values())
+      .sort((a, b) => b.count - a.count)
+      .slice(0, 8)
+      .map((c) => ({
+        ...c,
+        percent: totalApplications > 0 ? Math.round((c.count / totalApplications) * 100) : 0,
+      }));
+
+    // 8. byPaymentProvider
+    const byPaymentProvider = Array.from(providerMap.values())
+      .sort((a, b) => b.count - a.count)
+      .slice(0, 6)
+      .map((p) => ({
+        ...p,
+        percent: totalLoss > 0 ? Math.round((p.totalAmount / totalLoss) * 100) : 0,
+      }));
+
+    // 9. Recent applications
+    const recentApplications = [...applications]
+      .sort(
+        (a, b) =>
+          new Date(b.date || b.created_at).getTime() - new Date(a.date || a.created_at).getTime(),
+      )
+      .slice(0, 6)
+      .map((a) => ({
+        id: a.id,
+        application_number: a.application_number,
+        title: a.title,
+        status: a.status,
+        date: a.date ? a.date.toISOString() : null,
+        created_at: a.created_at.toISOString(),
+        citizen_name: a.citizen
+          ? `${a.citizen.last_name || ''} ${a.citizen.first_name || ''}`.trim()
+          : null,
+        district_name: a.district?.name || null,
+        crime_article: a.crime?.article || null,
+        amount: a.transfer?.amount ? Number(a.transfer.amount) : null,
+      }));
+
+    return {
+      period,
+      startDate: start.toISOString(),
+      endDate: end.toISOString(),
+      summary: {
+        totalApplications,
+        newApplications: newCount,
+        inProgressApplications: inProgressCount,
+        resolvedApplications: resolvedCount,
+        rejectedApplications: rejectedCount,
+        totalLoss,
+        resolvedLoss,
+        avgLoss,
+        maxLoss,
+        resolutionRate,
+        comparison: {
+          totalPercentChange,
+          lossPercentChange,
+        },
+      },
+      timeline,
+      byStatus,
+      byDistrict,
+      byCrime,
+      byPaymentProvider,
+      recentApplications,
+    };
+  }
 }

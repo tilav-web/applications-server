@@ -45,6 +45,15 @@ export class ApplicationsController {
     return APPLICATION_MASTER_TEMPLATE;
   }
 
+  @Get('statistics')
+  getStatistics(
+    @Query('period') period?: string,
+    @Query('startDate') startDate?: string,
+    @Query('endDate') endDate?: string,
+  ) {
+    return this.applicationsService.getStatistics(period, startDate, endDate);
+  }
+
   @Get(':id')
   findOne(@Param('id') id: string) {
     return this.applicationsService.findOne(id);
