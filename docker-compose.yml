@@ -1,0 +1,130 @@
+services:
+  # ---------------------------------------------------------------------------
+  # NestJS Backend API
+  # ---------------------------------------------------------------------------
+  server:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: uvd_app_server
+    restart: unless-stopped
+    ports:
+      - '${PORT:-3000}:3000'
+    environment:
+      - PORT=3000
+      - NODE_ENV=${NODE_ENV:-development}
+      # Ma'lumotlar bazasi sozlamalari
+      - DB_HOST=postgres
+      - DB_PORT=5432
+      - DB_USERNAME=${DB_USERNAME:-postgres}
+      - DB_PASSWORD=${DB_PASSWORD:-postgres_password_2026}
+      - DB_NAME=${DB_NAME:-uvd_app_db}
+      - DB_SYNCHRONIZE=${DB_SYNCHRONIZE:-true}
+      # Redis sozlamalari
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
+      - REDIS_PASSWORD=${REDIS_PASSWORD:-}
+      # MinIO (Fayllar xotirasi) sozlamalari
+      - MINIO_ENDPOINT=minio
+      - MINIO_PORT=9000
+      - MINIO_ROOT_USER=${MINIO_ROOT_USER:-minioadmin}
+      - MINIO_ROOT_PASSWORD=${MINIO_ROOT_PASSWORD:-minioadmin123}
+      # JWT sozlamalari
+      - JWT_ACCESS_SECRET=${JWT_ACCESS_SECRET:-uvd_access_token_secret_key_2026}
+      - JWT_REFRESH_SECRET=${JWT_REFRESH_SECRET:-uvd_refresh_token_secret_key_2026}
+      - JWT_ACCESS_EXPIRES_IN=${JWT_ACCESS_EXPIRES_IN:-15m}
+      - JWT_REFRESH_EXPIRES_IN=${JWT_REFRESH_EXPIRES_IN:-7d}
+      # Super Admin sozlamalari (seed)
+      - SUPER_ADMIN_USERNAME=${SUPER_ADMIN_USERNAME:-admin}
+      - SUPER_ADMIN_PASSWORD=${SUPER_ADMIN_PASSWORD:-admin123}
+      - SUPER_ADMIN_FIRST_NAME=${SUPER_ADMIN_FIRST_NAME:-Admin}
+      - SUPER_ADMIN_LAST_NAME=${SUPER_ADMIN_LAST_NAME:-Boshqaruvchi}
+      - SUPER_ADMIN_PHONE=${SUPER_ADMIN_PHONE:-+998901234567}
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      minio:
+        condition: service_healthy
+    networks:
+      - uvd_network
+
+  # ---------------------------------------------------------------------------
+  # PostgreSQL Database
+  # ---------------------------------------------------------------------------
+  postgres:
+    image: postgres:16-alpine
+    container_name: uvd_app_postgres
+    restart: unless-stopped
+    ports:
+      - '${DB_EXTERNAL_PORT:-5436}:5432'
+    environment:
+      POSTGRES_USER: ${DB_USERNAME:-postgres}
+      POSTGRES_PASSWORD: ${DB_PASSWORD:-postgres_password_2026}
+      POSTGRES_DB: ${DB_NAME:-uvd_app_db}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U ${DB_USERNAME:-postgres} -d ${DB_NAME:-uvd_app_db}']
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    networks:
+      - uvd_network
+
+  # ---------------------------------------------------------------------------
+  # Redis Cache & Session Store
+  # ---------------------------------------------------------------------------
+  redis:
+    image: redis:7-alpine
+    container_name: uvd_app_redis
+    restart: unless-stopped
+    ports:
+      - '${REDIS_EXTERNAL_PORT:-6383}:6379'
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ['CMD', 'redis-cli', 'ping']
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    networks:
+      - uvd_network
+
+  # ---------------------------------------------------------------------------
+  # MinIO S3 Object Storage
+  # ---------------------------------------------------------------------------
+  minio:
+    image: minio/minio:RELEASE.2024-06-13T22-53-53Z
+    container_name: uvd_app_minio
+    restart: unless-stopped
+    command: server /data --console-address ":9001"
+    ports:
+      - '${MINIO_EXTERNAL_PORT:-9200}:9000' # MinIO S3 API
+      - '${MINIO_CONSOLE_EXTERNAL_PORT:-9201}:9001' # Web Console UI
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:-minioadmin}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-minioadmin123}
+    volumes:
+      - minio_data:/data
+    healthcheck:
+      test: ['CMD', 'mc', 'ready', 'local']
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    networks:
+      - uvd_network
+
+volumes:
+  postgres_data:
+    name: uvd_app_postgres_data
+  redis_data:
+    name: uvd_app_redis_data
+  minio_data:
+    name: uvd_app_minio_data
+
+networks:
+  uvd_network:
+    name: uvd_network
+    driver: bridge

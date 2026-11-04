@@ -1,0 +1,6 @@
+export enum CrimeGravity {
+  UNCHA_OGIR_BOLMAGAN = 'UNCHA_OGIR_BOLMAGAN',
+  ORTA_OGIR = 'ORTA_OGIR',
+  OGIR = 'OGIR',
+  JUDA_OGIR = 'JUDA_OGIR',
+}

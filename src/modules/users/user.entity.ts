@@ -6,13 +6,13 @@ import { Auth } from '../auth/auth.entity';
 @Entity('users')
 export class User extends BaseEntity {
   @Column({ name: 'first_name', type: 'varchar', length: 100, nullable: true })
-  first_name: string;
+  first_name: string | null;
 
   @Column({ name: 'last_name', type: 'varchar', length: 100, nullable: true })
-  last_name: string;
+  last_name: string | null;
 
   @Column({ name: 'phone_number', type: 'varchar', length: 30, nullable: true })
-  phone_number: string;
+  phone_number: string | null;
 
   @Column({ name: 'auth_id', type: 'uuid', unique: true })
   auth_id: string;
