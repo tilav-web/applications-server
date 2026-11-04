@@ -484,13 +484,8 @@ export class ApplicationsService {
   async create(dto: CreateApplicationDto): Promise<Application> {
     const { custom_fields, date, ...applicationData } = dto;
 
-    // 1. Agar ariza raqami ko'rsatilmagan bo'lsa, avtomatik yaratamiz: 2026-00001
-    let appNumber = applicationData.application_number;
-    if (!appNumber) {
-      const year = new Date().getFullYear();
-      const count = await this.applicationRepo.count();
-      appNumber = `${year}-${String(count + 1).padStart(5, '0')}`;
-    }
+    // 1. Ariza raqami ko'rsatilgan bo'lsa tozalab olamiz, aks holda null (auto-generate qilinmaydi)
+    const appNumber = applicationData.application_number?.trim() || null;
 
     const resolved = await this.resolvePrimaryModels(dto);
 
@@ -632,6 +627,11 @@ export class ApplicationsService {
     const resolved = await this.resolvePrimaryModels(dto, id);
 
     Object.assign(application, applicationData, resolved);
+    if (applicationData.application_number !== undefined) {
+      application.application_number = applicationData.application_number
+        ? applicationData.application_number.trim()
+        : null;
+    }
     if (date) {
       application.date = new Date(date);
     }

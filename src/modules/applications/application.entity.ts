@@ -1,4 +1,12 @@
-import { BeforeInsert, Column, Entity, JoinColumn, ManyToOne, OneToMany } from 'typeorm';
+import {
+  BeforeInsert,
+  BeforeUpdate,
+  Column,
+  Entity,
+  JoinColumn,
+  ManyToOne,
+  OneToMany,
+} from 'typeorm';
 
 import { BaseEntity } from '../../common/database/base.entity';
 import { ApplicationStatus } from '../../common/enums/application-status.enum';
@@ -115,10 +123,10 @@ export class Application extends BaseEntity {
   transfer: Transfer | null;
 
   @BeforeInsert()
+  @BeforeUpdate()
   normalizeFields(): void {
     if (this.application_number) {
-      // Agar boshida harfli prefiks (masalan: AR-, ARIZA-) bo'lsa, olib tashlab toza formatda saqlaymiz: 2026-00451
-      this.application_number = this.application_number.replace(/^[A-Za-zА-Яа-я\s_-]+/, '');
+      this.application_number = this.application_number.trim() || null;
     }
   }
 }

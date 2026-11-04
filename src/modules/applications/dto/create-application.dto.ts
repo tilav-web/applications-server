@@ -80,7 +80,7 @@ export class CreateApplicationCustomFieldDto {
 export class CreateApplicationDto {
   @IsOptional()
   @IsString()
-  application_number?: string;
+  application_number?: string | null;
 
   @IsOptional()
   @IsString()
