@@ -70,7 +70,41 @@ export class ApplicationsService {
         const mName = cData.middle_name ? cData.middle_name.trim() : null;
         const addr = cData.address ? cData.address.trim() : null;
 
-        if (fName || lName || pass || pinfl || pNum) {
+        // Tuman va Mahallani aniqlash (Unique Models)
+        let citDistrictId = cData.district_id || null;
+        if (
+          !citDistrictId &&
+          typeof cData.district_name === 'string' &&
+          cData.district_name.trim()
+        ) {
+          const dName = cData.district_name.trim();
+          let d = await this.districtRepo.findOne({ where: { name: ILike(dName) } });
+          if (!d) {
+            d = await this.districtRepo.save(this.districtRepo.create({ name: dName }));
+          }
+          citDistrictId = d.id;
+        }
+
+        let citMahallaId = cData.mahalla_id || null;
+        if (
+          !citMahallaId &&
+          typeof cData.mahalla_name === 'string' &&
+          cData.mahalla_name.trim() &&
+          citDistrictId
+        ) {
+          const mName = cData.mahalla_name.trim();
+          let m = await this.mahallaRepo.findOne({
+            where: { name: ILike(mName), district_id: citDistrictId },
+          });
+          if (!m) {
+            m = await this.mahallaRepo.save(
+              this.mahallaRepo.create({ name: mName, district_id: citDistrictId }),
+            );
+          }
+          citMahallaId = m.id;
+        }
+
+        if (fName || lName || pass || pinfl || pNum || citDistrictId || citMahallaId) {
           let existingCitizen: Citizen | null = null;
           if (pass) {
             existingCitizen = await this.citizenRepo.findOne({ where: { passport: pass } });
@@ -88,6 +122,11 @@ export class ApplicationsService {
             if (addr && !existingCitizen.address) existingCitizen.address = addr;
             if (fName && !existingCitizen.first_name) existingCitizen.first_name = fName;
             if (lName && !existingCitizen.last_name) existingCitizen.last_name = lName;
+            if (mName && !existingCitizen.middle_name) existingCitizen.middle_name = mName;
+            if (citDistrictId && !existingCitizen.district_id)
+              existingCitizen.district_id = citDistrictId;
+            if (citMahallaId && !existingCitizen.mahalla_id)
+              existingCitizen.mahalla_id = citMahallaId;
             await this.citizenRepo.save(existingCitizen);
             citizenId = existingCitizen.id;
           } else {
@@ -99,6 +138,8 @@ export class ApplicationsService {
               pinfl: pinfl,
               phone_number: pNum,
               address: addr,
+              district_id: citDistrictId,
+              mahalla_id: citMahallaId,
             });
             const savedCitizen = await this.citizenRepo.save(createdCitizen);
             citizenId = savedCitizen.id;
@@ -716,7 +757,7 @@ export class ApplicationsService {
           },
         },
         custom_fields: {
-          citizen: true,
+          citizen: { district: true, mahalla: true },
           card: { bank: true, citizen: true },
           crime: true,
           district: true,
@@ -766,7 +807,7 @@ export class ApplicationsService {
           },
         },
         custom_fields: {
-          citizen: true,
+          citizen: { district: true, mahalla: true },
           card: { bank: true, citizen: true },
           crime: true,
           district: true,
