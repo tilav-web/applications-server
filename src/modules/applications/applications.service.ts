@@ -95,11 +95,12 @@ export class ApplicationsService {
           } else {
             let bankId = cdData.bank_id || null;
             if (!bankId && cdData.bank_name) {
-              let existingBank = await this.bankRepo.findOne({ where: { name: cdData.bank_name } });
+              const bName = cdData.bank_name.trim();
+              let existingBank = await this.bankRepo.findOne({ where: { name: ILike(bName) } });
               if (!existingBank) {
                 existingBank = await this.bankRepo.save(
                   this.bankRepo.create({
-                    name: cdData.bank_name,
+                    name: bName,
                     mfo: cdData.bank_mfo || null,
                   }),
                 );
@@ -124,13 +125,18 @@ export class ApplicationsService {
       if (f.inline_crime && !crimeId) {
         const crData = f.inline_crime as Record<string, string>;
         if (crData.article) {
+          const cArt = crData.article.trim();
           const existingCrime = await this.crimeRepo.findOne({
-            where: { article: crData.article },
+            where: [{ article: ILike(cArt) }, { title: ILike(cArt) }],
           });
           if (existingCrime) {
             crimeId = existingCrime.id;
           } else {
-            const createdCrime = this.crimeRepo.create(crData);
+            const createdCrime = this.crimeRepo.create({
+              ...crData,
+              article: cArt,
+              title: crData.title || cArt,
+            });
             const savedCrime = await this.crimeRepo.save(createdCrime);
             crimeId = savedCrime.id;
           }
@@ -166,7 +172,9 @@ export class ApplicationsService {
           tData.payment_provider_name.trim()
         ) {
           const provName = tData.payment_provider_name.trim();
-          let existingProv = await this.paymentProviderRepo.findOne({ where: { name: provName } });
+          let existingProv = await this.paymentProviderRepo.findOne({
+            where: { name: ILike(provName) },
+          });
           if (!existingProv) {
             existingProv = await this.paymentProviderRepo.save(
               this.paymentProviderRepo.create({
@@ -194,7 +202,7 @@ export class ApplicationsService {
               tData.receiver_bank_name.trim()
             ) {
               const bName = tData.receiver_bank_name.trim();
-              let b = await this.bankRepo.findOne({ where: { name: bName } });
+              let b = await this.bankRepo.findOne({ where: { name: ILike(bName) } });
               if (!b) {
                 b = await this.bankRepo.save(this.bankRepo.create({ name: bName }));
               }
@@ -433,14 +441,14 @@ export class ApplicationsService {
       const crimeName = (data.article || data.title || '').trim();
       if (crimeName) {
         const existingCrime = await this.crimeRepo.findOne({
-          where: [{ article: crimeName }, { title: crimeName }],
+          where: [{ article: ILike(crimeName) }, { title: ILike(crimeName) }],
         });
         if (existingCrime) {
           crimeId = existingCrime.id;
         } else {
           const newCrime = this.crimeRepo.create({
             article: crimeName,
-            title: crimeName,
+            title: data.title || crimeName,
           });
           const saved = await this.crimeRepo.save(newCrime);
           crimeId = saved.id;
@@ -464,11 +472,10 @@ export class ApplicationsService {
           // Bank ma'lumoti kiritilgan bo'lsa, bankni topamiz yoki yaratamiz
           let bankId = data.bank_id || null;
           if (!bankId && data.bank_name) {
-            let existingBank = await this.bankRepo.findOne({ where: { name: data.bank_name } });
+            const bName = data.bank_name.trim();
+            let existingBank = await this.bankRepo.findOne({ where: { name: ILike(bName) } });
             if (!existingBank) {
-              existingBank = await this.bankRepo.save(
-                this.bankRepo.create({ name: data.bank_name }),
-              );
+              existingBank = await this.bankRepo.save(this.bankRepo.create({ name: bName }));
             }
             bankId = existingBank.id;
           }
@@ -499,7 +506,9 @@ export class ApplicationsService {
           data.payment_provider_name.trim()
         ) {
           const provName = data.payment_provider_name.trim();
-          let existingProv = await this.paymentProviderRepo.findOne({ where: { name: provName } });
+          let existingProv = await this.paymentProviderRepo.findOne({
+            where: { name: ILike(provName) },
+          });
           if (!existingProv) {
             existingProv = await this.paymentProviderRepo.save(
               this.paymentProviderRepo.create({
@@ -528,7 +537,7 @@ export class ApplicationsService {
               data.receiver_bank_name.trim()
             ) {
               const bName = data.receiver_bank_name.trim();
-              let b = await this.bankRepo.findOne({ where: { name: bName } });
+              let b = await this.bankRepo.findOne({ where: { name: ILike(bName) } });
               if (!b) {
                 b = await this.bankRepo.save(this.bankRepo.create({ name: bName }));
               }
