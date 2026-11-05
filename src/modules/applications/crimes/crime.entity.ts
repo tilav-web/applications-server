@@ -9,7 +9,7 @@ export class Crime extends BaseEntity {
   @Column({
     name: 'article',
     type: 'varchar',
-    length: 50,
+    length: 255,
     nullable: true,
   })
   article: string | null;

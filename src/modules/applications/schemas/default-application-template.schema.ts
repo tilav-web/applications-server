@@ -337,15 +337,15 @@ export const CITIZEN_SUB_TEMPLATE: TemplateSchema = {
 // ============================================================================
 export const CRIME_SUB_TEMPLATE: TemplateSchema = {
   id: 'sub_template_crime',
-  name: 'Jinoyat Moddasi Sub-Shabloni',
+  name: 'Jinoyat Turi Sub-Shabloni',
   version: '1.0.0',
   fields: [
     {
       key: 'article',
-      label: 'JK Moddasi',
+      label: 'Jinoyat Turi',
       type: 'text',
       required: false,
-      placeholder: '168-modda',
+      placeholder: 'Firibgarlik',
     },
     {
       key: 'title',

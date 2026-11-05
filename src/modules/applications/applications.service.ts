@@ -330,15 +330,21 @@ export class ApplicationsService {
       }
     }
 
-    // 3. Jinoyat moddasi
+    // 3. Jinoyat turi
     if (!crimeId && dto.crime_data && Object.keys(dto.crime_data).length > 0) {
       const data = dto.crime_data as Record<string, string>;
-      if (data.article) {
-        const existingCrime = await this.crimeRepo.findOne({ where: { article: data.article } });
+      const crimeName = (data.article || data.title || '').trim();
+      if (crimeName) {
+        const existingCrime = await this.crimeRepo.findOne({
+          where: [{ article: crimeName }, { title: crimeName }],
+        });
         if (existingCrime) {
           crimeId = existingCrime.id;
         } else {
-          const newCrime = this.crimeRepo.create(data);
+          const newCrime = this.crimeRepo.create({
+            article: crimeName,
+            title: crimeName,
+          });
           const saved = await this.crimeRepo.save(newCrime);
           crimeId = saved.id;
         }
