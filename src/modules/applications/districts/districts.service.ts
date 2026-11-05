@@ -26,7 +26,7 @@ export class DistrictsService {
     let where: FindOptionsWhere<District> | FindOptionsWhere<District>[] = {};
     if (search) {
       const q = `%${search}%`;
-      where = [{ name: ILike(q) }, { code: ILike(q) }];
+      where = [{ name: ILike(q) }];
     }
 
     const [items, total] = await this.districtRepo.findAndCount({

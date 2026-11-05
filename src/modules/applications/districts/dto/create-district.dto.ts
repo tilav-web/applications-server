@@ -4,8 +4,4 @@ export class CreateDistrictDto {
   @IsOptional()
   @IsString()
   name?: string;
-
-  @IsOptional()
-  @IsString()
-  code?: string;
 }

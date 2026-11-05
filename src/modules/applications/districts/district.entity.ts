@@ -14,14 +14,6 @@ export class District extends BaseEntity {
   })
   name: string | null;
 
-  @Column({
-    name: 'code',
-    type: 'varchar',
-    length: 50,
-    nullable: true,
-  })
-  code: string | null;
-
   @OneToMany('Application', 'district')
   applications: Application[];
 

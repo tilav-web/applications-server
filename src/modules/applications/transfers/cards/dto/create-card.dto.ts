@@ -14,6 +14,10 @@ export class CreateCardDto {
   expire_date?: string;
 
   @IsOptional()
+  @IsString()
+  full_name?: string;
+
+  @IsOptional()
   @IsUUID('4', { message: "citizen_id to'g'ri UUID bo'lishi kerak" })
   citizen_id?: string;
 

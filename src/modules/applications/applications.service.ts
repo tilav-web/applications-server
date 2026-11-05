@@ -12,6 +12,7 @@ import { ApplicationCustomField } from './custom-fields/application-custom-field
 import { District } from './districts/district.entity';
 import type { CreateApplicationDto } from './dto/create-application.dto';
 import type { UpdateApplicationDto } from './dto/update-application.dto';
+import { Mahalla } from './mahallas/mahalla.entity';
 import { Bank } from './transfers/banks/bank.entity';
 import { Card } from './transfers/cards/card.entity';
 import { TransferCustomField } from './transfers/custom-fields/transfer-custom-field.entity';
@@ -31,6 +32,8 @@ export class ApplicationsService {
     private readonly crimeRepo: Repository<Crime>,
     @InjectRepository(District)
     private readonly districtRepo: Repository<District>,
+    @InjectRepository(Mahalla)
+    private readonly mahallaRepo: Repository<Mahalla>,
     @InjectRepository(Card)
     private readonly cardRepo: Repository<Card>,
     @InjectRepository(Transfer)
@@ -107,6 +110,7 @@ export class ApplicationsService {
             const createdCard = this.cardRepo.create({
               card_number: cleaned,
               expire_date: cdData.expire_date || null,
+              full_name: cdData.full_name || null,
               bank_id: bankId,
               citizen_id: citizenId || cdData.citizen_id || null,
             });
@@ -136,15 +140,15 @@ export class ApplicationsService {
       // 4. Yangi yoki mavjud Tuman (inline_district)
       if (f.inline_district && !districtId) {
         const dData = f.inline_district as Record<string, string>;
-        if (dData.name) {
-          let existingDistrict = await this.districtRepo.findOne({ where: { name: dData.name } });
-          if (!existingDistrict && dData.code) {
-            existingDistrict = await this.districtRepo.findOne({ where: { code: dData.code } });
-          }
+        const dName = (dData.name || '').trim();
+        if (dName) {
+          const existingDistrict = await this.districtRepo.findOne({
+            where: { name: ILike(dName) },
+          });
           if (existingDistrict) {
             districtId = existingDistrict.id;
           } else {
-            const createdDistrict = this.districtRepo.create(dData);
+            const createdDistrict = this.districtRepo.create({ name: dName });
             const savedDistrict = await this.districtRepo.save(createdDistrict);
             districtId = savedDistrict.id;
           }
@@ -182,12 +186,39 @@ export class ApplicationsService {
             let existingReceiverCard = await this.cardRepo.findOne({
               where: { card_number: cleanedReceiver },
             });
+            let receiverBankId =
+              typeof tData.receiver_bank_id === 'string' ? tData.receiver_bank_id : null;
+            if (
+              !receiverBankId &&
+              typeof tData.receiver_bank_name === 'string' &&
+              tData.receiver_bank_name.trim()
+            ) {
+              const bName = tData.receiver_bank_name.trim();
+              let b = await this.bankRepo.findOne({ where: { name: bName } });
+              if (!b) {
+                b = await this.bankRepo.save(this.bankRepo.create({ name: bName }));
+              }
+              receiverBankId = b.id;
+            }
+
+            const recFullName =
+              typeof tData.receiver_card_full_name === 'string'
+                ? tData.receiver_card_full_name
+                : typeof tData.receiver_full_name === 'string'
+                  ? tData.receiver_full_name
+                  : null;
+
             if (!existingReceiverCard) {
               existingReceiverCard = await this.cardRepo.save(
                 this.cardRepo.create({
                   card_number: cleanedReceiver,
+                  full_name: recFullName,
+                  bank_id: receiverBankId,
                 }),
               );
+            } else if (recFullName && !existingReceiverCard.full_name) {
+              existingReceiverCard.full_name = recFullName;
+              await this.cardRepo.save(existingReceiverCard);
             }
             receiverCardId = existingReceiverCard.id;
           }
@@ -199,7 +230,10 @@ export class ApplicationsService {
           currency: typeof tData.currency === 'string' ? tData.currency : 'UZS',
           payment_provider_id: providerId,
           receiver_card_id: receiverCardId,
+          sender_card_id: cardId || null,
           application_id: applicationId,
+          transfer_date: typeof tData.transfer_date === 'string' ? tData.transfer_date : null,
+          transfer_time: typeof tData.transfer_time === 'string' ? tData.transfer_time : null,
         });
         const savedTransfer = await this.transferRepo.save(createdTransfer);
         transferId = savedTransfer.id;
@@ -272,8 +306,39 @@ export class ApplicationsService {
       const data = dto.citizen_data as Record<string, string | null | undefined>;
       const existing = await this.citizenRepo.findOne({ where: { id: citizenId } });
       if (existing) {
-        if (data.district_id !== undefined) existing.district_id = data.district_id || null;
-        if (data.mahalla_id !== undefined) existing.mahalla_id = data.mahalla_id || null;
+        let citDistrictId = data.district_id || null;
+        if (!citDistrictId && typeof data.district_name === 'string' && data.district_name.trim()) {
+          const dName = data.district_name.trim();
+          let d = await this.districtRepo.findOne({ where: { name: ILike(dName) } });
+          if (!d) {
+            d = await this.districtRepo.save(this.districtRepo.create({ name: dName }));
+          }
+          citDistrictId = d.id;
+        }
+
+        let citMahallaId = data.mahalla_id || null;
+        if (
+          !citMahallaId &&
+          typeof data.mahalla_name === 'string' &&
+          data.mahalla_name.trim() &&
+          citDistrictId
+        ) {
+          const mName = data.mahalla_name.trim();
+          let m = await this.mahallaRepo.findOne({
+            where: { name: ILike(mName), district_id: citDistrictId },
+          });
+          if (!m) {
+            m = await this.mahallaRepo.save(
+              this.mahallaRepo.create({ name: mName, district_id: citDistrictId }),
+            );
+          }
+          citMahallaId = m.id;
+        }
+
+        if (citDistrictId !== null || data.district_id !== undefined)
+          existing.district_id = citDistrictId;
+        if (citMahallaId !== null || data.mahalla_id !== undefined)
+          existing.mahalla_id = citMahallaId;
         if (data.address !== undefined) existing.address = data.address || null;
         await this.citizenRepo.save(existing);
       }
@@ -297,15 +362,49 @@ export class ApplicationsService {
           });
         }
 
+        let citDistrictId = data.district_id || null;
+        if (!citDistrictId && typeof data.district_name === 'string' && data.district_name.trim()) {
+          const dName = data.district_name.trim();
+          let d = await this.districtRepo.findOne({ where: { name: ILike(dName) } });
+          if (!d) {
+            d = await this.districtRepo.save(this.districtRepo.create({ name: dName }));
+          }
+          citDistrictId = d.id;
+        }
+
+        let citMahallaId = data.mahalla_id || null;
+        if (
+          !citMahallaId &&
+          typeof data.mahalla_name === 'string' &&
+          data.mahalla_name.trim() &&
+          citDistrictId
+        ) {
+          const mName = data.mahalla_name.trim();
+          let m = await this.mahallaRepo.findOne({
+            where: { name: ILike(mName), district_id: citDistrictId },
+          });
+          if (!m) {
+            m = await this.mahallaRepo.save(
+              this.mahallaRepo.create({ name: mName, district_id: citDistrictId }),
+            );
+          }
+          citMahallaId = m.id;
+        }
+
         if (existingCitizen) {
-          if (data.district_id !== undefined)
-            existingCitizen.district_id = data.district_id || null;
-          if (data.mahalla_id !== undefined) existingCitizen.mahalla_id = data.mahalla_id || null;
+          if (citDistrictId !== null || data.district_id !== undefined)
+            existingCitizen.district_id = citDistrictId;
+          if (citMahallaId !== null || data.mahalla_id !== undefined)
+            existingCitizen.mahalla_id = citMahallaId;
           if (data.address !== undefined) existingCitizen.address = data.address || null;
           await this.citizenRepo.save(existingCitizen);
           citizenId = existingCitizen.id;
         } else {
-          const newCitizen = this.citizenRepo.create(data);
+          const newCitizen = this.citizenRepo.create({
+            ...data,
+            district_id: citDistrictId,
+            mahalla_id: citMahallaId,
+          });
           const saved = await this.citizenRepo.save(newCitizen);
           citizenId = saved.id;
         }
@@ -315,15 +414,13 @@ export class ApplicationsService {
     // 2. Tuman
     if (!districtId && dto.district_data && Object.keys(dto.district_data).length > 0) {
       const data = dto.district_data as Record<string, string>;
-      if (data.name) {
-        let existingDistrict = await this.districtRepo.findOne({ where: { name: data.name } });
-        if (!existingDistrict && data.code) {
-          existingDistrict = await this.districtRepo.findOne({ where: { code: data.code } });
-        }
+      const dName = (data.name || '').trim();
+      if (dName) {
+        const existingDistrict = await this.districtRepo.findOne({ where: { name: ILike(dName) } });
         if (existingDistrict) {
           districtId = existingDistrict.id;
         } else {
-          const newDistrict = this.districtRepo.create(data);
+          const newDistrict = this.districtRepo.create({ name: dName });
           const saved = await this.districtRepo.save(newDistrict);
           districtId = saved.id;
         }
@@ -358,6 +455,10 @@ export class ApplicationsService {
         const cleaned = data.card_number.replace(/\D/g, '');
         const existingCard = await this.cardRepo.findOne({ where: { card_number: cleaned } });
         if (existingCard) {
+          if (data.full_name && !existingCard.full_name) {
+            existingCard.full_name = data.full_name;
+            await this.cardRepo.save(existingCard);
+          }
           cardId = existingCard.id;
         } else {
           // Bank ma'lumoti kiritilgan bo'lsa, bankni topamiz yoki yaratamiz
@@ -375,6 +476,7 @@ export class ApplicationsService {
           const newCard = this.cardRepo.create({
             card_number: cleaned,
             expire_date: data.expire_date || null,
+            full_name: data.full_name || null,
             bank_id: bankId,
             citizen_id: citizenId || data.citizen_id || null,
           });
@@ -387,7 +489,7 @@ export class ApplicationsService {
     // 5. To'lov o'tkazmasi (Transfer)
     if (!transferId && dto.transfer_data && Object.keys(dto.transfer_data).length > 0) {
       const data = dto.transfer_data;
-      if (data.amount) {
+      if (data.amount || data.receiver_card_number || data.transfer_date) {
         // A. Payment Provider (To'lov tizimi: Payme, Click, Uzum...)
         let providerId =
           typeof data.payment_provider_id === 'string' ? data.payment_provider_id : null;
@@ -418,22 +520,29 @@ export class ApplicationsService {
             let existingReceiverCard = await this.cardRepo.findOne({
               where: { card_number: cleanedReceiver },
             });
-            if (!existingReceiverCard) {
-              let receiverBankId =
-                typeof data.receiver_bank_id === 'string' ? data.receiver_bank_id : null;
-              if (
-                !receiverBankId &&
-                typeof data.receiver_bank_name === 'string' &&
-                data.receiver_bank_name.trim()
-              ) {
-                const bName = data.receiver_bank_name.trim();
-                let b = await this.bankRepo.findOne({ where: { name: bName } });
-                if (!b) {
-                  b = await this.bankRepo.save(this.bankRepo.create({ name: bName }));
-                }
-                receiverBankId = b.id;
+            let receiverBankId =
+              typeof data.receiver_bank_id === 'string' ? data.receiver_bank_id : null;
+            if (
+              !receiverBankId &&
+              typeof data.receiver_bank_name === 'string' &&
+              data.receiver_bank_name.trim()
+            ) {
+              const bName = data.receiver_bank_name.trim();
+              let b = await this.bankRepo.findOne({ where: { name: bName } });
+              if (!b) {
+                b = await this.bankRepo.save(this.bankRepo.create({ name: bName }));
               }
+              receiverBankId = b.id;
+            }
 
+            const recFullName =
+              typeof data.receiver_card_full_name === 'string'
+                ? data.receiver_card_full_name
+                : typeof data.receiver_full_name === 'string'
+                  ? data.receiver_full_name
+                  : null;
+
+            if (!existingReceiverCard) {
               existingReceiverCard = await this.cardRepo.save(
                 this.cardRepo.create({
                   card_number: cleanedReceiver,
@@ -441,9 +550,13 @@ export class ApplicationsService {
                     typeof data.receiver_card_expire === 'string'
                       ? data.receiver_card_expire
                       : null,
+                  full_name: recFullName,
                   bank_id: receiverBankId,
                 }),
               );
+            } else if (recFullName && !existingReceiverCard.full_name) {
+              existingReceiverCard.full_name = recFullName;
+              await this.cardRepo.save(existingReceiverCard);
             }
             receiverCardId = existingReceiverCard.id;
           }
@@ -452,13 +565,15 @@ export class ApplicationsService {
         // C. Yangi Transfer yaratamiz
         const newTransfer = this.transferRepo.create({
           transaction_id: typeof data.transaction_id === 'string' ? data.transaction_id : null,
-          amount: Number(data.amount),
+          amount: data.amount ? Number(data.amount) : null,
           currency: typeof data.currency === 'string' ? data.currency : 'UZS',
           payment_provider_id: providerId,
           receiver_card_id: receiverCardId,
           sender_card_id:
             cardId || (typeof data.sender_card_id === 'string' ? data.sender_card_id : null),
           application_id: applicationId || null,
+          transfer_date: typeof data.transfer_date === 'string' ? data.transfer_date : null,
+          transfer_time: typeof data.transfer_time === 'string' ? data.transfer_time : null,
         });
         const savedTransfer = await this.transferRepo.save(newTransfer);
         transferId = savedTransfer.id;
@@ -748,7 +863,7 @@ export class ApplicationsService {
 
     const districtMap = new Map<
       string,
-      { id: string; name: string; code: string | null; count: number; totalLoss: number }
+      { id: string; name: string; count: number; totalLoss: number }
     >();
     const crimeMap = new Map<
       string,
@@ -775,7 +890,6 @@ export class ApplicationsService {
         const d = districtMap.get(app.district.id) || {
           id: app.district.id,
           name: app.district.name || 'Noma‘lum tuman',
-          code: app.district.code || null,
           count: 0,
           totalLoss: 0,
         };

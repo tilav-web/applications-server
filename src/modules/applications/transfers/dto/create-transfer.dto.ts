@@ -67,6 +67,14 @@ export class CreateTransferDto {
   status?: TransferStatus;
 
   @IsOptional()
+  @IsString()
+  transfer_date?: string;
+
+  @IsOptional()
+  @IsString()
+  transfer_time?: string;
+
+  @IsOptional()
   @IsUUID('4')
   application_id?: string;
 

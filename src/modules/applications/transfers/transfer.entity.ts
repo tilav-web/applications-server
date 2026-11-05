@@ -45,6 +45,22 @@ export class Transfer extends BaseEntity {
   })
   status: TransferStatus | null;
 
+  @Column({
+    name: 'transfer_date',
+    type: 'varchar',
+    length: 20,
+    nullable: true,
+  })
+  transfer_date: string | null;
+
+  @Column({
+    name: 'transfer_time',
+    type: 'varchar',
+    length: 20,
+    nullable: true,
+  })
+  transfer_time: string | null;
+
   @Column({ name: 'application_id', type: 'uuid', nullable: true })
   application_id: string | null;
 

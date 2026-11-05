@@ -40,6 +40,14 @@ export class Card extends BaseEntity {
   })
   expire_date: string | null;
 
+  @Column({
+    name: 'full_name',
+    type: 'varchar',
+    length: 255,
+    nullable: true,
+  })
+  full_name: string | null;
+
   // 1. Karta egasi (Fuqaro / Citizen modeli bilan bog'lanish)
   @Column({ name: 'citizen_id', type: 'uuid', nullable: true })
   citizen_id: string | null;
