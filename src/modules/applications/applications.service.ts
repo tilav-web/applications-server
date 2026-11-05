@@ -527,8 +527,8 @@ export class ApplicationsService {
       const q = `%${search}%`;
       whereCondition = [
         { ...where, application_number: ILike(q) },
-        { ...where, title: ILike(q) },
         { ...where, description: ILike(q) },
+        { ...where, officer_notes: ILike(q) },
       ];
     }
 
@@ -1012,7 +1012,8 @@ export class ApplicationsService {
       .map((a) => ({
         id: a.id,
         application_number: a.application_number,
-        title: a.title,
+        description: a.description,
+        officer_notes: a.officer_notes,
         status: a.status,
         date: a.date ? a.date.toISOString() : null,
         created_at: a.created_at.toISOString(),

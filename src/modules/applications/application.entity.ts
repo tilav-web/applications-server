@@ -32,11 +32,11 @@ export class Application extends BaseEntity {
   })
   application_number: string | null;
 
-  @Column({ name: 'title', type: 'varchar', length: 255, nullable: true })
-  title: string | null;
-
   @Column({ name: 'description', type: 'text', nullable: true })
   description: string | null;
+
+  @Column({ name: 'officer_notes', type: 'text', nullable: true })
+  officer_notes: string | null;
 
   @Column({
     type: 'enum',

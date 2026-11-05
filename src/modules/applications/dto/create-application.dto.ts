@@ -84,11 +84,11 @@ export class CreateApplicationDto {
 
   @IsOptional()
   @IsString()
-  title?: string;
+  description?: string;
 
   @IsOptional()
   @IsString()
-  description?: string;
+  officer_notes?: string;
 
   @IsOptional()
   @IsEnum(ApplicationStatus)
