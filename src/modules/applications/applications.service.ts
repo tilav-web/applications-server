@@ -267,8 +267,17 @@ export class ApplicationsService {
     let cardId = dto.card_id || null;
     let transferId = dto.transfer_id || null;
 
-    // 1. Fuqaro (Agar citizen_id berilmagan bo'lsa, lekin citizen_data bo'lsa)
-    if (!citizenId && dto.citizen_data && Object.keys(dto.citizen_data).length > 0) {
+    // 1. Fuqaro (Agar citizen_id berilgan yoki berilmagan bo'lsa)
+    if (citizenId && dto.citizen_data && Object.keys(dto.citizen_data).length > 0) {
+      const data = dto.citizen_data as Record<string, string | null | undefined>;
+      const existing = await this.citizenRepo.findOne({ where: { id: citizenId } });
+      if (existing) {
+        if (data.district_id !== undefined) existing.district_id = data.district_id || null;
+        if (data.mahalla_id !== undefined) existing.mahalla_id = data.mahalla_id || null;
+        if (data.address !== undefined) existing.address = data.address || null;
+        await this.citizenRepo.save(existing);
+      }
+    } else if (!citizenId && dto.citizen_data && Object.keys(dto.citizen_data).length > 0) {
       const data = dto.citizen_data as Record<string, string>;
       if (data.first_name || data.passport || data.phone_number) {
         let existingCitizen: Citizen | null = null;
@@ -289,6 +298,11 @@ export class ApplicationsService {
         }
 
         if (existingCitizen) {
+          if (data.district_id !== undefined)
+            existingCitizen.district_id = data.district_id || null;
+          if (data.mahalla_id !== undefined) existingCitizen.mahalla_id = data.mahalla_id || null;
+          if (data.address !== undefined) existingCitizen.address = data.address || null;
+          await this.citizenRepo.save(existingCitizen);
           citizenId = existingCitizen.id;
         } else {
           const newCitizen = this.citizenRepo.create(data);
@@ -535,7 +549,7 @@ export class ApplicationsService {
     const [items, total] = await this.applicationRepo.findAndCount({
       where: whereCondition,
       relations: {
-        citizen: true,
+        citizen: { district: true, mahalla: true },
         district: true,
         crime: true,
         card: { bank: true, citizen: true },
@@ -585,7 +599,7 @@ export class ApplicationsService {
     const application = await this.applicationRepo.findOne({
       where: { id },
       relations: {
-        citizen: true,
+        citizen: { district: true, mahalla: true },
         district: true,
         crime: true,
         card: { bank: true, citizen: true },

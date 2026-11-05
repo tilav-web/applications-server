@@ -12,6 +12,8 @@ import { CrimesModule } from './crimes/crimes.module';
 import { ApplicationCustomField } from './custom-fields/application-custom-field.entity';
 import { District } from './districts/district.entity';
 import { DistrictsModule } from './districts/districts.module';
+import { Mahalla } from './mahallas/mahalla.entity';
+import { MahallasModule } from './mahallas/mahallas.module';
 import { Bank } from './transfers/banks/bank.entity';
 import { BanksModule } from './transfers/banks/banks.module';
 import { Card } from './transfers/cards/card.entity';
@@ -30,6 +32,7 @@ import { TransfersModule } from './transfers/transfers.module';
       Citizen,
       Crime,
       District,
+      Mahalla,
       Card,
       Transfer,
       Bank,
@@ -40,6 +43,7 @@ import { TransfersModule } from './transfers/transfers.module';
     CitizensModule,
     CrimesModule,
     DistrictsModule,
+    MahallasModule,
     BanksModule,
     PaymentProvidersModule,
     CardsModule,

@@ -2,6 +2,7 @@ import { Column, Entity, OneToMany } from 'typeorm';
 
 import { BaseEntity } from '../../../common/database/base.entity';
 import type { Application } from '../application.entity';
+import type { Mahalla } from '../mahallas/mahalla.entity';
 
 @Entity('districts')
 export class District extends BaseEntity {
@@ -23,4 +24,7 @@ export class District extends BaseEntity {
 
   @OneToMany('Application', 'district')
   applications: Application[];
+
+  @OneToMany('Mahalla', 'district')
+  mahallas: Mahalla[];
 }

@@ -46,4 +46,12 @@ export class CreateCitizenDto {
   @IsOptional()
   @IsString()
   address?: string;
+
+  @IsOptional()
+  @IsString()
+  district_id?: string | null;
+
+  @IsOptional()
+  @IsString()
+  mahalla_id?: string | null;
 }

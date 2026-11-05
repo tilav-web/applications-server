@@ -1,7 +1,17 @@
-import { BeforeInsert, BeforeUpdate, Column, Entity, OneToMany } from 'typeorm';
+import {
+  BeforeInsert,
+  BeforeUpdate,
+  Column,
+  Entity,
+  JoinColumn,
+  ManyToOne,
+  OneToMany,
+} from 'typeorm';
 
 import { BaseEntity } from '../../../common/database/base.entity';
 import type { Application } from '../application.entity';
+import { District } from '../districts/district.entity';
+import { Mahalla } from '../mahallas/mahalla.entity';
 import type { Card } from '../transfers/cards/card.entity';
 
 @Entity('citizens')
@@ -61,6 +71,34 @@ export class Citizen extends BaseEntity {
     nullable: true,
   })
   address: string | null;
+
+  @Column({
+    name: 'district_id',
+    type: 'uuid',
+    nullable: true,
+  })
+  district_id: string | null;
+
+  @ManyToOne(() => District, {
+    nullable: true,
+    onDelete: 'SET NULL',
+  })
+  @JoinColumn({ name: 'district_id' })
+  district: District | null;
+
+  @Column({
+    name: 'mahalla_id',
+    type: 'uuid',
+    nullable: true,
+  })
+  mahalla_id: string | null;
+
+  @ManyToOne(() => Mahalla, (mahalla) => mahalla.citizens, {
+    nullable: true,
+    onDelete: 'SET NULL',
+  })
+  @JoinColumn({ name: 'mahalla_id' })
+  mahalla: Mahalla | null;
 
   @OneToMany('Application', 'citizen')
   applications: Application[];
