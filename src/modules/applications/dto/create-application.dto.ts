@@ -11,7 +11,6 @@ import {
   ValidateNested,
 } from 'class-validator';
 
-import { ApplicationStatus } from '../../../common/enums/application-status.enum';
 import { CustomFieldType } from '../../../common/enums/custom-field-type.enum';
 
 export class CreateApplicationCustomFieldDto {
@@ -91,8 +90,12 @@ export class CreateApplicationDto {
   officer_notes?: string;
 
   @IsOptional()
-  @IsEnum(ApplicationStatus)
-  status?: ApplicationStatus;
+  @IsString()
+  status?: string;
+
+  @IsOptional()
+  @IsUUID('4')
+  status_id?: string;
 
   @IsOptional()
   @IsDateString()

@@ -13,6 +13,7 @@ import { District } from './districts/district.entity';
 import type { CreateApplicationDto } from './dto/create-application.dto';
 import type { UpdateApplicationDto } from './dto/update-application.dto';
 import { Mahalla } from './mahallas/mahalla.entity';
+import { ApplicationStatus as ApplicationStatusEntity } from './statuses/application-status.entity';
 import { Bank } from './transfers/banks/bank.entity';
 import { Card } from './transfers/cards/card.entity';
 import { TransferCustomField } from './transfers/custom-fields/transfer-custom-field.entity';
@@ -44,6 +45,8 @@ export class ApplicationsService {
     private readonly paymentProviderRepo: Repository<PaymentProvider>,
     @InjectRepository(TransferCustomField)
     private readonly transferCustomFieldRepo: Repository<TransferCustomField>,
+    @InjectRepository(ApplicationStatusEntity)
+    private readonly statusRepo: Repository<ApplicationStatusEntity>,
   ) {}
 
   private async processCustomFields(
@@ -365,6 +368,8 @@ export class ApplicationsService {
     crime_id?: string | null;
     card_id?: string | null;
     transfer_id?: string | null;
+    status_id?: string | null;
+    status?: string | null;
   }> {
     let citizenId = dto.citizen_id || null;
     let districtId = dto.district_id || null;
@@ -679,12 +684,53 @@ export class ApplicationsService {
       }
     }
 
+    // 6. Ariza statusi (Master Entity)
+    let statusId = dto.status_id || null;
+    let statusCode = dto.status || null;
+
+    if (statusId) {
+      const st = await this.statusRepo.findOne({ where: { id: statusId } });
+      if (st) {
+        statusId = st.id;
+        statusCode = st.code || st.name;
+      }
+    } else if (dto.status) {
+      const st = await this.statusRepo.findOne({
+        where: [{ code: dto.status }, { name: ILike(dto.status) }],
+      });
+      if (st) {
+        statusId = st.id;
+        statusCode = st.code || st.name;
+      } else {
+        const newSt = await this.statusRepo.save(
+          this.statusRepo.create({
+            name: dto.status,
+            code: dto.status.toUpperCase().replace(/\s+/g, '_').slice(0, 50),
+            color: 'blue',
+          }),
+        );
+        statusId = newSt.id;
+        statusCode = newSt.code || newSt.name;
+      }
+    } else if (!applicationId) {
+      const def = await this.statusRepo.findOne({
+        where: [{ is_default: true }, { code: 'YANGI' }],
+        order: { sort_order: 'ASC' },
+      });
+      if (def) {
+        statusId = def.id;
+        statusCode = def.code || def.name;
+      }
+    }
+
     return {
       citizen_id: citizenId,
       district_id: districtId,
       crime_id: crimeId,
       card_id: cardId,
       transfer_id: transferId,
+      status_id: statusId,
+      status: statusCode,
     };
   }
 
@@ -722,7 +768,14 @@ export class ApplicationsService {
   ): Promise<PaginatedResult<Application>> {
     const where: FindOptionsWhere<Application> = {};
     if (status) {
-      where.status = status as ApplicationStatus;
+      const matchingSt = await this.statusRepo.findOne({
+        where: [{ id: status }, { code: status }, { name: ILike(status) }],
+      });
+      if (matchingSt) {
+        where.status_id = matchingSt.id;
+      } else {
+        where.status = status;
+      }
     }
 
     const take = limit;
@@ -742,6 +795,7 @@ export class ApplicationsService {
     const [items, total] = await this.applicationRepo.findAndCount({
       where: whereCondition,
       relations: {
+        application_status: true,
         citizen: { district: true, mahalla: true },
         district: true,
         crime: true,
@@ -792,6 +846,7 @@ export class ApplicationsService {
     const application = await this.applicationRepo.findOne({
       where: { id },
       relations: {
+        application_status: true,
         citizen: { district: true, mahalla: true },
         district: true,
         crime: true,
@@ -899,6 +954,7 @@ export class ApplicationsService {
     // 1. Current period applications with relations
     const applications = await this.applicationRepo
       .createQueryBuilder('app')
+      .leftJoinAndSelect('app.application_status', 'application_status')
       .leftJoinAndSelect('app.transfer', 'transfer')
       .leftJoinAndSelect('app.citizen', 'citizen')
       .leftJoinAndSelect('app.district', 'district')

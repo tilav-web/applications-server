@@ -14,6 +14,8 @@ import { District } from './districts/district.entity';
 import { DistrictsModule } from './districts/districts.module';
 import { Mahalla } from './mahallas/mahalla.entity';
 import { MahallasModule } from './mahallas/mahallas.module';
+import { ApplicationStatus } from './statuses/application-status.entity';
+import { ApplicationStatusesModule } from './statuses/application-statuses.module';
 import { Bank } from './transfers/banks/bank.entity';
 import { BanksModule } from './transfers/banks/banks.module';
 import { Card } from './transfers/cards/card.entity';
@@ -38,12 +40,14 @@ import { TransfersModule } from './transfers/transfers.module';
       Bank,
       PaymentProvider,
       TransferCustomField,
+      ApplicationStatus,
     ]),
     AuthModule,
     CitizensModule,
     CrimesModule,
     DistrictsModule,
     MahallasModule,
+    ApplicationStatusesModule,
     BanksModule,
     PaymentProvidersModule,
     CardsModule,

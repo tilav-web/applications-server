@@ -9,11 +9,11 @@ import {
 } from 'typeorm';
 
 import { BaseEntity } from '../../common/database/base.entity';
-import { ApplicationStatus } from '../../common/enums/application-status.enum';
 import { Citizen } from './citizens/citizen.entity';
 import { Crime } from './crimes/crime.entity';
 import { ApplicationCustomField } from './custom-fields/application-custom-field.entity';
 import { District } from './districts/district.entity';
+import { ApplicationStatus as ApplicationStatusEntity } from './statuses/application-status.entity';
 import { Card } from './transfers/cards/card.entity';
 import { Transfer } from './transfers/transfer.entity';
 
@@ -39,13 +39,23 @@ export class Application extends BaseEntity {
   officer_notes: string | null;
 
   @Column({
-    type: 'enum',
-    enum: ApplicationStatus,
-    default: ApplicationStatus.YANGI,
+    type: 'varchar',
+    length: 50,
+    default: 'YANGI',
     name: 'status',
     nullable: true,
   })
-  status: ApplicationStatus | null;
+  status: string | null;
+
+  @Column({ name: 'status_id', type: 'uuid', nullable: true })
+  status_id: string | null;
+
+  @ManyToOne(() => ApplicationStatusEntity, (st) => st.applications, {
+    nullable: true,
+    onDelete: 'SET NULL',
+  })
+  @JoinColumn({ name: 'status_id' })
+  application_status: ApplicationStatusEntity | null;
 
   @Column({
     name: 'date',
