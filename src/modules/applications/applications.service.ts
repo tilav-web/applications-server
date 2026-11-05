@@ -62,25 +62,47 @@ export class ApplicationsService {
       // 1. Yangi yoki mavjud Fuqaro (inline_citizen)
       if (f.inline_citizen && !citizenId) {
         const cData = f.inline_citizen as Record<string, string>;
-        let existingCitizen: Citizen | null = null;
-        if (cData.passport) {
-          existingCitizen = await this.citizenRepo.findOne({ where: { passport: cData.passport } });
-        }
-        if (!existingCitizen && cData.pinfl) {
-          existingCitizen = await this.citizenRepo.findOne({ where: { pinfl: cData.pinfl } });
-        }
-        if (!existingCitizen && cData.phone_number) {
-          existingCitizen = await this.citizenRepo.findOne({
-            where: { phone_number: cData.phone_number },
-          });
-        }
+        const pNum = cData.phone_number ? cData.phone_number.replace(/\D/g, '') : null;
+        const pass = cData.passport ? cData.passport.trim().toUpperCase() : null;
+        const pinfl = cData.pinfl ? cData.pinfl.trim() : null;
+        const fName = cData.first_name ? cData.first_name.trim() : null;
+        const lName = cData.last_name ? cData.last_name.trim() : null;
+        const mName = cData.middle_name ? cData.middle_name.trim() : null;
+        const addr = cData.address ? cData.address.trim() : null;
 
-        if (existingCitizen) {
-          citizenId = existingCitizen.id;
-        } else {
-          const createdCitizen = this.citizenRepo.create(cData);
-          const savedCitizen = await this.citizenRepo.save(createdCitizen);
-          citizenId = savedCitizen.id;
+        if (fName || lName || pass || pinfl || pNum) {
+          let existingCitizen: Citizen | null = null;
+          if (pass) {
+            existingCitizen = await this.citizenRepo.findOne({ where: { passport: pass } });
+          }
+          if (!existingCitizen && pinfl) {
+            existingCitizen = await this.citizenRepo.findOne({ where: { pinfl } });
+          }
+          if (!existingCitizen && pNum && fName) {
+            existingCitizen = await this.citizenRepo.findOne({
+              where: { phone_number: pNum, first_name: fName },
+            });
+          }
+
+          if (existingCitizen) {
+            if (addr && !existingCitizen.address) existingCitizen.address = addr;
+            if (fName && !existingCitizen.first_name) existingCitizen.first_name = fName;
+            if (lName && !existingCitizen.last_name) existingCitizen.last_name = lName;
+            await this.citizenRepo.save(existingCitizen);
+            citizenId = existingCitizen.id;
+          } else {
+            const createdCitizen = this.citizenRepo.create({
+              first_name: fName,
+              last_name: lName,
+              middle_name: mName,
+              passport: pass,
+              pinfl: pinfl,
+              phone_number: pNum,
+              address: addr,
+            });
+            const savedCitizen = await this.citizenRepo.save(createdCitizen);
+            citizenId = savedCitizen.id;
+          }
         }
       }
 
