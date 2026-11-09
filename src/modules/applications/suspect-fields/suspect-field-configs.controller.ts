@@ -54,3 +54,4 @@ export class SuspectFieldConfigsController {
     return this.service.remove(id);
   }
 }
+

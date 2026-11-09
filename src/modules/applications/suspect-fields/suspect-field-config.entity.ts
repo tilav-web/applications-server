@@ -66,3 +66,4 @@ export class SuspectFieldConfig extends BaseEntity {
   })
   is_active: boolean;
 }
+
