@@ -6,7 +6,7 @@ import { ApplicationStatus } from '../../common/enums/application-status.enum';
 import { TransferCustomFieldType } from '../../common/enums/transfer-custom-field-type.enum';
 import type { PaginatedResult } from '../../common/interfaces/pagination.interface';
 import { formatTitleCase, formatUzbekName } from '../../common/utils/name-formatter.util';
-import { Application } from './application.entity';
+import { Application, SuspectTreeNode } from './application.entity';
 import { Citizen } from './citizens/citizen.entity';
 import { Crime } from './crimes/crime.entity';
 import { ApplicationCustomField } from './custom-fields/application-custom-field.entity';
@@ -429,7 +429,9 @@ export class ApplicationsService {
           const dName = data.district_name.trim();
           let d = await this.districtRepo.findOne({ where: { name: ILike(dName) } });
           if (!d) {
-            d = await this.districtRepo.save(this.districtRepo.create({ name: formatTitleCase(dName) }));
+            d = await this.districtRepo.save(
+              this.districtRepo.create({ name: formatTitleCase(dName) }),
+            );
           }
           citDistrictId = d.id;
         }
@@ -466,8 +468,7 @@ export class ApplicationsService {
           existing.middle_name = data.middle_name ? formatUzbekName(data.middle_name) : null;
         if (data.passport !== undefined)
           existing.passport = data.passport ? data.passport.trim().toUpperCase() : null;
-        if (data.pinfl !== undefined)
-          existing.pinfl = data.pinfl ? data.pinfl.trim() : null;
+        if (data.pinfl !== undefined) existing.pinfl = data.pinfl ? data.pinfl.trim() : null;
         if (data.phone_number !== undefined)
           existing.phone_number = data.phone_number ? data.phone_number.replace(/\D/g, '') : null;
         await this.citizenRepo.save(existing);
@@ -512,7 +513,9 @@ export class ApplicationsService {
           const dName = data.district_name.trim();
           let d = await this.districtRepo.findOne({ where: { name: ILike(dName) } });
           if (!d) {
-            d = await this.districtRepo.save(this.districtRepo.create({ name: formatTitleCase(dName) }));
+            d = await this.districtRepo.save(
+              this.districtRepo.create({ name: formatTitleCase(dName) }),
+            );
           }
           citDistrictId = d.id;
         }
@@ -551,14 +554,15 @@ export class ApplicationsService {
             existingCitizen.gender = (data.gender as 'male' | 'female') || null;
           if (fName) existingCitizen.first_name = fName;
           if (lName) existingCitizen.last_name = lName;
-          if (mName !== null && mName !== undefined)
-            existingCitizen.middle_name = mName;
+          if (mName !== null && mName !== undefined) existingCitizen.middle_name = mName;
           if (data.passport !== undefined)
             existingCitizen.passport = data.passport ? data.passport.trim().toUpperCase() : null;
           if (data.pinfl !== undefined)
             existingCitizen.pinfl = data.pinfl ? data.pinfl.trim() : null;
           if (data.phone_number !== undefined)
-            existingCitizen.phone_number = data.phone_number ? data.phone_number.replace(/\D/g, '') : null;
+            existingCitizen.phone_number = data.phone_number
+              ? data.phone_number.replace(/\D/g, '')
+              : null;
           await this.citizenRepo.save(existingCitizen);
           citizenId = existingCitizen.id;
         } else {
@@ -587,7 +591,9 @@ export class ApplicationsService {
       const dName = (data.name || '').trim();
       if (dName) {
         const formattedDName = formatTitleCase(dName);
-        const existingDistrict = await this.districtRepo.findOne({ where: { name: ILike(formattedDName) } });
+        const existingDistrict = await this.districtRepo.findOne({
+          where: { name: ILike(formattedDName) },
+        });
         if (existingDistrict) {
           districtId = existingDistrict.id;
         } else {
@@ -836,11 +842,11 @@ export class ApplicationsService {
     const {
       custom_fields,
       date,
-      citizen_data,
-      district_data,
-      crime_data,
-      card_data,
-      transfer_data,
+      citizen_data: _citizen_data,
+      district_data: _district_data,
+      crime_data: _crime_data,
+      card_data: _card_data,
+      transfer_data: _transfer_data,
       ...applicationData
     } = dto;
 
@@ -1095,6 +1101,47 @@ export class ApplicationsService {
   }
 
   /**
+   * Arizadagi firibgar / gumonlanuvchi daraxtidan (suspect_tree) barcha identifikator va belgilarni ajratib olish
+   */
+  private extractSuspectTokens(
+    app: Application,
+  ): { raw: string; normalized: string; path: string }[] {
+    if (!app.suspect_tree || !Array.isArray(app.suspect_tree)) return [];
+    const tokens: { raw: string; normalized: string; path: string }[] = [];
+
+    const walk = (nodes: SuspectTreeNode[], currentPath: string) => {
+      for (const node of nodes) {
+        if (!node) continue;
+        const fullPath = currentPath ? `${currentPath} → ${node.label || ''}` : node.label || '';
+        if (node.value && typeof node.value === 'string' && node.value.trim().length >= 2) {
+          const raw = node.value.trim();
+          const cleanUsername = raw.toLowerCase().replace(/^@/, '').trim();
+          const cleanPhone = raw.replace(/\D/g, '');
+          const normalized = cleanPhone.length >= 7 ? cleanPhone : cleanUsername;
+          tokens.push({ raw, normalized, path: fullPath });
+        }
+        if (node.children && Array.isArray(node.children) && node.children.length > 0) {
+          walk(node.children, fullPath);
+        } else if (
+          !node.value &&
+          node.label &&
+          typeof node.label === 'string' &&
+          node.label.trim().length >= 3
+        ) {
+          const raw = node.label.trim();
+          const cleanUsername = raw.toLowerCase().replace(/^@/, '').trim();
+          const cleanPhone = raw.replace(/\D/g, '');
+          const normalized = cleanPhone.length >= 7 ? cleanPhone : cleanUsername;
+          tokens.push({ raw, normalized, path: fullPath });
+        }
+      }
+    };
+
+    walk(app.suspect_tree, '');
+    return tokens;
+  }
+
+  /**
    * Bosh sahifa jadvali uchun arizalarga ixcham bog'liqlik xulosalarini hisoblash
    */
   private async attachRelationsSummaries(items: Application[]): Promise<void> {
@@ -1145,11 +1192,15 @@ export class ApplicationsService {
         }
       }
 
-      const appExtracts = new Map<string, { cardData: any; citizenData: any }>();
+      const appExtracts = new Map<
+        string,
+        { cardData: any; citizenData: any; suspectTokens: any[] }
+      >();
       for (const a of allApps) {
         appExtracts.set(a.id, {
           cardData: this.extractCardData(a),
           citizenData: this.extractCitizenData(a),
+          suspectTokens: this.extractSuspectTokens(a),
         });
       }
 
@@ -1161,11 +1212,13 @@ export class ApplicationsService {
         const itemExtract = appExtracts.get(item.id) || {
           cardData: this.extractCardData(item),
           citizenData: this.extractCitizenData(item),
+          suspectTokens: this.extractSuspectTokens(item),
         };
 
         const matchedOtherIds = new Set<string>();
         let cardMatchesCount = 0;
         let citizenMatchesCount = 0;
+        let suspectMatchesCount = 0;
         let hasFraudLink = false;
 
         for (const other of allApps) {
@@ -1175,12 +1228,21 @@ export class ApplicationsService {
 
           let cardMatched = false;
           let citizenMatched = false;
+          let suspectMatched = false;
 
           // Card match
           for (const [cardId, cardEntry] of itemExtract.cardData.cardMap.entries()) {
-            const curNum = (cardEntry.card.card_number || cardEntry.card.masked_number || '').replace(/\D/g, '');
+            const curNum = (
+              cardEntry.card.card_number ||
+              cardEntry.card.masked_number ||
+              ''
+            ).replace(/\D/g, '');
             for (const [othCardId, othEntry] of otherExtract.cardData.cardMap.entries()) {
-              const othNum = (othEntry.card.card_number || othEntry.card.masked_number || '').replace(/\D/g, '');
+              const othNum = (
+                othEntry.card.card_number ||
+                othEntry.card.masked_number ||
+                ''
+              ).replace(/\D/g, '');
               if (
                 othCardId === cardId ||
                 (curNum.length >= 8 && othNum.length >= 8 && curNum === othNum)
@@ -1224,10 +1286,27 @@ export class ApplicationsService {
             if (citizenMatched) break;
           }
 
-          if (cardMatched || citizenMatched) {
+          // Suspect Tree match
+          for (const curTok of itemExtract.suspectTokens) {
+            for (const othTok of otherExtract.suspectTokens) {
+              if (
+                curTok.normalized.length >= 3 &&
+                othTok.normalized.length >= 3 &&
+                curTok.normalized === othTok.normalized
+              ) {
+                suspectMatched = true;
+                hasFraudLink = true;
+                break;
+              }
+            }
+            if (suspectMatched) break;
+          }
+
+          if (cardMatched || citizenMatched || suspectMatched) {
             matchedOtherIds.add(other.id);
             if (cardMatched) cardMatchesCount++;
             if (citizenMatched) citizenMatchesCount++;
+            if (suspectMatched) suspectMatchesCount++;
           }
         }
 
@@ -1235,6 +1314,7 @@ export class ApplicationsService {
           total: matchedOtherIds.size,
           cards: cardMatchesCount,
           citizens: citizenMatchesCount,
+          suspects: suspectMatchesCount,
           has_fraud_card_link: hasFraudLink,
         };
       }
@@ -1340,6 +1420,16 @@ export class ApplicationsService {
       }
     >();
 
+    const suspectRelationsMap = new Map<
+      string,
+      {
+        field_path: string;
+        value: string;
+        matched_with: string;
+        linked_applications: any[];
+      }
+    >();
+
     const linkedApplicationIds = new Set<string>();
     let hasFraudCardLink = false;
 
@@ -1353,12 +1443,19 @@ export class ApplicationsService {
       // 1. KARTALAR BO'YICHA TEKSHIRUV
       for (const [cardId, currentCardEntry] of cardData.cardMap.entries()) {
         const currentCard = currentCardEntry.card;
-        const currentNum = (currentCard.card_number || currentCard.masked_number || '').replace(/\D/g, '');
+        const currentNum = (currentCard.card_number || currentCard.masked_number || '').replace(
+          /\D/g,
+          '',
+        );
 
         let otherRole: 'RECEIVER' | 'SENDER' | 'RELATED' | null = null;
 
         for (const [otherCardId, otherEntry] of otherCardData.cardMap.entries()) {
-          const otherNum = (otherEntry.card.card_number || otherEntry.card.masked_number || '').replace(/\D/g, '');
+          const otherNum = (
+            otherEntry.card.card_number ||
+            otherEntry.card.masked_number ||
+            ''
+          ).replace(/\D/g, '');
           if (
             otherCardId === cardId ||
             (currentNum.length >= 8 && otherNum.length >= 8 && currentNum === otherNum)
@@ -1431,7 +1528,8 @@ export class ApplicationsService {
           if (
             currentCitizen.passport &&
             otherCitizen.passport &&
-            currentCitizen.passport.trim().toUpperCase() === otherCitizen.passport.trim().toUpperCase()
+            currentCitizen.passport.trim().toUpperCase() ===
+              otherCitizen.passport.trim().toUpperCase()
           ) {
             reasons.add(`Bir xil Pasport: ${currentCitizen.passport.trim().toUpperCase()}`);
           }
@@ -1479,6 +1577,50 @@ export class ApplicationsService {
               currency: other.transfer?.currency || 'UZS',
               description: other.description || null,
             });
+          }
+        }
+      }
+
+      // 3. FIRIBGAR / GUMONLANUVCHI DARAXTI (SUSPECT TREE) BO'YICHA TEKSHIRUV
+      const currentSuspectTokens = this.extractSuspectTokens(currentApp);
+      const otherSuspectTokens = this.extractSuspectTokens(other);
+      for (const curTok of currentSuspectTokens) {
+        for (const othTok of otherSuspectTokens) {
+          if (
+            curTok.normalized.length >= 3 &&
+            othTok.normalized.length >= 3 &&
+            curTok.normalized === othTok.normalized
+          ) {
+            isLinked = true;
+            hasFraudCardLink = true;
+
+            const suspectKey = `${curTok.path}:${curTok.normalized}`;
+            if (!suspectRelationsMap.has(suspectKey)) {
+              suspectRelationsMap.set(suspectKey, {
+                field_path: curTok.path,
+                value: curTok.raw,
+                matched_with: othTok.raw,
+                linked_applications: [],
+              });
+            }
+
+            const sRel = suspectRelationsMap.get(suspectKey)!;
+            if (!sRel.linked_applications.some((a) => a.id === other.id)) {
+              sRel.linked_applications.push({
+                id: other.id,
+                application_number: other.application_number || 'Raqamsiz',
+                status: other.status,
+                status_label: other.application_status?.name || other.status || 'Yangi',
+                status_color: other.application_status?.color || 'blue',
+                date: other.date,
+                citizen_name: other.citizen
+                  ? `${other.citizen.last_name || ''} ${other.citizen.first_name || ''}`.trim()
+                  : 'Arizachi kiritilmagan',
+                transfer_amount: other.transfer?.amount ? Number(other.transfer.amount) : null,
+                currency: other.transfer?.currency || 'UZS',
+                description: other.description || null,
+              });
+            }
           }
         }
       }
@@ -1597,7 +1739,10 @@ export class ApplicationsService {
       return node;
     };
 
-    const allRelevantApps = [currentApp, ...otherApps.filter((o) => linkedApplicationIds.has(o.id))];
+    const allRelevantApps = [
+      currentApp,
+      ...otherApps.filter((o) => linkedApplicationIds.has(o.id)),
+    ];
 
     for (const appItem of allRelevantApps) {
       const tr = appItem.transfer;
@@ -1638,7 +1783,8 @@ export class ApplicationsService {
             riskScore: 10,
             role: 'VICTIM_SOURCE',
             isBlacklisted: false,
-            ownerName: `${appItem.citizen.last_name || ''} ${appItem.citizen.first_name || ''}`.trim(),
+            ownerName:
+              `${appItem.citizen.last_name || ''} ${appItem.citizen.first_name || ''}`.trim(),
             pinfl: appItem.citizen.pinfl || '',
             passport: appItem.citizen.passport || '',
             phone: appItem.citizen.phone_number || '',
@@ -1650,7 +1796,8 @@ export class ApplicationsService {
                 status_label: appItem.application_status?.name || appItem.status || 'Yangi',
                 status_color: appItem.application_status?.color || 'blue',
                 date: appItem.date,
-                citizen_name: `${appItem.citizen.last_name || ''} ${appItem.citizen.first_name || ''}`.trim(),
+                citizen_name:
+                  `${appItem.citizen.last_name || ''} ${appItem.citizen.first_name || ''}`.trim(),
                 citizen_phone: appItem.citizen?.phone_number || null,
                 role_in_that_app: 'VICTIM_SOURCE',
                 transfer_amount: amt,
@@ -1773,10 +1920,12 @@ export class ApplicationsService {
         grand_total_loss: currentAppLoss + totalLinkedLoss,
         total_cards_count: cardRelations.length,
         total_citizens_count: citizenRelations.length,
+        total_suspects_count: suspectRelationsMap.size,
         has_fraud_card_link: hasFraudCardLink,
       },
       card_relations: cardRelations,
       citizen_relations: citizenRelations,
+      suspect_relations: Array.from(suspectRelationsMap.values()),
       graph: {
         nodes: graphNodes,
         edges: graphEdges,
@@ -1850,11 +1999,11 @@ export class ApplicationsService {
     const {
       custom_fields,
       date,
-      citizen_data,
-      district_data,
-      crime_data,
-      card_data,
-      transfer_data,
+      citizen_data: _citizen_data,
+      district_data: _district_data,
+      crime_data: _crime_data,
+      card_data: _card_data,
+      transfer_data: _transfer_data,
       ...applicationData
     } = dto;
 

@@ -90,6 +90,10 @@ export class CreateApplicationDto {
   officer_notes?: string;
 
   @IsOptional()
+  @IsArray()
+  suspect_tree?: Record<string, unknown>[];
+
+  @IsOptional()
   @IsString()
   status?: string;
 

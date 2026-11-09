@@ -17,6 +17,13 @@ import { ApplicationStatus as ApplicationStatusEntity } from './statuses/applica
 import { Card } from './transfers/cards/card.entity';
 import { Transfer } from './transfers/transfer.entity';
 
+export interface SuspectTreeNode {
+  id: string;
+  label: string;
+  value?: string;
+  children?: SuspectTreeNode[];
+}
+
 @Entity('applications')
 export class Application extends BaseEntity {
   /**
@@ -37,6 +44,12 @@ export class Application extends BaseEntity {
 
   @Column({ name: 'officer_notes', type: 'text', nullable: true })
   officer_notes: string | null;
+
+  /**
+   * Firibgar / Gumonlanuvchi dinamik daraxti (Telegram -> username -> tilav_web, va h.k.)
+   */
+  @Column({ name: 'suspect_tree', type: 'jsonb', nullable: true, default: () => "'[]'" })
+  suspect_tree: SuspectTreeNode[] | null;
 
   @Column({
     type: 'varchar',
@@ -143,6 +156,7 @@ export class Application extends BaseEntity {
     total: number;
     cards: number;
     citizens: number;
+    suspects?: number;
     has_fraud_card_link: boolean;
   };
 
