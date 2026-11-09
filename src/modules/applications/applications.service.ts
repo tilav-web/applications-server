@@ -375,6 +375,7 @@ export class ApplicationsService {
     citizen_id?: string | null;
     district_id?: string | null;
     crime_id?: string | null;
+    crime_method_id?: string | null;
     card_id?: string | null;
     transfer_id?: string | null;
     status_id?: string | null;
@@ -383,6 +384,7 @@ export class ApplicationsService {
     let citizenId = dto.citizen_id || null;
     let districtId = dto.district_id || null;
     let crimeId = dto.crime_id || null;
+    let crimeMethodId = dto.crime_method_id !== undefined ? dto.crime_method_id : null;
     let cardId = dto.card_id || null;
     let transferId = dto.transfer_id || null;
 
@@ -396,6 +398,7 @@ export class ApplicationsService {
           citizen_id: true,
           district_id: true,
           crime_id: true,
+          crime_method_id: true,
           card_id: true,
           transfer_id: true,
         },
@@ -409,6 +412,9 @@ export class ApplicationsService {
         }
         if (!crimeId && existingApp.crime_id) {
           crimeId = existingApp.crime_id;
+        }
+        if (crimeMethodId === null && existingApp.crime_method_id && dto.crime_method_id === undefined) {
+          crimeMethodId = existingApp.crime_method_id;
         }
         if (!cardId && existingApp.card_id) {
           cardId = existingApp.card_id;
@@ -831,6 +837,7 @@ export class ApplicationsService {
       citizen_id: citizenId,
       district_id: districtId,
       crime_id: crimeId,
+      crime_method_id: crimeMethodId,
       card_id: cardId,
       transfer_id: transferId,
       status_id: statusId,
@@ -913,6 +920,7 @@ export class ApplicationsService {
         citizen: { district: true, mahalla: true },
         district: true,
         crime: true,
+        crime_method: true,
         card: { bank: true, citizen: true },
         transfer: {
           payment_provider: true,
@@ -1357,6 +1365,7 @@ export class ApplicationsService {
         citizen: { district: true, mahalla: true },
         district: true,
         crime: true,
+        crime_method: true,
         card: { bank: true, citizen: true },
         transfer: {
           payment_provider: true,
@@ -1962,6 +1971,7 @@ export class ApplicationsService {
         citizen: { district: true, mahalla: true },
         district: true,
         crime: true,
+        crime_method: true,
         card: { bank: true, citizen: true },
         transfer: {
           payment_provider: true,
@@ -2013,6 +2023,7 @@ export class ApplicationsService {
     delete (application as unknown as Record<string, unknown>).citizen;
     delete (application as unknown as Record<string, unknown>).district;
     delete (application as unknown as Record<string, unknown>).crime;
+    delete (application as unknown as Record<string, unknown>).crime_method;
     delete (application as unknown as Record<string, unknown>).card;
     delete (application as unknown as Record<string, unknown>).transfer;
     delete (application as unknown as Record<string, unknown>).application_status;

@@ -219,6 +219,22 @@ export const TEMPLATE_VARIABLES_DICTIONARY: TemplateCategoryConfig[] = [
         sampleValue: 'O‘rta og‘ir',
       },
       {
+        tag: '{{crime.method}}',
+        rawKey: 'crime.method',
+        label: 'Jinoyat sodir etish usuli (method)',
+        modelName: 'CrimeMethod',
+        description: 'Masalan: Сохта ҳавола/зарарли дастур орқали...',
+        sampleValue: 'Сохта ҳавола/зарарли дастур орқали карта ёки қурилма бошқарувини қўлга киритиш орқали',
+      },
+      {
+        tag: '{{crime.method_group}}',
+        rawKey: 'crime.method_group',
+        label: 'Jinoyat usuli guruhi (method_group)',
+        modelName: 'CrimeMethod',
+        description: 'Masalan: Фишинг ва қурилма/карта бошқаруви',
+        sampleValue: 'Фишинг ва қурилма/карта бошқаруви',
+      },
+      {
         tag: '{{crime.description}}',
         rawKey: 'crime.description',
         label: 'Jinoyat tavsifi (description)',

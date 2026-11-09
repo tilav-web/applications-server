@@ -412,6 +412,8 @@ export function buildTemplateContext(
       category: adapt(crime?.category || ''),
       gravity: adapt(crime?.gravity || ''),
       description: adapt(crime?.description || crime?.title || ''),
+      method: adapt(application.crime_method?.name || ''),
+      method_group: adapt(application.crime_method?.group_name || ''),
     },
 
     // ------------------------------------------------------------------------
@@ -545,6 +547,8 @@ export function buildTemplateContext(
     },
 
     // Flat legacy aliases
+    crime_method: adapt(application.crime_method?.name || ''),
+    crime_method_group: adapt(application.crime_method?.group_name || ''),
     citizenFullName: adapt(cFullName),
     citizenShortName: adapt(cShortName),
     citizenAddress: adapt(citizenFullAddress),

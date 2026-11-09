@@ -11,6 +11,7 @@ import {
 import { BaseEntity } from '../../common/database/base.entity';
 import { Citizen } from './citizens/citizen.entity';
 import { Crime } from './crimes/crime.entity';
+import { CrimeMethod } from './crimes/methods/crime-method.entity';
 import { ApplicationCustomField } from './custom-fields/application-custom-field.entity';
 import { District } from './districts/district.entity';
 import { ApplicationStatus as ApplicationStatusEntity } from './statuses/application-status.entity';
@@ -111,6 +112,17 @@ export class Application extends BaseEntity {
   })
   @JoinColumn({ name: 'crime_id' })
   crime: Crime | null;
+
+  // 2.1. Jinoyat sodir etish usuli
+  @Column({ name: 'crime_method_id', type: 'uuid', nullable: true })
+  crime_method_id: string | null;
+
+  @ManyToOne(() => CrimeMethod, {
+    nullable: true,
+    onDelete: 'SET NULL',
+  })
+  @JoinColumn({ name: 'crime_method_id' })
+  crime_method: CrimeMethod | null;
 
   // 3. Asosiy Tuman / Bo'lim
   @Column({ name: 'district_id', type: 'uuid', nullable: true })

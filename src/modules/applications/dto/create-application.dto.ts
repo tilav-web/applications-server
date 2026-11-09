@@ -44,6 +44,10 @@ export class CreateApplicationCustomFieldDto {
 
   @IsOptional()
   @IsUUID('4')
+  crime_method_id?: string | null;
+
+  @IsOptional()
+  @IsUUID('4')
   district_id?: string;
 
   @IsOptional()
@@ -117,6 +121,10 @@ export class CreateApplicationDto {
   @IsOptional()
   @IsUUID('4')
   crime_id?: string;
+
+  @IsOptional()
+  @IsUUID('4')
+  crime_method_id?: string | null;
 
   @IsOptional()
   @IsObject()

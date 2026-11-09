@@ -8,6 +8,8 @@ import { ApplicationsService } from './applications.service';
 import { Citizen } from './citizens/citizen.entity';
 import { CitizensModule } from './citizens/citizens.module';
 import { Crime } from './crimes/crime.entity';
+import { CrimeMethod } from './crimes/methods/crime-method.entity';
+import { CrimeMethodsModule } from './crimes/methods/crime-methods.module';
 import { CrimesModule } from './crimes/crimes.module';
 import { ApplicationCustomField } from './custom-fields/application-custom-field.entity';
 import { District } from './districts/district.entity';
@@ -37,6 +39,7 @@ import { TransfersModule } from './transfers/transfers.module';
       ApplicationCustomField,
       Citizen,
       Crime,
+      CrimeMethod,
       District,
       Mahalla,
       Card,
@@ -51,6 +54,7 @@ import { TransfersModule } from './transfers/transfers.module';
     AuthModule,
     CitizensModule,
     CrimesModule,
+    CrimeMethodsModule,
     DistrictsModule,
     MahallasModule,
     ApplicationStatusesModule,
@@ -63,6 +67,6 @@ import { TransfersModule } from './transfers/transfers.module';
   ],
   controllers: [ApplicationsController],
   providers: [ApplicationsService],
-  exports: [ApplicationsService, SuspectFieldConfigsModule],
+  exports: [ApplicationsService, SuspectFieldConfigsModule, CrimeMethodsModule],
 })
 export class ApplicationsModule {}

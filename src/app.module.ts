@@ -7,6 +7,7 @@ import { ApplicationsModule } from './modules/applications/applications.module';
 import { FinancialFlowModule } from './modules/financial-flow/financial-flow.module';
 import { Citizen } from './modules/applications/citizens/citizen.entity';
 import { Crime } from './modules/applications/crimes/crime.entity';
+import { CrimeMethod } from './modules/applications/crimes/methods/crime-method.entity';
 import { ApplicationCustomField } from './modules/applications/custom-fields/application-custom-field.entity';
 import { ApplicationDocument } from './modules/applications/documents/application-document.entity';
 import { DocumentTemplate } from './modules/applications/documents/templates/document-template.entity';
@@ -47,6 +48,7 @@ import { UsersModule } from './modules/users/users.module';
           ApplicationCustomField,
           Citizen,
           Crime,
+          CrimeMethod,
           District,
           Mahalla,
           Transfer,
