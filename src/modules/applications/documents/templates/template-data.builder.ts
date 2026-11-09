@@ -8,17 +8,19 @@ import {
 } from '../utils/transliterate.util';
 
 export interface TemplateDataContext {
-  citizen: Record<string, string>;
-  app: Record<string, string>;
-  victim_card: Record<string, string>;
-  fraud_card: Record<string, string>;
-  transfers: Array<Record<string, string>>;
-  officer: Record<string, string>;
-  head: Record<string, string>;
+  citizen: Record<string, any>;
+  application: Record<string, any>;
+  crime: Record<string, any>;
+  district: Record<string, any>;
+  victim_card: Record<string, any>;
+  fraud_card: Record<string, any>;
+  transfers: Array<Record<string, any>>;
+  officer: Record<string, any>;
+  head: Record<string, any>;
   current_date: string;
   current_date_text: string;
   current_year: string;
-  // Flat legacy aliases for backwards compatibility
+  // Aliases for backwards compatibility
   [key: string]: any;
 }
 
@@ -99,173 +101,163 @@ export function buildTemplateContext(
   const currentDateFormatted = `${String(now.getDate()).padStart(2, '0')}.${String(now.getMonth() + 1).padStart(2, '0')}.${now.getFullYear()}`;
   const currentDateText = formatDateUzbek(now, script);
 
-  // 5. Build transfers list for loop/table {{#transfers}}...{{/transfers}}
+  // 5. Script adaptation helper
+  const adapt = (val?: string | null) => {
+    if (!val) return '';
+    return script === 'krill' ? adaptToScript(val, 'krill') : val;
+  };
+
+  // 6. Build transfers list
   const formattedTransfers = transfers.map((t, idx) => ({
     index: String(idx + 1),
     from_card: formatCardSpaced(t.sender_card?.card_number || victimCard?.card_number),
     to_card: formatCardSpaced(t.receiver_card?.card_number),
     amount: `${formatAmountNumber(t.amount)} ${script === 'krill' ? 'сўм' : 'so‘m'}`,
     amount_words: numberToWordsUz(t.amount, script),
+    currency: t.currency || 'UZS',
     transfer_date: t.transfer_date || '',
     transfer_time: t.transfer_time || '',
-    provider_name: t.payment_provider?.name || '',
-    status: t.status || '',
+    transaction_id: t.transaction_id || '',
+    provider_name: adapt(t.payment_provider?.name || ''),
+    payment_provider: {
+      name: adapt(t.payment_provider?.name || ''),
+    },
+    status: adapt(t.status || ''),
   }));
 
-  // Base raw context in Latin
-  const rawContext = {
+  // Context structured cleanly according to real Entity Models
+  const context: TemplateDataContext = {
+    // 1. Citizen Model
     citizen: {
-      full_name: cFullName,
-      short_name: cShortName,
-      first_name: cFirst,
-      last_name: cLast,
-      middle_name: cMiddle,
+      first_name: adapt(cFirst),
+      last_name: adapt(cLast),
+      middle_name: adapt(cMiddle),
+      phone_number: citizen?.phone_number || '',
       passport: citizen?.passport || '',
       pinfl: citizen?.pinfl || '',
-      phone: citizen?.phone_number || '',
       birth_date: citizenBirthDateRaw,
-      birth_date_text: citizenBirthDateText,
-      gender: citizen?.gender === 'female' ? 'Ayol' : 'Erkak',
-      address: citizenFullAddress,
-      district: citizenDistrictName,
-      mahalla: citizenMahallaName,
-      workplace: customData.workplace || 'Vaqtincha ishsiz',
-      marital_status: customData.maritalStatus || 'Oilaliman',
-      education: customData.education || 'Oliy',
-      criminal_record: customData.criminalRecord || 'Sudlanmaganman',
+      birth_date_text: adapt(citizenBirthDateText),
+      gender: adapt(citizen?.gender === 'female' ? 'Ayol' : 'Erkak'),
+      address: adapt(citizenFullAddress),
+      district: {
+        name: adapt(citizenDistrictName),
+      },
+      mahalla: {
+        name: adapt(citizenMahallaName),
+      },
+      // Backwards-compatible aliases
+      full_name: adapt(cFullName),
+      short_name: adapt(cShortName),
+      phone: citizen?.phone_number || '',
+      workplace: adapt(customData.workplace || 'Vaqtincha ishsiz'),
+      marital_status: adapt(customData.maritalStatus || 'Oilaliman'),
+      education: adapt(customData.education || 'Oliy'),
+      criminal_record: adapt(customData.criminalRecord || 'Sudlanmaganman'),
     },
+
+    // 2. Application Model
+    application: {
+      application_number: application.application_number || 'YANGI',
+      date: formatDateUzbek(application.date || application.created_at, script),
+      description: adapt(application.description || ''),
+      officer_notes: adapt(application.officer_notes || ''),
+      status: adapt(application.status || ''),
+    },
+
+    // 3. Crime Model
+    crime: {
+      article: adapt(crime?.article || '168-modda'),
+      part: adapt(crime?.part || ''),
+      title: adapt(crime?.title || ''),
+      description: adapt(crime?.description || crime?.title || ''),
+    },
+
+    // 4. District Model
+    district: {
+      name: adapt(district?.name || citizenDistrictName || ''),
+    },
+
+    // 5. Victim Card Model
+    victim_card: {
+      card_number: formatCardSpaced(victimCard?.card_number),
+      masked_number: maskCard(victimCard?.card_number),
+      expire_date: victimCard?.expire_date || '',
+      full_name: adapt(victimCard?.full_name || cFullName),
+      bank: {
+        name: adapt(victimCard?.bank?.name || ''),
+      },
+      // Aliases
+      number: formatCardSpaced(victimCard?.card_number),
+      holder: adapt(victimCard?.full_name || cFullName),
+    },
+
+    // 6. Fraud Card Model
+    fraud_card: {
+      card_number: formatCardSpaced(fraudCard?.card_number),
+      masked_number: maskCard(fraudCard?.card_number),
+      expire_date: fraudCard?.expire_date || '',
+      full_name: adapt(fraudCard?.full_name || ''),
+      bank: {
+        name: adapt(fraudCard?.bank?.name || ''),
+      },
+      // Aliases
+      number: formatCardSpaced(fraudCard?.card_number),
+      holder: adapt(fraudCard?.full_name || ''),
+    },
+
+    // 7. Transfers List
+    transfers: formattedTransfers,
+
+    // 8. Officer Model
+    officer: {
+      first_name: adapt(officerFirstName),
+      last_name: adapt(officerLastName),
+      phone_number: officerUser?.phone_number || '',
+      position: adapt(officerPosition),
+      // Aliases
+      full_name: adapt(officerFullName),
+      phone: officerUser?.phone_number || '',
+    },
+
+    // 9. Head of Department
+    head: {
+      title: headTitle,
+      position_and_name: headTitle,
+    },
+
+    // 10. Dates
+    current_date: currentDateFormatted,
+    current_date_text: currentDateText,
+    current_year: String(now.getFullYear()),
+
+    // Backwards compatibility alias for app.*
     app: {
       number: application.application_number || 'YANGI',
       created_date: formatDateUzbek(application.date || application.created_at, script),
       crime_article: crime?.article
         ? `${crime.article} ${crime.part || ''} (${crime.title || crime.description || ''})`.trim()
         : '168-modda',
-      district: district?.name || '',
+      district: adapt(district?.name || ''),
       stolen_amount: formatAmountNumber(totalStolenAmount),
       stolen_amount_words: numberToWordsUz(totalStolenAmount, script),
-      description: application.description || '',
-      status: application.status || '',
+      description: adapt(application.description || ''),
+      status: adapt(application.status || ''),
     },
-    victim_card: {
-      number: formatCardSpaced(victimCard?.card_number),
-      masked_number: maskCard(victimCard?.card_number),
-      holder: victimCard?.full_name || cFullName,
-      bank: victimCard?.bank?.name || '',
-    },
-    fraud_card: {
-      number: formatCardSpaced(fraudCard?.card_number),
-      masked_number: maskCard(fraudCard?.card_number),
-      holder: fraudCard?.full_name || '',
-      bank: fraudCard?.bank?.name || '',
-    },
-    transfers: formattedTransfers,
-    officer: {
-      full_name: officerFullName,
-      position: officerPosition,
-      phone: officerUser?.phone_number || '',
-    },
-    head: {
-      title: headTitle,
-      position_and_name: headTitle,
-    },
-    current_date: currentDateFormatted,
-    current_date_text: currentDateText,
-    current_year: String(now.getFullYear()),
+
+    // Flat legacy aliases
+    citizenFullName: adapt(cFullName),
+    citizenShortName: adapt(cShortName),
+    citizenAddress: adapt(citizenFullAddress),
+    citizenPhone: citizen?.phone_number || '',
+    citizenBirthDate: adapt(citizenBirthDateText),
+    cardNumber: formatCardSpaced(victimCard?.card_number),
+    fraudCardNumber: formatCardSpaced(fraudCard?.card_number),
+    stolenAmount: formatAmountNumber(totalStolenAmount),
+    stolenAmountWords: numberToWordsUz(totalStolenAmount, script),
+    officerName: adapt(officerFullName),
+    officerPosition: adapt(officerPosition),
+    dateText: currentDateText,
   };
 
-  // Convert to script if Kirill is requested
-  const adapt = (val: string) => (script === 'krill' ? adaptToScript(val, 'krill') : val);
-
-  const localizedContext: TemplateDataContext = {
-    citizen: {
-      full_name: adapt(rawContext.citizen.full_name),
-      short_name: adapt(rawContext.citizen.short_name),
-      first_name: adapt(rawContext.citizen.first_name),
-      last_name: adapt(rawContext.citizen.last_name),
-      middle_name: adapt(rawContext.citizen.middle_name),
-      passport: rawContext.citizen.passport, // Pasport series (e.g. AA 1234567) is Latin
-      pinfl: rawContext.citizen.pinfl,
-      phone: rawContext.citizen.phone,
-      birth_date: rawContext.citizen.birth_date,
-      birth_date_text: adapt(rawContext.citizen.birth_date_text),
-      gender: adapt(rawContext.citizen.gender),
-      address: adapt(rawContext.citizen.address),
-      district: adapt(rawContext.citizen.district),
-      mahalla: adapt(rawContext.citizen.mahalla),
-      workplace: adapt(rawContext.citizen.workplace),
-      marital_status: adapt(rawContext.citizen.marital_status),
-      education: adapt(rawContext.citizen.education),
-      criminal_record: adapt(rawContext.citizen.criminal_record),
-    },
-    app: {
-      number: rawContext.app.number,
-      created_date: adapt(rawContext.app.created_date),
-      crime_article: adapt(rawContext.app.crime_article),
-      district: adapt(rawContext.app.district),
-      stolen_amount: rawContext.app.stolen_amount,
-      stolen_amount_words: rawContext.app.stolen_amount_words,
-      description: adapt(rawContext.app.description),
-      status: adapt(rawContext.app.status),
-    },
-    victim_card: {
-      number: rawContext.victim_card.number,
-      masked_number: rawContext.victim_card.masked_number,
-      holder: adapt(rawContext.victim_card.holder),
-      bank: adapt(rawContext.victim_card.bank),
-    },
-    fraud_card: {
-      number: rawContext.fraud_card.number,
-      masked_number: rawContext.fraud_card.masked_number,
-      holder: adapt(rawContext.fraud_card.holder),
-      bank: adapt(rawContext.fraud_card.bank),
-    },
-    transfers: rawContext.transfers.map((t) => ({
-      ...t,
-      amount_words: adapt(t.amount_words),
-      provider_name: adapt(t.provider_name),
-    })),
-    officer: {
-      full_name: adapt(rawContext.officer.full_name),
-      position: adapt(rawContext.officer.position),
-      phone: rawContext.officer.phone,
-    },
-    head: {
-      title: headTitle,
-      position_and_name: headTitle,
-    },
-    current_date: rawContext.current_date,
-    current_date_text: adapt(rawContext.current_date_text),
-    current_year: rawContext.current_year,
-
-    // Flat legacy aliases for templates using flat variables
-    citizenFullName: adapt(rawContext.citizen.full_name),
-    citizenShortName: adapt(rawContext.citizen.short_name),
-    citizenAddress: adapt(rawContext.citizen.address),
-    citizenPhone: rawContext.citizen.phone,
-    citizenBirthDate: adapt(rawContext.citizen.birth_date_text),
-    maritalStatus: adapt(rawContext.citizen.marital_status),
-    education: adapt(rawContext.citizen.education),
-    criminalRecord: adapt(rawContext.citizen.criminal_record),
-    workplace: adapt(rawContext.citizen.workplace),
-    cardNumber: rawContext.victim_card.number,
-    cardHolder: adapt(rawContext.victim_card.holder),
-    cardBank: adapt(rawContext.victim_card.bank),
-    fraudCardNumber: rawContext.fraud_card.number,
-    fraudCardHolder: adapt(rawContext.fraud_card.holder),
-    fraudCardBank: adapt(rawContext.fraud_card.bank),
-    stolenAmount: rawContext.app.stolen_amount,
-    stolenAmountWords: rawContext.app.stolen_amount_words,
-    districtName: adapt(rawContext.app.district),
-    dateText: adapt(rawContext.current_date_text),
-    officerName: adapt(rawContext.officer.full_name),
-    officerPosition: adapt(rawContext.officer.position),
-    headTitle: headTitle,
-    phoneModel: customData.phoneModel ? adapt(customData.phoneModel) : '',
-    telegramUsagePeriod: customData.telegramUsagePeriod ? adapt(customData.telegramUsagePeriod) : '',
-    compromiseDate: customData.compromiseDate ? adapt(customData.compromiseDate) : '',
-    friendInfo: customData.friendInfo ? adapt(customData.friendInfo) : '',
-    fakeAppName: customData.fakeAppName ? adapt(customData.fakeAppName) : '',
-  };
-
-  return localizedContext;
+  return context;
 }

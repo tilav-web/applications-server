@@ -6,6 +6,27 @@ import PizZip from 'pizzip';
 export class DocxEngineService {
   private readonly logger = new Logger(DocxEngineService.name);
 
+  private createDocxParser(tag: string) {
+    return {
+      get: (scope: any) => {
+        if (!scope) return '';
+        if (tag === '.') return scope;
+        // 1. Agar to'g'ridan-to'g'ri kalit mavjud bo'lsa (flat key)
+        if (scope[tag] !== undefined && scope[tag] !== null) {
+          return scope[tag];
+        }
+        // 2. Nuqta orqali bog'langan yo'l bo'lsa (nested property path, masalan: citizen.district.name)
+        const parts = tag.split('.');
+        let val = scope;
+        for (const part of parts) {
+          if (val === null || val === undefined) return '';
+          val = val[part];
+        }
+        return val !== undefined && val !== null ? val : '';
+      },
+    };
+  }
+
   /**
    * Shablon buferiga berilgan context ma'lumotlarini kiritib yangi Docx buferini qaytarish
    */
@@ -17,6 +38,7 @@ export class DocxEngineService {
         paragraphLoop: true,
         linebreaks: true,
         nullGetter: () => '', // Agar tag qiymati bo'lmasa, 'undefined' o'rniga bo'sh joy qoldiradi
+        parser: (tag) => this.createDocxParser(tag),
       });
 
       doc.render(contextData);
@@ -88,6 +110,8 @@ export class DocxEngineService {
         delimiters: { start: '{{', end: '}}' },
         paragraphLoop: true,
         linebreaks: true,
+        nullGetter: () => '',
+        parser: (tag) => this.createDocxParser(tag),
       });
 
       // Bo'sh mock data bilan tekshirib ko'ramiz

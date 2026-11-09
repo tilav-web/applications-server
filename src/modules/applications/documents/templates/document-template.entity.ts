@@ -17,9 +17,9 @@ export class DocumentTemplate extends BaseEntity {
     name: 'category',
     type: 'varchar',
     length: 100,
-    default: 'Boshqa',
+    nullable: true,
   })
-  category: string;
+  category: string | null;
 
   @Column({ name: 'file_key', type: 'varchar', length: 500 })
   file_key: string;
