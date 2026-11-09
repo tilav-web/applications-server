@@ -23,14 +23,6 @@ export class Crime extends BaseEntity {
   title: string | null;
 
   @Column({
-    name: 'part',
-    type: 'varchar',
-    length: 50,
-    nullable: true,
-  })
-  part: string | null;
-
-  @Column({
     name: 'category',
     type: 'varchar',
     length: 150,

@@ -175,29 +175,21 @@ export const TEMPLATE_VARIABLES_DICTIONARY: TemplateCategoryConfig[] = [
   },
   {
     id: 'crime',
-    label: 'Jinoyat moddasi (Crime)',
+    label: 'Jinoyat turi (Crime)',
     iconName: 'Scale',
     items: [
       {
         tag: '{{crime.article}}',
         rawKey: 'crime.article',
-        label: 'Jinoyat kodeksi moddasi (article)',
+        label: 'Jinoyat turi (article / nomi)',
         modelName: 'Crime',
-        description: 'Masalan: 168-modda',
-        sampleValue: '168-modda',
-      },
-      {
-        tag: '{{crime.part}}',
-        rawKey: 'crime.part',
-        label: 'Modda qismi (part)',
-        modelName: 'Crime',
-        description: 'Masalan: 3-qism',
-        sampleValue: '3-qism',
+        description: 'Masalan: Firibgarlik yoki O‘g‘rilik',
+        sampleValue: 'Firibgarlik',
       },
       {
         tag: '{{crime.title}}',
         rawKey: 'crime.title',
-        label: 'Modda sarlavhasi (title)',
+        label: 'Jinoyat sarlavhasi (title)',
         modelName: 'Crime',
         description: 'Masalan: Firibgarlik',
         sampleValue: 'Firibgarlik',
@@ -221,7 +213,7 @@ export const TEMPLATE_VARIABLES_DICTIONARY: TemplateCategoryConfig[] = [
       {
         tag: '{{crime.description}}',
         rawKey: 'crime.description',
-        label: 'Modda tavsifi (description)',
+        label: 'Jinoyat tavsifi (description)',
         modelName: 'Crime',
         description: 'Moddaning to‘liq qonuniy ta’rifi',
         sampleValue: 'O‘zganing mulkini aldash yoki ishonchni suiiste’mol qilish yo‘li bilan talon-toroj qilish',

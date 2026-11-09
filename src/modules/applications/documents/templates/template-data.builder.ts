@@ -187,7 +187,6 @@ export function buildTemplateContext(
       } else if (cf.crime) {
         customFieldsContext[cf.key] = {
           article: adapt(cf.crime.article || ''),
-          part: adapt(cf.crime.part || ''),
           title: adapt(cf.crime.title || ''),
           description: adapt(cf.crime.description || ''),
         };
@@ -299,13 +298,12 @@ export function buildTemplateContext(
     },
 
     // ------------------------------------------------------------------------
-    // Model 3: Crime (Jinoyat moddasi)
+    // Model 3: Crime (Jinoyat turi)
     // ------------------------------------------------------------------------
     crime: {
       id: crime?.id || '',
-      article: adapt(crime?.article || '168-modda'),
-      part: adapt(crime?.part || ''),
-      title: adapt(crime?.title || ''),
+      article: adapt(crime?.article || crime?.title || 'Firibgarlik'),
+      title: adapt(crime?.title || crime?.article || 'Firibgarlik'),
       category: adapt(crime?.category || ''),
       gravity: adapt(crime?.gravity || ''),
       description: adapt(crime?.description || crime?.title || ''),
@@ -414,9 +412,9 @@ export function buildTemplateContext(
     app: {
       number: application.application_number || 'YANGI',
       created_date: formatDateUzbek(application.date || application.created_at, script),
-      crime_article: crime?.article
-        ? `${crime.article} ${crime.part || ''} (${crime.title || crime.description || ''})`.trim()
-        : '168-modda',
+      crime_article: crime?.article || crime?.title
+        ? `${crime.article || crime.title}`.trim()
+        : 'Firibgarlik',
       district: adapt(district?.name || ''),
       stolen_amount: formatAmountNumber(totalStolenAmountNumber),
       stolen_amount_words: numberToWordsUz(totalStolenAmountNumber, script),

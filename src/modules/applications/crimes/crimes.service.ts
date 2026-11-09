@@ -30,7 +30,6 @@ export class CrimesService {
         { article: ILike(q) },
         { title: ILike(q) },
         { category: ILike(q) },
-        { part: ILike(q) },
       ];
     }
 

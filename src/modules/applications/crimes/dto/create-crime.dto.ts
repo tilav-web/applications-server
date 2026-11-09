@@ -13,10 +13,6 @@ export class CreateCrimeDto {
 
   @IsOptional()
   @IsString()
-  part?: string;
-
-  @IsOptional()
-  @IsString()
   category?: string;
 
   @IsOptional()
