@@ -54,3 +54,4 @@ export class ApplicationStatus extends BaseEntity {
   @OneToMany('Application', 'application_status')
   applications: Application[];
 }
+

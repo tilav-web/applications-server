@@ -30,6 +30,8 @@ export class CitizensService {
       passport?: string;
       phoneNumber?: string;
       pinfl?: string;
+      gender?: string;
+      birthDate?: string;
     },
   ): Promise<PaginatedResult<Citizen>> {
     const take = limit;
@@ -53,6 +55,12 @@ export class CitizensService {
     }
     if (filters?.pinfl?.trim()) {
       conditions.pinfl = ILike(`%${filters.pinfl.trim()}%`);
+    }
+    if (filters?.gender?.trim()) {
+      conditions.gender = filters.gender.trim() as 'male' | 'female';
+    }
+    if (filters?.birthDate?.trim()) {
+      conditions.birth_date = filters.birthDate.trim();
     }
 
     let where: FindOptionsWhere<Citizen> | FindOptionsWhere<Citizen>[] = conditions;

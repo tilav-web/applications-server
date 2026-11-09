@@ -65,6 +65,21 @@ export class Citizen extends BaseEntity {
   phone_number: string | null;
 
   @Column({
+    name: 'birth_date',
+    type: 'date',
+    nullable: true,
+  })
+  birth_date: string | null;
+
+  @Column({
+    name: 'gender',
+    type: 'varchar',
+    length: 10,
+    nullable: true,
+  })
+  gender: 'male' | 'female' | null;
+
+  @Column({
     name: 'address',
     type: 'varchar',
     length: 255,

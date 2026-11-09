@@ -1,18 +1,88 @@
-import { Injectable, NotFoundException } from '@nestjs/common';
+import { Injectable, Logger, NotFoundException, OnApplicationBootstrap } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { FindOptionsWhere, ILike, Repository } from 'typeorm';
 
 import type { PaginatedResult } from '../../../common/interfaces/pagination.interface';
+import { District } from '../districts/district.entity';
+import { DEFAULT_QASHQADARYO_MAHALLAS } from '../seeds/qashqadaryo-data';
 import type { CreateMahallaDto } from './dto/create-mahalla.dto';
 import type { UpdateMahallaDto } from './dto/update-mahalla.dto';
 import { Mahalla } from './mahalla.entity';
 
 @Injectable()
-export class MahallasService {
+export class MahallasService implements OnApplicationBootstrap {
+  private readonly logger = new Logger(MahallasService.name);
+
   constructor(
     @InjectRepository(Mahalla)
     private readonly mahallaRepo: Repository<Mahalla>,
+    @InjectRepository(District)
+    private readonly districtRepo: Repository<District>,
   ) {}
+
+  async onApplicationBootstrap(): Promise<void> {
+    await this.seedDefaultMahallas();
+  }
+
+  async seedDefaultMahallas(): Promise<void> {
+    try {
+      const totalMahallas = await this.mahallaRepo.count();
+      if (totalMahallas >= 700) {
+        return;
+      }
+
+      // Tumanlar ro'yxatini yuklab olish
+      const districts = await this.districtRepo.find();
+      const districtMap = new Map<string, string>();
+      for (const d of districts) {
+        if (d.name) {
+          districtMap.set(d.name.toLowerCase().trim(), d.id);
+        }
+      }
+
+      if (districtMap.size === 0) {
+        this.logger.warn("Tumanlar topilmadi, mahallalarni kiritish keyinga qoldirildi");
+        return;
+      }
+
+      // Mavjud mahallalarni tekshirish (dublikat bo'lmasligi uchun)
+      const existingMahallas = await this.mahallaRepo.find({
+        select: { name: true, district_id: true },
+      });
+      const existingKeySet = new Set(
+        existingMahallas.map(
+          (m) => `${m.district_id}_${m.name.toLowerCase().trim()}`,
+        ),
+      );
+
+      const toInsert: Partial<Mahalla>[] = [];
+      for (const item of DEFAULT_QASHQADARYO_MAHALLAS) {
+        const dId = districtMap.get(item.district.toLowerCase().trim());
+        if (!dId) continue;
+
+        const key = `${dId}_${item.name.toLowerCase().trim()}`;
+        if (!existingKeySet.has(key)) {
+          toInsert.push({
+            name: item.name.trim(),
+            district_id: dId,
+            tracking_id: item.tracking_id || null,
+          });
+          existingKeySet.add(key);
+        }
+      }
+
+      if (toInsert.length > 0) {
+        const batchSize = 100;
+        for (let i = 0; i < toInsert.length; i += batchSize) {
+          const chunk = toInsert.slice(i, i + batchSize);
+          await this.mahallaRepo.save(this.mahallaRepo.create(chunk));
+        }
+        this.logger.log(`Boshlang'ich ${toInsert.length} ta mahalla bazaga kiritildi`);
+      }
+    } catch (error) {
+      this.logger.error('Boshlang‘ich mahallalarni kiritishda xatolik:', error);
+    }
+  }
 
   async create(dto: CreateMahallaDto): Promise<Mahalla> {
     const mahalla = this.mahallaRepo.create({
@@ -24,7 +94,7 @@ export class MahallasService {
 
   async findAll(
     page = 1,
-    limit = 100,
+    limit = 200,
     districtId?: string,
     search?: string,
   ): Promise<PaginatedResult<Mahalla>> {

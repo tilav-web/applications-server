@@ -132,6 +132,20 @@ export class Application extends BaseEntity {
   @JoinColumn({ name: 'transfer_id' })
   transfer: Transfer | null;
 
+  // 6. Arizaga biriktirilgan va yaratilgan Word hujjatlar
+  @OneToMany('ApplicationDocument', 'application')
+  documents: any[];
+
+  /**
+   * Tahliliy bog'liqliklar hisoboti (Virtual/Hisoblangan maydon)
+   */
+  relations_summary?: {
+    total: number;
+    cards: number;
+    citizens: number;
+    has_fraud_card_link: boolean;
+  };
+
   @BeforeInsert()
   @BeforeUpdate()
   normalizeFields(): void {

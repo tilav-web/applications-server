@@ -92,6 +92,33 @@ export class MinioService implements OnModuleInit {
     };
   }
 
+  async uploadBuffer(
+    buffer: Buffer,
+    filename: string,
+    mimetype = 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+    originalName = 'document.docx',
+  ): Promise<UploadedFileResponse> {
+    const metaData = {
+      'Content-Type': mimetype,
+      'Original-Name': encodeURIComponent(originalName),
+    };
+
+    await this.minioClient.putObject(this.bucketName, filename, buffer, buffer.length, metaData);
+
+    const endPoint = this.configService.get<string>('MINIO_ENDPOINT', 'localhost');
+    const port = Number(this.configService.get<number>('MINIO_PORT', 9200));
+    const directUrl = `http://${endPoint}:${port}/${this.bucketName}/${filename}`;
+
+    return {
+      url: directUrl,
+      key: filename,
+      filename,
+      original_name: originalName,
+      size: buffer.length,
+      mimetype,
+    };
+  }
+
   async uploadMultipleFiles(
     files: Express.Multer.File[],
     folder = 'attachments',

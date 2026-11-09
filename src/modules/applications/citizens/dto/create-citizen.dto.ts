@@ -1,5 +1,5 @@
 import { Transform } from 'class-transformer';
-import { IsOptional, IsString, Length, Matches, ValidateIf } from 'class-validator';
+import { IsIn, IsOptional, IsString, Length, Matches, ValidateIf } from 'class-validator';
 
 export class CreateCitizenDto {
   @IsOptional()
@@ -42,6 +42,22 @@ export class CreateCitizenDto {
   @IsOptional()
   @IsString()
   phone_number?: string;
+
+  @IsOptional()
+  @ValidateIf((o: CreateCitizenDto) => Boolean(o.birth_date && o.birth_date.trim() !== ''))
+  @IsString()
+  @Transform(({ value }: { value: unknown }) =>
+    typeof value === 'string' && value.trim() !== '' ? value.trim() : null,
+  )
+  birth_date?: string | null;
+
+  @IsOptional()
+  @ValidateIf((o: CreateCitizenDto) => Boolean(o.gender && o.gender.trim() !== ''))
+  @IsIn(['male', 'female'], { message: "Jinsi faqat 'male' yoki 'female' bo'lishi mumkin" })
+  @Transform(({ value }: { value: unknown }) =>
+    typeof value === 'string' && value.trim() !== '' ? value.trim().toLowerCase() : null,
+  )
+  gender?: 'male' | 'female' | null;
 
   @IsOptional()
   @IsString()

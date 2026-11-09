@@ -29,9 +29,11 @@ export class MinioController {
     const folder = (req.query.folder as string) || 'attachments';
     const uploaded = await this.minioService.uploadFile(file, folder);
 
-    const host = req.get('host') || 'localhost:3000';
-    const protocol = req.protocol;
-    const proxyUrl = `${protocol}://${host}/files/view?key=${encodeURIComponent(uploaded.key)}`;
+    const host = req.get('x-forwarded-host') || req.get('host');
+    const protocol = req.get('x-forwarded-proto') || req.protocol;
+    const proxyUrl = host
+      ? `${protocol}://${host}/files/view?key=${encodeURIComponent(uploaded.key)}`
+      : `/files/view?key=${encodeURIComponent(uploaded.key)}`;
 
     return {
       ...uploaded,
@@ -48,12 +50,14 @@ export class MinioController {
     const folder = (req.query.folder as string) || 'attachments';
     const uploadedList = await this.minioService.uploadMultipleFiles(files, folder);
 
-    const host = req.get('host') || 'localhost:3000';
-    const protocol = req.protocol;
+    const host = req.get('x-forwarded-host') || req.get('host');
+    const protocol = req.get('x-forwarded-proto') || req.protocol;
 
     return uploadedList.map((item) => ({
       ...item,
-      proxy_url: `${protocol}://${host}/files/view?key=${encodeURIComponent(item.key)}`,
+      proxy_url: host
+        ? `${protocol}://${host}/files/view?key=${encodeURIComponent(item.key)}`
+        : `/files/view?key=${encodeURIComponent(item.key)}`,
     }));
   }
 

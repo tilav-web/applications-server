@@ -24,3 +24,4 @@ export class CreateApplicationStatusDto {
   @IsInt()
   sort_order?: number;
 }
+

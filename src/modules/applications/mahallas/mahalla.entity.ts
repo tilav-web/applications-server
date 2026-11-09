@@ -21,6 +21,14 @@ export class Mahalla extends BaseEntity {
   })
   district_id: string;
 
+  @Column({
+    name: 'tracking_id',
+    type: 'varchar',
+    length: 100,
+    nullable: true,
+  })
+  tracking_id?: string | null;
+
   @ManyToOne(() => District, (district) => district.mahallas, {
     nullable: false,
     onDelete: 'CASCADE',

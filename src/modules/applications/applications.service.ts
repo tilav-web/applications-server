@@ -1,6 +1,6 @@
 import { Injectable, NotFoundException } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { FindOptionsWhere, ILike, Repository } from 'typeorm';
+import { FindOptionsWhere, ILike, Not, Repository } from 'typeorm';
 
 import { ApplicationStatus } from '../../common/enums/application-status.enum';
 import { TransferCustomFieldType } from '../../common/enums/transfer-custom-field-type.enum';
@@ -126,6 +126,10 @@ export class ApplicationsService {
             if (fName && !existingCitizen.first_name) existingCitizen.first_name = fName;
             if (lName && !existingCitizen.last_name) existingCitizen.last_name = lName;
             if (mName && !existingCitizen.middle_name) existingCitizen.middle_name = mName;
+            if (cData.birth_date && !existingCitizen.birth_date)
+              existingCitizen.birth_date = cData.birth_date;
+            if (cData.gender && !existingCitizen.gender)
+              existingCitizen.gender = cData.gender as 'male' | 'female';
             if (citDistrictId && !existingCitizen.district_id)
               existingCitizen.district_id = citDistrictId;
             if (citMahallaId && !existingCitizen.mahalla_id)
@@ -140,6 +144,8 @@ export class ApplicationsService {
               passport: pass,
               pinfl: pinfl,
               phone_number: pNum,
+              birth_date: cData.birth_date || null,
+              gender: (cData.gender as 'male' | 'female') || null,
               address: addr,
               district_id: citDistrictId,
               mahalla_id: citMahallaId,
@@ -416,6 +422,11 @@ export class ApplicationsService {
         if (citMahallaId !== null || data.mahalla_id !== undefined)
           existing.mahalla_id = citMahallaId;
         if (data.address !== undefined) existing.address = data.address || null;
+        if (data.birth_date !== undefined) existing.birth_date = data.birth_date || null;
+        if (data.gender !== undefined) existing.gender = (data.gender as 'male' | 'female') || null;
+        if (data.first_name) existing.first_name = data.first_name;
+        if (data.last_name) existing.last_name = data.last_name;
+        if (data.middle_name !== undefined) existing.middle_name = data.middle_name || null;
         await this.citizenRepo.save(existing);
       }
     } else if (!citizenId && dto.citizen_data && Object.keys(dto.citizen_data).length > 0) {
@@ -473,11 +484,20 @@ export class ApplicationsService {
           if (citMahallaId !== null || data.mahalla_id !== undefined)
             existingCitizen.mahalla_id = citMahallaId;
           if (data.address !== undefined) existingCitizen.address = data.address || null;
+          if (data.birth_date !== undefined) existingCitizen.birth_date = data.birth_date || null;
+          if (data.gender !== undefined)
+            existingCitizen.gender = (data.gender as 'male' | 'female') || null;
+          if (data.first_name) existingCitizen.first_name = data.first_name;
+          if (data.last_name) existingCitizen.last_name = data.last_name;
+          if (data.middle_name !== undefined)
+            existingCitizen.middle_name = data.middle_name || null;
           await this.citizenRepo.save(existingCitizen);
           citizenId = existingCitizen.id;
         } else {
           const newCitizen = this.citizenRepo.create({
             ...data,
+            birth_date: data.birth_date || null,
+            gender: (data.gender as 'male' | 'female') || null,
             district_id: citDistrictId,
             mahalla_id: citMahallaId,
           });
@@ -796,6 +816,7 @@ export class ApplicationsService {
       where: whereCondition,
       relations: {
         application_status: true,
+        documents: true,
         citizen: { district: true, mahalla: true },
         district: true,
         crime: true,
@@ -827,6 +848,8 @@ export class ApplicationsService {
       take,
     });
 
+    await this.attachRelationsSummaries(items);
+
     const totalPages = Math.ceil(total / limit) || 1;
 
     return {
@@ -842,11 +865,864 @@ export class ApplicationsService {
     };
   }
 
+  /**
+   * Arizaga tegishli barcha kartalar ma'lumotlarini ajratib olish
+   */
+  private extractCardData(app: Application) {
+    const cardIds = new Set<string>();
+    const receiverCardIds = new Set<string>();
+    const senderCardIds = new Set<string>();
+    const cardNumbers = new Set<string>();
+    const cardMap = new Map<string, { card: Card; role: 'RECEIVER' | 'SENDER' | 'RELATED' }>();
+
+    const registerCard = (
+      card: Card | null | undefined,
+      role: 'RECEIVER' | 'SENDER' | 'RELATED',
+    ) => {
+      if (!card || !card.id) return;
+      cardIds.add(card.id);
+      if (role === 'RECEIVER') receiverCardIds.add(card.id);
+      if (role === 'SENDER') senderCardIds.add(card.id);
+
+      const rawNum = (card.card_number || card.masked_number || '').replace(/\D/g, '');
+      if (rawNum.length >= 4) {
+        cardNumbers.add(rawNum);
+      }
+
+      const existing = cardMap.get(card.id);
+      if (!existing || role === 'RECEIVER' || (role === 'SENDER' && existing.role !== 'RECEIVER')) {
+        cardMap.set(card.id, { card, role });
+      }
+    };
+
+    if (app.card) registerCard(app.card, 'RELATED');
+    else if (app.card_id) cardIds.add(app.card_id);
+
+    if (app.transfer) {
+      if (app.transfer.receiver_card) registerCard(app.transfer.receiver_card, 'RECEIVER');
+      else if (app.transfer.receiver_card_id) {
+        cardIds.add(app.transfer.receiver_card_id);
+        receiverCardIds.add(app.transfer.receiver_card_id);
+      }
+
+      if (app.transfer.sender_card) registerCard(app.transfer.sender_card, 'SENDER');
+      else if (app.transfer.sender_card_id) {
+        cardIds.add(app.transfer.sender_card_id);
+        senderCardIds.add(app.transfer.sender_card_id);
+      }
+
+      if (app.transfer.card) registerCard(app.transfer.card, 'RELATED');
+      else if (app.transfer.card_id) cardIds.add(app.transfer.card_id);
+
+      if (app.transfer.custom_fields) {
+        for (const tcf of app.transfer.custom_fields) {
+          if (tcf.card) registerCard(tcf.card, 'RELATED');
+          else if (tcf.card_id) cardIds.add(tcf.card_id);
+        }
+      }
+    }
+
+    if (app.custom_fields) {
+      for (const cf of app.custom_fields) {
+        if (cf.card) registerCard(cf.card, 'RELATED');
+        else if (cf.card_id) cardIds.add(cf.card_id);
+
+        if (cf.transfer) {
+          if (cf.transfer.receiver_card) registerCard(cf.transfer.receiver_card, 'RECEIVER');
+          else if (cf.transfer.receiver_card_id) {
+            cardIds.add(cf.transfer.receiver_card_id);
+            receiverCardIds.add(cf.transfer.receiver_card_id);
+          }
+
+          if (cf.transfer.sender_card) registerCard(cf.transfer.sender_card, 'SENDER');
+          else if (cf.transfer.sender_card_id) {
+            cardIds.add(cf.transfer.sender_card_id);
+            senderCardIds.add(cf.transfer.sender_card_id);
+          }
+        }
+      }
+    }
+
+    return {
+      cardIds: Array.from(cardIds),
+      receiverCardIds: Array.from(receiverCardIds),
+      senderCardIds: Array.from(senderCardIds),
+      cardNumbers: Array.from(cardNumbers),
+      cardMap,
+    };
+  }
+
+  /**
+   * Arizaga tegishli barcha fuqarolar ma'lumotlarini ajratib olish
+   */
+  private extractCitizenData(app: Application) {
+    const citizenIds = new Set<string>();
+    const pinfls = new Set<string>();
+    const passports = new Set<string>();
+    const phones = new Set<string>();
+    const citizenMap = new Map<string, Citizen>();
+
+    const registerCitizen = (citizen: Citizen | null | undefined) => {
+      if (!citizen || !citizen.id) return;
+      citizenIds.add(citizen.id);
+      citizenMap.set(citizen.id, citizen);
+
+      if (citizen.pinfl && citizen.pinfl.trim().length >= 8) {
+        pinfls.add(citizen.pinfl.trim());
+      }
+      if (citizen.passport && citizen.passport.trim().length >= 5) {
+        passports.add(citizen.passport.trim().toUpperCase());
+      }
+      if (citizen.phone_number) {
+        const rawPhone = citizen.phone_number.replace(/\D/g, '');
+        if (rawPhone.length >= 7) {
+          phones.add(rawPhone);
+        }
+      }
+    };
+
+    if (app.citizen) registerCitizen(app.citizen);
+    else if (app.citizen_id) citizenIds.add(app.citizen_id);
+
+    if (app.custom_fields) {
+      for (const cf of app.custom_fields) {
+        if (cf.citizen) registerCitizen(cf.citizen);
+        else if (cf.citizen_id) citizenIds.add(cf.citizen_id);
+      }
+    }
+
+    if (app.transfer?.custom_fields) {
+      for (const tcf of app.transfer.custom_fields) {
+        if (tcf.citizen) registerCitizen(tcf.citizen);
+        else if (tcf.citizen_id) citizenIds.add(tcf.citizen_id);
+      }
+    }
+
+    return {
+      citizenIds: Array.from(citizenIds),
+      pinfls: Array.from(pinfls),
+      passports: Array.from(passports),
+      phones: Array.from(phones),
+      citizenMap,
+    };
+  }
+
+  /**
+   * Bosh sahifa jadvali uchun arizalarga ixcham bog'liqlik xulosalarini hisoblash
+   */
+  private async attachRelationsSummaries(items: Application[]): Promise<void> {
+    if (!items || items.length === 0) return;
+
+    try {
+      const allApps = await this.applicationRepo.find({
+        relations: {
+          citizen: true,
+          card: true,
+          transfer: {
+            receiver_card: true,
+            sender_card: true,
+            card: true,
+            custom_fields: { card: true, citizen: true },
+          },
+          custom_fields: {
+            citizen: true,
+            card: true,
+            transfer: {
+              receiver_card: true,
+              sender_card: true,
+            },
+          },
+        },
+      });
+
+      // Agar arizada transfer_id bo'lmay, transfer jadvalida application_id biriktirilgan bo'lsa
+      const extraTransfers = await this.transferRepo.find({
+        relations: {
+          payment_provider: true,
+          sender_card: { bank: true },
+          receiver_card: { bank: true },
+          card: { bank: true },
+          custom_fields: { card: { bank: true }, citizen: true },
+        },
+      });
+      const transferByAppId = new Map<string, Transfer>();
+      for (const t of extraTransfers) {
+        if (t.application_id) {
+          transferByAppId.set(t.application_id, t);
+        }
+      }
+
+      for (const a of allApps) {
+        if (!a.transfer && transferByAppId.has(a.id)) {
+          a.transfer = transferByAppId.get(a.id)!;
+        }
+      }
+
+      const appExtracts = new Map<string, { cardData: any; citizenData: any }>();
+      for (const a of allApps) {
+        appExtracts.set(a.id, {
+          cardData: this.extractCardData(a),
+          citizenData: this.extractCitizenData(a),
+        });
+      }
+
+      for (const item of items) {
+        if (!item.transfer && transferByAppId.has(item.id)) {
+          item.transfer = transferByAppId.get(item.id)!;
+        }
+
+        const itemExtract = appExtracts.get(item.id) || {
+          cardData: this.extractCardData(item),
+          citizenData: this.extractCitizenData(item),
+        };
+
+        const matchedOtherIds = new Set<string>();
+        let cardMatchesCount = 0;
+        let citizenMatchesCount = 0;
+        let hasFraudLink = false;
+
+        for (const other of allApps) {
+          if (other.id === item.id) continue;
+          const otherExtract = appExtracts.get(other.id);
+          if (!otherExtract) continue;
+
+          let cardMatched = false;
+          let citizenMatched = false;
+
+          // Card match
+          for (const [cardId, cardEntry] of itemExtract.cardData.cardMap.entries()) {
+            const curNum = (cardEntry.card.card_number || cardEntry.card.masked_number || '').replace(/\D/g, '');
+            for (const [othCardId, othEntry] of otherExtract.cardData.cardMap.entries()) {
+              const othNum = (othEntry.card.card_number || othEntry.card.masked_number || '').replace(/\D/g, '');
+              if (
+                othCardId === cardId ||
+                (curNum.length >= 8 && othNum.length >= 8 && curNum === othNum)
+              ) {
+                cardMatched = true;
+                if (cardEntry.role === 'RECEIVER' && othEntry.role === 'RECEIVER') {
+                  hasFraudLink = true;
+                }
+                break;
+              }
+            }
+            if (cardMatched) break;
+          }
+
+          // Citizen match
+          for (const [citId, curCit] of itemExtract.citizenData.citizenMap.entries()) {
+            if (otherExtract.citizenData.citizenIds.includes(citId)) {
+              citizenMatched = true;
+              break;
+            }
+            for (const othCit of otherExtract.citizenData.citizenMap.values()) {
+              if (curCit.pinfl && othCit.pinfl && curCit.pinfl.trim() === othCit.pinfl.trim()) {
+                citizenMatched = true;
+                break;
+              }
+              if (
+                curCit.passport &&
+                othCit.passport &&
+                curCit.passport.trim().toUpperCase() === othCit.passport.trim().toUpperCase()
+              ) {
+                citizenMatched = true;
+                break;
+              }
+              const cP = (curCit.phone_number || '').replace(/\D/g, '');
+              const oP = (othCit.phone_number || '').replace(/\D/g, '');
+              if (cP.length >= 7 && oP.length >= 7 && cP === oP) {
+                citizenMatched = true;
+                break;
+              }
+            }
+            if (citizenMatched) break;
+          }
+
+          if (cardMatched || citizenMatched) {
+            matchedOtherIds.add(other.id);
+            if (cardMatched) cardMatchesCount++;
+            if (citizenMatched) citizenMatchesCount++;
+          }
+        }
+
+        item.relations_summary = {
+          total: matchedOtherIds.size,
+          cards: cardMatchesCount,
+          citizens: citizenMatchesCount,
+          has_fraud_card_link: hasFraudLink,
+        };
+      }
+    } catch (err) {
+      console.error('attachRelationsSummaries xatolik:', err);
+    }
+  }
+
+  /**
+   * Tanlangan arizaning barcha boshqa arizalar bilan bog'liqliklari (Karta va Fuqaro bo'yicha)
+   */
+  async getRelations(id: string) {
+    const currentApp = await this.findOne(id);
+
+    // Agar arizada transfer_id bo'lmasa, transfer jadvalidan application_id orqali tekshirish
+    if (!currentApp.transfer) {
+      const tr = await this.transferRepo.findOne({
+        where: { application_id: currentApp.id },
+        relations: {
+          payment_provider: true,
+          sender_card: { bank: true },
+          receiver_card: { bank: true },
+          card: { bank: true },
+          custom_fields: { card: { bank: true }, citizen: true },
+        },
+      });
+      if (tr) {
+        currentApp.transfer = tr;
+      }
+    }
+
+    const cardData = this.extractCardData(currentApp);
+    const citizenData = this.extractCitizenData(currentApp);
+
+    // Barcha boshqa arizalarni relyatsiyalari bilan yuklash
+    const otherApps = await this.applicationRepo.find({
+      where: { id: Not(id) },
+      relations: {
+        application_status: true,
+        citizen: { district: true, mahalla: true },
+        district: true,
+        crime: true,
+        card: { bank: true, citizen: true },
+        transfer: {
+          payment_provider: true,
+          sender_card: { bank: true },
+          receiver_card: { bank: true },
+          card: { bank: true },
+          custom_fields: { card: { bank: true }, citizen: true },
+        },
+        custom_fields: {
+          citizen: { district: true, mahalla: true },
+          card: { bank: true, citizen: true },
+          crime: true,
+          district: true,
+          transfer: {
+            payment_provider: true,
+            sender_card: { bank: true },
+            receiver_card: { bank: true },
+          },
+        },
+      },
+      order: { date: 'DESC', created_at: 'DESC' },
+    });
+
+    const extraTransfers = await this.transferRepo.find({
+      relations: {
+        payment_provider: true,
+        sender_card: { bank: true },
+        receiver_card: { bank: true },
+        card: { bank: true },
+        custom_fields: { card: { bank: true }, citizen: true },
+      },
+    });
+    const transferByAppId = new Map<string, Transfer>();
+    for (const t of extraTransfers) {
+      if (t.application_id) {
+        transferByAppId.set(t.application_id, t);
+      }
+    }
+
+    for (const other of otherApps) {
+      if (!other.transfer && transferByAppId.has(other.id)) {
+        other.transfer = transferByAppId.get(other.id)!;
+      }
+    }
+
+    const cardRelationsMap = new Map<
+      string,
+      {
+        card: any;
+        role_in_current_app: 'RECEIVER' | 'SENDER' | 'RELATED';
+        linked_applications: any[];
+      }
+    >();
+
+    const citizenRelationsMap = new Map<
+      string,
+      {
+        citizen: any;
+        match_reasons: Set<string>;
+        linked_applications: any[];
+      }
+    >();
+
+    const linkedApplicationIds = new Set<string>();
+    let hasFraudCardLink = false;
+
+    // Har bir boshqa arizani tekshirish
+    for (const other of otherApps) {
+      const otherCardData = this.extractCardData(other);
+      const otherCitizenData = this.extractCitizenData(other);
+
+      let isLinked = false;
+
+      // 1. KARTALAR BO'YICHA TEKSHIRUV
+      for (const [cardId, currentCardEntry] of cardData.cardMap.entries()) {
+        const currentCard = currentCardEntry.card;
+        const currentNum = (currentCard.card_number || currentCard.masked_number || '').replace(/\D/g, '');
+
+        let otherRole: 'RECEIVER' | 'SENDER' | 'RELATED' | null = null;
+
+        for (const [otherCardId, otherEntry] of otherCardData.cardMap.entries()) {
+          const otherNum = (otherEntry.card.card_number || otherEntry.card.masked_number || '').replace(/\D/g, '');
+          if (
+            otherCardId === cardId ||
+            (currentNum.length >= 8 && otherNum.length >= 8 && currentNum === otherNum)
+          ) {
+            otherRole = otherEntry.role;
+            break;
+          }
+        }
+
+        if (otherRole) {
+          isLinked = true;
+          if (currentCardEntry.role === 'RECEIVER' && otherRole === 'RECEIVER') {
+            hasFraudCardLink = true;
+          }
+
+          if (!cardRelationsMap.has(cardId)) {
+            cardRelationsMap.set(cardId, {
+              card: {
+                id: currentCard.id,
+                card_number: currentCard.card_number,
+                masked_number: currentCard.masked_number,
+                full_name: currentCard.full_name,
+                bank_name: currentCard.bank?.name || null,
+              },
+              role_in_current_app: currentCardEntry.role,
+              linked_applications: [],
+            });
+          }
+
+          const cardRel = cardRelationsMap.get(cardId)!;
+          if (!cardRel.linked_applications.some((a) => a.id === other.id)) {
+            cardRel.linked_applications.push({
+              id: other.id,
+              application_number: other.application_number || 'Raqamsiz',
+              status: other.status,
+              status_label: other.application_status?.name || other.status || 'Yangi',
+              status_color: other.application_status?.color || 'blue',
+              date: other.date,
+              citizen_name: other.citizen
+                ? `${other.citizen.last_name || ''} ${other.citizen.first_name || ''} ${other.citizen.middle_name || ''}`.trim()
+                : 'Arizachi kiritilmagan',
+              citizen_phone: other.citizen?.phone_number || null,
+              role_in_that_app: otherRole,
+              transfer_amount: other.transfer?.amount ? Number(other.transfer.amount) : null,
+              currency: other.transfer?.currency || 'UZS',
+              payment_provider: other.transfer?.payment_provider?.name || null,
+              description: other.description || null,
+            });
+          }
+        }
+      }
+
+      // 2. FUQAROLAR BO'YICHA TEKSHIRUV
+      for (const [citizenId, currentCitizen] of citizenData.citizenMap.entries()) {
+        const reasons = new Set<string>();
+
+        if (otherCitizenData.citizenIds.includes(citizenId)) {
+          reasons.add('Ayni bir fuqaro profili biriktirilgan');
+        }
+
+        for (const otherCitizen of otherCitizenData.citizenMap.values()) {
+          if (
+            currentCitizen.pinfl &&
+            otherCitizen.pinfl &&
+            currentCitizen.pinfl.trim() === otherCitizen.pinfl.trim()
+          ) {
+            reasons.add(`Bir xil JSHSHIR (PINFL): ${currentCitizen.pinfl.trim()}`);
+          }
+
+          if (
+            currentCitizen.passport &&
+            otherCitizen.passport &&
+            currentCitizen.passport.trim().toUpperCase() === otherCitizen.passport.trim().toUpperCase()
+          ) {
+            reasons.add(`Bir xil Pasport: ${currentCitizen.passport.trim().toUpperCase()}`);
+          }
+
+          const curPhone = (currentCitizen.phone_number || '').replace(/\D/g, '');
+          const othPhone = (otherCitizen.phone_number || '').replace(/\D/g, '');
+          if (curPhone.length >= 7 && othPhone.length >= 7 && curPhone === othPhone) {
+            reasons.add(`Bir xil Telefon raqami: +${curPhone}`);
+          }
+        }
+
+        if (reasons.size > 0) {
+          isLinked = true;
+          if (!citizenRelationsMap.has(citizenId)) {
+            citizenRelationsMap.set(citizenId, {
+              citizen: {
+                id: currentCitizen.id,
+                first_name: currentCitizen.first_name,
+                last_name: currentCitizen.last_name,
+                middle_name: currentCitizen.middle_name,
+                phone_number: currentCitizen.phone_number,
+                passport: currentCitizen.passport,
+                pinfl: currentCitizen.pinfl,
+              },
+              match_reasons: new Set(),
+              linked_applications: [],
+            });
+          }
+
+          const citRel = citizenRelationsMap.get(citizenId)!;
+          reasons.forEach((r) => citRel.match_reasons.add(r));
+
+          if (!citRel.linked_applications.some((a) => a.id === other.id)) {
+            citRel.linked_applications.push({
+              id: other.id,
+              application_number: other.application_number || 'Raqamsiz',
+              status: other.status,
+              status_label: other.application_status?.name || other.status || 'Yangi',
+              status_color: other.application_status?.color || 'blue',
+              date: other.date,
+              citizen_name: other.citizen
+                ? `${other.citizen.last_name || ''} ${other.citizen.first_name || ''} ${other.citizen.middle_name || ''}`.trim()
+                : 'Arizachi kiritilmagan',
+              transfer_amount: other.transfer?.amount ? Number(other.transfer.amount) : null,
+              currency: other.transfer?.currency || 'UZS',
+              description: other.description || null,
+            });
+          }
+        }
+      }
+
+      if (isLinked) {
+        linkedApplicationIds.add(other.id);
+      }
+    }
+
+    const cardRelations = Array.from(cardRelationsMap.values());
+    const citizenRelations = Array.from(citizenRelationsMap.values()).map((cr) => ({
+      ...cr,
+      match_reasons: Array.from(cr.match_reasons),
+    }));
+
+    let totalLinkedLoss = 0;
+    const countedAppIds = new Set<string>();
+    for (const cr of cardRelations) {
+      for (const la of cr.linked_applications) {
+        if (!countedAppIds.has(la.id) && la.transfer_amount) {
+          totalLinkedLoss += la.transfer_amount;
+          countedAppIds.add(la.id);
+        }
+      }
+    }
+    for (const citR of citizenRelations) {
+      for (const la of citR.linked_applications) {
+        if (!countedAppIds.has(la.id) && la.transfer_amount) {
+          totalLinkedLoss += la.transfer_amount;
+          countedAppIds.add(la.id);
+        }
+      }
+    }
+
+    const currentAppLoss = currentApp.transfer?.amount ? Number(currentApp.transfer.amount) : 0;
+
+    // =========================================================================
+    // 3. GRAPH CANVAS UCHUN TUGUNLAR (NODES) VA QIRRALAR (EDGES) SHAKLLANTIRISH
+    // =========================================================================
+    const graphNodesMap = new Map<string, any>();
+    const graphEdges: any[] = [];
+
+    const ensureCardNode = (
+      card: Card | null | undefined,
+      defaultRole: 'MULE_DROPPER' | 'TRANSIT' | 'VICTIM_SOURCE',
+      appContext?: Application,
+    ) => {
+      if (!card || !card.id) return null;
+      if (!graphNodesMap.has(card.id)) {
+        const cleanNum = (card.card_number || card.masked_number || '').replace(/\D/g, '');
+        const masked =
+          cleanNum.length === 16
+            ? `${cleanNum.slice(0, 4)} **** **** ${cleanNum.slice(12, 16)}`
+            : card.masked_number || card.card_number || 'Noma‘lum';
+
+        const bankName = card.bank?.name || this.identifyBank(card.card_number);
+        const owner = card.citizen
+          ? `${card.citizen.last_name || ''} ${card.citizen.first_name || ''}`.trim()
+          : card.full_name || 'Karta egasi ko‘rsatilmagan';
+
+        graphNodesMap.set(card.id, {
+          id: card.id,
+          cardNumber: card.card_number || masked,
+          maskedCard: masked,
+          bankName,
+          totalIn: 0,
+          totalOut: 0,
+          netFlow: 0,
+          inDegree: 0,
+          outDegree: 0,
+          reportsCount: 0,
+          reportIds: [],
+          riskScore: defaultRole === 'MULE_DROPPER' ? 85 : defaultRole === 'TRANSIT' ? 50 : 15,
+          role: defaultRole,
+          isBlacklisted: false,
+          ownerName: owner,
+          pinfl: card.citizen?.pinfl || '',
+          passport: card.citizen?.passport || '',
+          phone: card.citizen?.phone_number || '',
+          linkedApplications: [],
+        });
+      }
+
+      const node = graphNodesMap.get(card.id)!;
+      if (defaultRole === 'MULE_DROPPER') {
+        node.role = 'MULE_DROPPER';
+        node.riskScore = Math.max(node.riskScore, 85);
+      } else if (defaultRole === 'TRANSIT' && node.role !== 'MULE_DROPPER') {
+        node.role = 'TRANSIT';
+        node.riskScore = Math.max(node.riskScore, 50);
+      }
+
+      if (appContext && !node.reportIds.includes(appContext.id)) {
+        node.reportIds.push(appContext.id);
+        node.reportsCount = node.reportIds.length;
+
+        node.linkedApplications.push({
+          id: appContext.id,
+          application_number: appContext.application_number || 'Raqamsiz',
+          status: appContext.status,
+          status_label: appContext.application_status?.name || appContext.status || 'Yangi',
+          status_color: appContext.application_status?.color || 'blue',
+          date: appContext.date,
+          citizen_name: appContext.citizen
+            ? `${appContext.citizen.last_name || ''} ${appContext.citizen.first_name || ''}`.trim()
+            : 'Arizachi kiritilmagan',
+          citizen_phone: appContext.citizen?.phone_number || null,
+          role_in_that_app: defaultRole,
+          transfer_amount: appContext.transfer?.amount ? Number(appContext.transfer.amount) : null,
+          currency: appContext.transfer?.currency || 'UZS',
+          payment_provider: appContext.transfer?.payment_provider?.name || null,
+          description: appContext.description || null,
+        });
+      }
+
+      return node;
+    };
+
+    const allRelevantApps = [currentApp, ...otherApps.filter((o) => linkedApplicationIds.has(o.id))];
+
+    for (const appItem of allRelevantApps) {
+      const tr = appItem.transfer;
+      if (!tr) continue;
+
+      const amt = tr.amount ? Number(tr.amount) : 0;
+      const providerName = tr.payment_provider?.name || 'To‘lov tizimi';
+
+      let srcNodeId: string | null = null;
+      let tgtNodeId: string | null = null;
+
+      if (tr.sender_card) {
+        const sNode = ensureCardNode(tr.sender_card, 'VICTIM_SOURCE', appItem);
+        if (sNode) {
+          sNode.totalOut += amt;
+          sNode.outDegree += 1;
+          srcNodeId = sNode.id;
+        }
+      } else if (appItem.citizen) {
+        const citNodeId = `cit__${appItem.citizen.id}`;
+        if (!graphNodesMap.has(citNodeId)) {
+          graphNodesMap.set(citNodeId, {
+            id: citNodeId,
+            cardNumber:
+              `${appItem.citizen.last_name || ''} ${appItem.citizen.first_name || ''}`.trim() ||
+              'Arizachi',
+            maskedCard:
+              `${appItem.citizen.last_name || ''} ${appItem.citizen.first_name || ''}`.trim() ||
+              'Arizachi',
+            bankName: `Ariza № ${appItem.application_number || 'Raqamsiz'}`,
+            totalIn: 0,
+            totalOut: amt,
+            netFlow: -amt,
+            inDegree: 0,
+            outDegree: 1,
+            reportsCount: 1,
+            reportIds: [appItem.id],
+            riskScore: 10,
+            role: 'VICTIM_SOURCE',
+            isBlacklisted: false,
+            ownerName: `${appItem.citizen.last_name || ''} ${appItem.citizen.first_name || ''}`.trim(),
+            pinfl: appItem.citizen.pinfl || '',
+            passport: appItem.citizen.passport || '',
+            phone: appItem.citizen.phone_number || '',
+            linkedApplications: [
+              {
+                id: appItem.id,
+                application_number: appItem.application_number || 'Raqamsiz',
+                status: appItem.status,
+                status_label: appItem.application_status?.name || appItem.status || 'Yangi',
+                status_color: appItem.application_status?.color || 'blue',
+                date: appItem.date,
+                citizen_name: `${appItem.citizen.last_name || ''} ${appItem.citizen.first_name || ''}`.trim(),
+                citizen_phone: appItem.citizen?.phone_number || null,
+                role_in_that_app: 'VICTIM_SOURCE',
+                transfer_amount: amt,
+                currency: tr.currency || 'UZS',
+                payment_provider: providerName,
+                description: appItem.description || null,
+              },
+            ],
+          });
+        }
+        const cNode = graphNodesMap.get(citNodeId)!;
+        cNode.totalOut += amt;
+        srcNodeId = citNodeId;
+      }
+
+      if (tr.receiver_card) {
+        const rNode = ensureCardNode(tr.receiver_card, 'MULE_DROPPER', appItem);
+        if (rNode) {
+          rNode.totalIn += amt;
+          rNode.inDegree += 1;
+          tgtNodeId = rNode.id;
+        }
+      } else {
+        const unkNodeId = `unk__${appItem.id}`;
+        if (!graphNodesMap.has(unkNodeId)) {
+          graphNodesMap.set(unkNodeId, {
+            id: unkNodeId,
+            cardNumber: '❓ Noaniq qabul qiluvchi',
+            maskedCard: '❓ Noaniq qabul qiluvchi',
+            bankName: 'Noma‘lum manzil',
+            totalIn: amt,
+            totalOut: 0,
+            netFlow: amt,
+            inDegree: 1,
+            outDegree: 0,
+            reportsCount: 1,
+            reportIds: [appItem.id],
+            riskScore: 60,
+            role: 'MULE_DROPPER',
+            isBlacklisted: false,
+            isUnknownDestination: true,
+            linkedApplications: [
+              {
+                id: appItem.id,
+                application_number: appItem.application_number || 'Raqamsiz',
+                status: appItem.status,
+                status_label: appItem.application_status?.name || appItem.status || 'Yangi',
+                status_color: appItem.application_status?.color || 'blue',
+                date: appItem.date,
+                citizen_name: appItem.citizen
+                  ? `${appItem.citizen.last_name || ''} ${appItem.citizen.first_name || ''}`.trim()
+                  : 'Arizachi',
+                citizen_phone: appItem.citizen?.phone_number || null,
+                role_in_that_app: 'MULE_DROPPER',
+                transfer_amount: amt,
+                currency: tr.currency || 'UZS',
+                payment_provider: providerName,
+                description: appItem.description || null,
+              },
+            ],
+          });
+        }
+        tgtNodeId = unkNodeId;
+      }
+
+      if (srcNodeId && tgtNodeId) {
+        graphEdges.push({
+          id: `edge__${tr.id || appItem.id}__${srcNodeId}__${tgtNodeId}`,
+          from: srcNodeId,
+          to: tgtNodeId,
+          amount: amt,
+          paymentProvider: providerName,
+          transactionsCount: 1,
+          lastDate:
+            tr.transfer_date ||
+            (appItem.date ? new Date(appItem.date).toISOString() : new Date().toISOString()),
+          applicationNumber: appItem.application_number || 'Raqamsiz',
+          applicationId: appItem.id,
+          isUnknownDestination: graphNodesMap.get(tgtNodeId)?.isUnknownDestination || false,
+        });
+      }
+    }
+
+    for (const node of graphNodesMap.values()) {
+      node.netFlow = node.totalIn - node.totalOut;
+      if (node.inDegree > 0 && node.outDegree > 0 && node.role !== 'MULE_DROPPER') {
+        node.role = 'TRANSIT';
+        node.riskScore = 55;
+      }
+    }
+
+    const graphNodes = Array.from(graphNodesMap.values());
+    const totalFlowAmount = graphEdges.reduce((acc, e) => acc + (e.amount || 0), 0);
+    const droppersCount = graphNodes.filter((n) => n.role === 'MULE_DROPPER').length;
+    const transitCount = graphNodes.filter((n) => n.role === 'TRANSIT').length;
+
+    const graphSummary = {
+      totalCards: graphNodes.length,
+      totalFlowAmount,
+      droppersCount,
+      transitCount,
+      blacklistedCount: 0,
+    };
+
+    return {
+      application: {
+        id: currentApp.id,
+        application_number: currentApp.application_number || 'Raqamsiz',
+        description: currentApp.description,
+        status: currentApp.status,
+        application_status: currentApp.application_status,
+        date: currentApp.date,
+        citizen: currentApp.citizen,
+        transfer: currentApp.transfer,
+      },
+      stats: {
+        total_linked_applications: linkedApplicationIds.size,
+        total_linked_loss: totalLinkedLoss,
+        current_app_loss: currentAppLoss,
+        grand_total_loss: currentAppLoss + totalLinkedLoss,
+        total_cards_count: cardRelations.length,
+        total_citizens_count: citizenRelations.length,
+        has_fraud_card_link: hasFraudCardLink,
+      },
+      card_relations: cardRelations,
+      citizen_relations: citizenRelations,
+      graph: {
+        nodes: graphNodes,
+        edges: graphEdges,
+        summary: graphSummary,
+      },
+    };
+  }
+
+  public identifyBank(cardNumber?: string | null): string {
+    if (!cardNumber) return 'Noma‘lum Bank';
+    const clean = cardNumber.replace(/\D/g, '');
+    const p4 = clean.substring(0, 4);
+    const p6 = clean.substring(0, 6);
+
+    if (p4 === '8600') return 'Uzcard';
+    if (p4 === '9860') return 'Humo';
+    if (p4 === '5614') return 'Uzcard Cobadged';
+    if (p6 === '400845') return 'Xalq Banki (Visa)';
+    if (p6 === '415865') return 'Kapitalbank (Visa)';
+    if (p6 === '416973') return 'Ipak Yo‘li Banki (Visa)';
+    if (p6 === '427209') return 'Hamkorbank (Visa)';
+    if (p4.startsWith('4')) return 'Visa';
+    if (p4.startsWith('5')) return 'Mastercard';
+    if (p4.startsWith('62')) return 'UnionPay';
+    return 'Bank';
+  }
+
   async findOne(id: string): Promise<Application> {
     const application = await this.applicationRepo.findOne({
       where: { id },
       relations: {
         application_status: true,
+        documents: true,
         citizen: { district: true, mahalla: true },
         district: true,
         crime: true,

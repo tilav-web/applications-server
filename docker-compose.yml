@@ -12,6 +12,8 @@ services:
     restart: unless-stopped
     ports:
       - '${BACKEND_EXTERNAL_PORT:-3001}:3000'
+    volumes:
+      - ./templates:/usr/src/app/templates
     environment:
       - PORT=3000
       - NODE_ENV=${NODE_ENV:-development}
@@ -117,6 +119,21 @@ services:
       interval: 5s
       timeout: 5s
       retries: 5
+    networks:
+      - uvd_app_network
+
+  # ---------------------------------------------------------------------------
+  # ONLYOFFICE Document Server
+  # ---------------------------------------------------------------------------
+  onlyoffice:
+    image: onlyoffice/documentserver:latest
+    container_name: uvd_app_onlyoffice
+    restart: unless-stopped
+    ports:
+      - '${ONLYOFFICE_PORT:-8084}:80'
+    environment:
+      - JWT_ENABLED=false
+      - ALLOW_PRIVATE_IP_ADDRESS=true
     networks:
       - uvd_app_network
 

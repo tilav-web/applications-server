@@ -1,25 +1,53 @@
-import { Injectable, NotFoundException } from '@nestjs/common';
+import { Injectable, Logger, NotFoundException, OnApplicationBootstrap } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { FindOptionsWhere, ILike, Repository } from 'typeorm';
 
 import type { PaginatedResult } from '../../../common/interfaces/pagination.interface';
+import { DEFAULT_QASHQADARYO_DISTRICTS } from '../seeds/qashqadaryo-data';
 import { District } from './district.entity';
 import type { CreateDistrictDto } from './dto/create-district.dto';
 import type { UpdateDistrictDto } from './dto/update-district.dto';
 
 @Injectable()
-export class DistrictsService {
+export class DistrictsService implements OnApplicationBootstrap {
+  private readonly logger = new Logger(DistrictsService.name);
+
   constructor(
     @InjectRepository(District)
     private readonly districtRepo: Repository<District>,
   ) {}
+
+  async onApplicationBootstrap(): Promise<void> {
+    await this.seedDefaultDistricts();
+  }
+
+  async seedDefaultDistricts(): Promise<void> {
+    try {
+      let createdCount = 0;
+      for (const name of DEFAULT_QASHQADARYO_DISTRICTS) {
+        const existing = await this.districtRepo.findOne({
+          where: { name: ILike(name.trim()) },
+        });
+        if (!existing) {
+          const district = this.districtRepo.create({ name: name.trim() });
+          await this.districtRepo.save(district);
+          createdCount++;
+        }
+      }
+      if (createdCount > 0) {
+        this.logger.log(`Boshlang'ich ${createdCount} ta tuman bazaga kiritildi`);
+      }
+    } catch (error) {
+      this.logger.error('Boshlang‘ich tumanlarni kiritishda xatolik:', error);
+    }
+  }
 
   async create(dto: CreateDistrictDto): Promise<District> {
     const district = this.districtRepo.create(dto);
     return this.districtRepo.save(district);
   }
 
-  async findAll(page = 1, limit = 50, search?: string): Promise<PaginatedResult<District>> {
+  async findAll(page = 1, limit = 100, search?: string): Promise<PaginatedResult<District>> {
     const take = limit;
     const skip = (page - 1) * limit;
 

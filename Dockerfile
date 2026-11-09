@@ -21,6 +21,7 @@ COPY package*.json ./
 RUN npm install --omit=dev && npm cache clean --force
 
 COPY --from=builder /usr/src/app/dist ./dist
+COPY templates ./templates
 
 EXPOSE 3000
 

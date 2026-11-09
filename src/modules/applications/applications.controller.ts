@@ -54,6 +54,11 @@ export class ApplicationsController {
     return this.applicationsService.getStatistics(period, startDate, endDate);
   }
 
+  @Get(':id/relations')
+  getRelations(@Param('id') id: string) {
+    return this.applicationsService.getRelations(id);
+  }
+
   @Get(':id')
   findOne(@Param('id') id: string) {
     return this.applicationsService.findOne(id);

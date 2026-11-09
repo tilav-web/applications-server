@@ -4,9 +4,12 @@ import { TypeOrmModule } from '@nestjs/typeorm';
 
 import { Application } from './modules/applications/application.entity';
 import { ApplicationsModule } from './modules/applications/applications.module';
+import { FinancialFlowModule } from './modules/financial-flow/financial-flow.module';
 import { Citizen } from './modules/applications/citizens/citizen.entity';
 import { Crime } from './modules/applications/crimes/crime.entity';
 import { ApplicationCustomField } from './modules/applications/custom-fields/application-custom-field.entity';
+import { ApplicationDocument } from './modules/applications/documents/application-document.entity';
+import { DocumentTemplate } from './modules/applications/documents/templates/document-template.entity';
 import { District } from './modules/applications/districts/district.entity';
 import { Mahalla } from './modules/applications/mahallas/mahalla.entity';
 import { Bank } from './modules/applications/transfers/banks/bank.entity';
@@ -51,6 +54,8 @@ import { UsersModule } from './modules/users/users.module';
           Card,
           PaymentProvider,
           Bank,
+          ApplicationDocument,
+          DocumentTemplate,
         ],
         synchronize: config.get<string>('DB_SYNCHRONIZE', 'true') === 'true',
         autoLoadEntities: true,
@@ -61,6 +66,7 @@ import { UsersModule } from './modules/users/users.module';
     AuthModule,
     UsersModule,
     ApplicationsModule,
+    FinancialFlowModule,
   ],
   controllers: [],
   providers: [],

@@ -36,6 +36,8 @@ export class CitizensController {
     @Query('passport') passport?: string,
     @Query('phone_number') phoneNumber?: string,
     @Query('pinfl') pinfl?: string,
+    @Query('gender') gender?: string,
+    @Query('birth_date') birthDate?: string,
   ) {
     return this.citizensService.findAll(Number(page) || 1, Number(limit) || 10, search, {
       firstName,
@@ -44,6 +46,8 @@ export class CitizensController {
       passport,
       phoneNumber,
       pinfl,
+      gender,
+      birthDate,
     });
   }
 
