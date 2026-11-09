@@ -3,6 +3,7 @@ import { InjectRepository } from '@nestjs/typeorm';
 import { FindOptionsWhere, ILike, Repository } from 'typeorm';
 
 import type { PaginatedResult } from '../../../../common/interfaces/pagination.interface';
+import { formatUzbekName } from '../../../../common/utils/name-formatter.util';
 import { Card } from './card.entity';
 import type { CreateCardDto } from './dto/create-card.dto';
 import type { UpdateCardDto } from './dto/update-card.dto';
@@ -15,7 +16,11 @@ export class CardsService {
   ) {}
 
   async create(dto: CreateCardDto): Promise<Card> {
-    const card = this.cardRepo.create(dto);
+    const card = this.cardRepo.create({
+      ...dto,
+      full_name: dto.full_name ? formatUzbekName(dto.full_name) : null,
+      card_number: dto.card_number ? dto.card_number.replace(/\D/g, '') : '',
+    });
     return this.cardRepo.save(card);
   }
 
@@ -82,7 +87,14 @@ export class CardsService {
 
   async update(id: string, dto: UpdateCardDto): Promise<Card> {
     const card = await this.findOne(id);
-    Object.assign(card, dto);
+    const updatedData: Partial<Card> = { ...dto };
+    if (dto.full_name !== undefined) {
+      updatedData.full_name = dto.full_name ? formatUzbekName(dto.full_name) : null;
+    }
+    if (dto.card_number !== undefined) {
+      updatedData.card_number = dto.card_number ? dto.card_number.replace(/\D/g, '') : '';
+    }
+    Object.assign(card, updatedData);
     return this.cardRepo.save(card);
   }
 

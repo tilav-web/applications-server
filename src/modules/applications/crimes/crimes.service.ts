@@ -3,6 +3,7 @@ import { InjectRepository } from '@nestjs/typeorm';
 import { FindOptionsWhere, ILike, Repository } from 'typeorm';
 
 import type { PaginatedResult } from '../../../common/interfaces/pagination.interface';
+import { formatTitleCase } from '../../../common/utils/name-formatter.util';
 import { Crime } from './crime.entity';
 import type { CreateCrimeDto } from './dto/create-crime.dto';
 import type { UpdateCrimeDto } from './dto/update-crime.dto';
@@ -15,7 +16,12 @@ export class CrimesService {
   ) {}
 
   async create(dto: CreateCrimeDto): Promise<Crime> {
-    const crime = this.crimeRepo.create(dto);
+    const article = dto.article ? formatTitleCase(dto.article) : '';
+    const crime = this.crimeRepo.create({
+      ...dto,
+      article,
+      title: dto.title ? formatTitleCase(dto.title) : article,
+    });
     return this.crimeRepo.save(crime);
   }
 
@@ -70,7 +76,14 @@ export class CrimesService {
 
   async update(id: string, dto: UpdateCrimeDto): Promise<Crime> {
     const crime = await this.findOne(id);
-    Object.assign(crime, dto);
+    const updatedData: Partial<Crime> = { ...dto };
+    if (dto.article !== undefined) {
+      updatedData.article = dto.article ? formatTitleCase(dto.article) : '';
+    }
+    if (dto.title !== undefined) {
+      updatedData.title = dto.title ? formatTitleCase(dto.title) : (updatedData.article || crime.article);
+    }
+    Object.assign(crime, updatedData);
     return this.crimeRepo.save(crime);
   }
 

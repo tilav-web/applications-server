@@ -3,6 +3,7 @@ import { InjectRepository } from '@nestjs/typeorm';
 import { FindOptionsWhere, ILike, Repository } from 'typeorm';
 
 import type { PaginatedResult } from '../../../../common/interfaces/pagination.interface';
+import { formatTitleCase } from '../../../../common/utils/name-formatter.util';
 import { Bank } from './bank.entity';
 import type { CreateBankDto } from './dto/create-bank.dto';
 import type { UpdateBankDto } from './dto/update-bank.dto';
@@ -15,7 +16,10 @@ export class BanksService {
   ) {}
 
   async create(dto: CreateBankDto): Promise<Bank> {
-    const bank = this.bankRepo.create(dto);
+    const bank = this.bankRepo.create({
+      ...dto,
+      name: dto.name ? formatTitleCase(dto.name) : '',
+    });
     return this.bankRepo.save(bank);
   }
 
@@ -66,7 +70,11 @@ export class BanksService {
 
   async update(id: string, dto: UpdateBankDto): Promise<Bank> {
     const bank = await this.findOne(id);
-    Object.assign(bank, dto);
+    const updatedData: Partial<Bank> = { ...dto };
+    if (dto.name !== undefined) {
+      updatedData.name = dto.name ? formatTitleCase(dto.name) : '';
+    }
+    Object.assign(bank, updatedData);
     return this.bankRepo.save(bank);
   }
 

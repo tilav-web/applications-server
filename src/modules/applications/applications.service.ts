@@ -5,6 +5,7 @@ import { FindOptionsWhere, ILike, Not, Repository } from 'typeorm';
 import { ApplicationStatus } from '../../common/enums/application-status.enum';
 import { TransferCustomFieldType } from '../../common/enums/transfer-custom-field-type.enum';
 import type { PaginatedResult } from '../../common/interfaces/pagination.interface';
+import { formatTitleCase, formatUzbekName } from '../../common/utils/name-formatter.util';
 import { Application } from './application.entity';
 import { Citizen } from './citizens/citizen.entity';
 import { Crime } from './crimes/crime.entity';
@@ -68,9 +69,9 @@ export class ApplicationsService {
         const pNum = cData.phone_number ? cData.phone_number.replace(/\D/g, '') : null;
         const pass = cData.passport ? cData.passport.trim().toUpperCase() : null;
         const pinfl = cData.pinfl ? cData.pinfl.trim() : null;
-        const fName = cData.first_name ? cData.first_name.trim() : null;
-        const lName = cData.last_name ? cData.last_name.trim() : null;
-        const mName = cData.middle_name ? cData.middle_name.trim() : null;
+        const fName = cData.first_name ? formatUzbekName(cData.first_name) : null;
+        const lName = cData.last_name ? formatUzbekName(cData.last_name) : null;
+        const mName = cData.middle_name ? formatUzbekName(cData.middle_name) : null;
         const addr = cData.address ? cData.address.trim() : null;
 
         // Tuman va Mahallani aniqlash (Unique Models)
@@ -123,9 +124,9 @@ export class ApplicationsService {
 
           if (existingCitizen) {
             if (addr && !existingCitizen.address) existingCitizen.address = addr;
-            if (fName && !existingCitizen.first_name) existingCitizen.first_name = fName;
-            if (lName && !existingCitizen.last_name) existingCitizen.last_name = lName;
-            if (mName && !existingCitizen.middle_name) existingCitizen.middle_name = mName;
+            if (fName) existingCitizen.first_name = fName;
+            if (lName) existingCitizen.last_name = lName;
+            if (mName) existingCitizen.middle_name = mName;
             if (cData.birth_date && !existingCitizen.birth_date)
               existingCitizen.birth_date = cData.birth_date;
             if (cData.gender && !existingCitizen.gender)
@@ -167,7 +168,7 @@ export class ApplicationsService {
           } else {
             let bankId = cdData.bank_id || null;
             if (!bankId && cdData.bank_name) {
-              const bName = cdData.bank_name.trim();
+              const bName = formatTitleCase(cdData.bank_name.trim());
               let existingBank = await this.bankRepo.findOne({ where: { name: ILike(bName) } });
               if (!existingBank) {
                 existingBank = await this.bankRepo.save(
@@ -183,7 +184,7 @@ export class ApplicationsService {
             const createdCard = this.cardRepo.create({
               card_number: cleaned,
               expire_date: cdData.expire_date || null,
-              full_name: cdData.full_name || null,
+              full_name: cdData.full_name ? formatUzbekName(cdData.full_name) : null,
               bank_id: bankId,
               citizen_id: citizenId || cdData.citizen_id || null,
             });
@@ -197,7 +198,7 @@ export class ApplicationsService {
       if (f.inline_crime && !crimeId) {
         const crData = f.inline_crime as Record<string, string>;
         if (crData.article) {
-          const cArt = crData.article.trim();
+          const cArt = formatTitleCase(crData.article.trim());
           const existingCrime = await this.crimeRepo.findOne({
             where: [{ article: ILike(cArt) }, { title: ILike(cArt) }],
           });
@@ -207,7 +208,7 @@ export class ApplicationsService {
             const createdCrime = this.crimeRepo.create({
               ...crData,
               article: cArt,
-              title: crData.title || cArt,
+              title: crData.title ? formatTitleCase(crData.title) : cArt,
             });
             const savedCrime = await this.crimeRepo.save(createdCrime);
             crimeId = savedCrime.id;
@@ -220,13 +221,14 @@ export class ApplicationsService {
         const dData = f.inline_district as Record<string, string>;
         const dName = (dData.name || '').trim();
         if (dName) {
+          const formattedDName = formatTitleCase(dName);
           const existingDistrict = await this.districtRepo.findOne({
-            where: { name: ILike(dName) },
+            where: { name: ILike(formattedDName) },
           });
           if (existingDistrict) {
             districtId = existingDistrict.id;
           } else {
-            const createdDistrict = this.districtRepo.create({ name: dName });
+            const createdDistrict = this.districtRepo.create({ name: formattedDName });
             const savedDistrict = await this.districtRepo.save(createdDistrict);
             districtId = savedDistrict.id;
           }
@@ -243,7 +245,7 @@ export class ApplicationsService {
           typeof tData.payment_provider_name === 'string' &&
           tData.payment_provider_name.trim()
         ) {
-          const provName = tData.payment_provider_name.trim();
+          const provName = formatTitleCase(tData.payment_provider_name.trim());
           let existingProv = await this.paymentProviderRepo.findOne({
             where: { name: ILike(provName) },
           });
@@ -273,7 +275,7 @@ export class ApplicationsService {
               typeof tData.receiver_bank_name === 'string' &&
               tData.receiver_bank_name.trim()
             ) {
-              const bName = tData.receiver_bank_name.trim();
+              const bName = formatTitleCase(tData.receiver_bank_name.trim());
               let b = await this.bankRepo.findOne({ where: { name: ILike(bName) } });
               if (!b) {
                 b = await this.bankRepo.save(this.bankRepo.create({ name: bName }));
@@ -281,12 +283,13 @@ export class ApplicationsService {
               receiverBankId = b.id;
             }
 
-            const recFullName =
+            const rawRecFullName =
               typeof tData.receiver_card_full_name === 'string'
                 ? tData.receiver_card_full_name
                 : typeof tData.receiver_full_name === 'string'
                   ? tData.receiver_full_name
                   : null;
+            const recFullName = rawRecFullName ? formatUzbekName(rawRecFullName) : null;
 
             if (!existingReceiverCard) {
               existingReceiverCard = await this.cardRepo.save(
@@ -424,9 +427,10 @@ export class ApplicationsService {
         if (data.address !== undefined) existing.address = data.address || null;
         if (data.birth_date !== undefined) existing.birth_date = data.birth_date || null;
         if (data.gender !== undefined) existing.gender = (data.gender as 'male' | 'female') || null;
-        if (data.first_name) existing.first_name = data.first_name;
-        if (data.last_name) existing.last_name = data.last_name;
-        if (data.middle_name !== undefined) existing.middle_name = data.middle_name || null;
+        if (data.first_name) existing.first_name = formatUzbekName(data.first_name);
+        if (data.last_name) existing.last_name = formatUzbekName(data.last_name);
+        if (data.middle_name !== undefined)
+          existing.middle_name = data.middle_name ? formatUzbekName(data.middle_name) : null;
         await this.citizenRepo.save(existing);
       }
     } else if (!citizenId && dto.citizen_data && Object.keys(dto.citizen_data).length > 0) {
@@ -434,17 +438,17 @@ export class ApplicationsService {
       if (data.first_name || data.passport || data.phone_number) {
         let existingCitizen: Citizen | null = null;
         if (data.passport) {
-          existingCitizen = await this.citizenRepo.findOne({ where: { passport: data.passport } });
+          existingCitizen = await this.citizenRepo.findOne({ where: { passport: data.passport.trim().toUpperCase() } });
         }
         if (!existingCitizen && data.pinfl) {
-          existingCitizen = await this.citizenRepo.findOne({ where: { pinfl: data.pinfl } });
+          existingCitizen = await this.citizenRepo.findOne({ where: { pinfl: data.pinfl.trim() } });
         }
         if (!existingCitizen && data.phone_number && data.first_name && data.last_name) {
           existingCitizen = await this.citizenRepo.findOne({
             where: {
-              phone_number: data.phone_number,
-              first_name: data.first_name,
-              last_name: data.last_name,
+              phone_number: data.phone_number.replace(/\D/g, ''),
+              first_name: formatUzbekName(data.first_name),
+              last_name: formatUzbekName(data.last_name),
             },
           });
         }
@@ -454,7 +458,7 @@ export class ApplicationsService {
           const dName = data.district_name.trim();
           let d = await this.districtRepo.findOne({ where: { name: ILike(dName) } });
           if (!d) {
-            d = await this.districtRepo.save(this.districtRepo.create({ name: dName }));
+            d = await this.districtRepo.save(this.districtRepo.create({ name: formatTitleCase(dName) }));
           }
           citDistrictId = d.id;
         }
@@ -472,11 +476,15 @@ export class ApplicationsService {
           });
           if (!m) {
             m = await this.mahallaRepo.save(
-              this.mahallaRepo.create({ name: mName, district_id: citDistrictId }),
+              this.mahallaRepo.create({ name: formatTitleCase(mName), district_id: citDistrictId }),
             );
           }
           citMahallaId = m.id;
         }
+
+        const fName = data.first_name ? formatUzbekName(data.first_name) : null;
+        const lName = data.last_name ? formatUzbekName(data.last_name) : null;
+        const mName = data.middle_name ? formatUzbekName(data.middle_name) : null;
 
         if (existingCitizen) {
           if (citDistrictId !== null || data.district_id !== undefined)
@@ -487,15 +495,21 @@ export class ApplicationsService {
           if (data.birth_date !== undefined) existingCitizen.birth_date = data.birth_date || null;
           if (data.gender !== undefined)
             existingCitizen.gender = (data.gender as 'male' | 'female') || null;
-          if (data.first_name) existingCitizen.first_name = data.first_name;
-          if (data.last_name) existingCitizen.last_name = data.last_name;
-          if (data.middle_name !== undefined)
-            existingCitizen.middle_name = data.middle_name || null;
+          if (fName) existingCitizen.first_name = fName;
+          if (lName) existingCitizen.last_name = lName;
+          if (mName !== null && mName !== undefined)
+            existingCitizen.middle_name = mName;
           await this.citizenRepo.save(existingCitizen);
           citizenId = existingCitizen.id;
         } else {
           const newCitizen = this.citizenRepo.create({
             ...data,
+            first_name: fName,
+            last_name: lName,
+            middle_name: mName,
+            passport: data.passport ? data.passport.trim().toUpperCase() : null,
+            pinfl: data.pinfl ? data.pinfl.trim() : null,
+            phone_number: data.phone_number ? data.phone_number.replace(/\D/g, '') : null,
             birth_date: data.birth_date || null,
             gender: (data.gender as 'male' | 'female') || null,
             district_id: citDistrictId,
@@ -512,11 +526,12 @@ export class ApplicationsService {
       const data = dto.district_data as Record<string, string>;
       const dName = (data.name || '').trim();
       if (dName) {
-        const existingDistrict = await this.districtRepo.findOne({ where: { name: ILike(dName) } });
+        const formattedDName = formatTitleCase(dName);
+        const existingDistrict = await this.districtRepo.findOne({ where: { name: ILike(formattedDName) } });
         if (existingDistrict) {
           districtId = existingDistrict.id;
         } else {
-          const newDistrict = this.districtRepo.create({ name: dName });
+          const newDistrict = this.districtRepo.create({ name: formattedDName });
           const saved = await this.districtRepo.save(newDistrict);
           districtId = saved.id;
         }
@@ -526,8 +541,9 @@ export class ApplicationsService {
     // 3. Jinoyat turi
     if (!crimeId && dto.crime_data && Object.keys(dto.crime_data).length > 0) {
       const data = dto.crime_data as Record<string, string>;
-      const crimeName = (data.article || data.title || '').trim();
-      if (crimeName) {
+      const rawCrimeName = (data.article || data.title || '').trim();
+      if (rawCrimeName) {
+        const crimeName = formatTitleCase(rawCrimeName);
         const existingCrime = await this.crimeRepo.findOne({
           where: [{ article: ILike(crimeName) }, { title: ILike(crimeName) }],
         });
@@ -536,7 +552,7 @@ export class ApplicationsService {
         } else {
           const newCrime = this.crimeRepo.create({
             article: crimeName,
-            title: data.title || crimeName,
+            title: data.title ? formatTitleCase(data.title) : crimeName,
           });
           const saved = await this.crimeRepo.save(newCrime);
           crimeId = saved.id;
@@ -549,10 +565,11 @@ export class ApplicationsService {
       const data = dto.card_data as Record<string, string>;
       if (data.card_number) {
         const cleaned = data.card_number.replace(/\D/g, '');
+        const cardFullName = data.full_name ? formatUzbekName(data.full_name) : null;
         const existingCard = await this.cardRepo.findOne({ where: { card_number: cleaned } });
         if (existingCard) {
-          if (data.full_name && !existingCard.full_name) {
-            existingCard.full_name = data.full_name;
+          if (cardFullName && !existingCard.full_name) {
+            existingCard.full_name = cardFullName;
             await this.cardRepo.save(existingCard);
           }
           cardId = existingCard.id;
@@ -560,7 +577,7 @@ export class ApplicationsService {
           // Bank ma'lumoti kiritilgan bo'lsa, bankni topamiz yoki yaratamiz
           let bankId = data.bank_id || null;
           if (!bankId && data.bank_name) {
-            const bName = data.bank_name.trim();
+            const bName = formatTitleCase(data.bank_name.trim());
             let existingBank = await this.bankRepo.findOne({ where: { name: ILike(bName) } });
             if (!existingBank) {
               existingBank = await this.bankRepo.save(this.bankRepo.create({ name: bName }));
@@ -571,7 +588,7 @@ export class ApplicationsService {
           const newCard = this.cardRepo.create({
             card_number: cleaned,
             expire_date: data.expire_date || null,
-            full_name: data.full_name || null,
+            full_name: cardFullName,
             bank_id: bankId,
             citizen_id: citizenId || data.citizen_id || null,
           });
@@ -593,7 +610,7 @@ export class ApplicationsService {
           typeof data.payment_provider_name === 'string' &&
           data.payment_provider_name.trim()
         ) {
-          const provName = data.payment_provider_name.trim();
+          const provName = formatTitleCase(data.payment_provider_name.trim());
           let existingProv = await this.paymentProviderRepo.findOne({
             where: { name: ILike(provName) },
           });
@@ -624,7 +641,7 @@ export class ApplicationsService {
               typeof data.receiver_bank_name === 'string' &&
               data.receiver_bank_name.trim()
             ) {
-              const bName = data.receiver_bank_name.trim();
+              const bName = formatTitleCase(data.receiver_bank_name.trim());
               let b = await this.bankRepo.findOne({ where: { name: ILike(bName) } });
               if (!b) {
                 b = await this.bankRepo.save(this.bankRepo.create({ name: bName }));
@@ -632,12 +649,13 @@ export class ApplicationsService {
               receiverBankId = b.id;
             }
 
-            const recFullName =
+            const rawRecFullName =
               typeof data.receiver_card_full_name === 'string'
                 ? data.receiver_card_full_name
                 : typeof data.receiver_full_name === 'string'
                   ? data.receiver_full_name
                   : null;
+            const recFullName = rawRecFullName ? formatUzbekName(rawRecFullName) : null;
 
             if (!existingReceiverCard) {
               existingReceiverCard = await this.cardRepo.save(

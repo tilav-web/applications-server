@@ -1,3 +1,4 @@
+import { formatTitleCase, formatUzbekName } from '../../../../common/utils/name-formatter.util';
 import { Application } from '../../application.entity';
 import { Transfer } from '../../transfers/transfer.entity';
 import {
@@ -50,9 +51,9 @@ export function buildTemplateContext(
   };
 
   // 2. Citizen data
-  const cFirst = citizen?.first_name || '';
-  const cLast = citizen?.last_name || '';
-  const cMiddle = citizen?.middle_name || '';
+  const cFirst = formatUzbekName(citizen?.first_name);
+  const cLast = formatUzbekName(citizen?.last_name);
+  const cMiddle = formatUzbekName(citizen?.middle_name);
   const cFullName = [cLast, cFirst, cMiddle].filter(Boolean).join(' ') || (citizen?.passport ? `Fuqaro (${citizen.passport})` : 'Fuqaro');
   const cShortName = cLast ? `${cFirst ? cFirst[0] + '.' : ''}${cLast}` : cFullName;
 
@@ -131,7 +132,7 @@ export function buildTemplateContext(
     sender_card: {
       card_number: formatCardSpaced(t.sender_card?.card_number),
       masked_number: maskCard(t.sender_card?.card_number),
-      full_name: adapt(t.sender_card?.full_name || ''),
+      full_name: adapt(formatUzbekName(t.sender_card?.full_name || '')),
       bank: {
         name: adapt(t.sender_card?.bank?.name || ''),
         code: t.sender_card?.bank?.code || '',
@@ -141,7 +142,7 @@ export function buildTemplateContext(
     receiver_card: {
       card_number: formatCardSpaced(t.receiver_card?.card_number),
       masked_number: maskCard(t.receiver_card?.card_number),
-      full_name: adapt(t.receiver_card?.full_name || ''),
+      full_name: adapt(formatUzbekName(t.receiver_card?.full_name || '')),
       bank: {
         name: adapt(t.receiver_card?.bank?.name || ''),
         code: t.receiver_card?.bank?.code || '',
@@ -302,8 +303,8 @@ export function buildTemplateContext(
     // ------------------------------------------------------------------------
     crime: {
       id: crime?.id || '',
-      article: adapt(crime?.article || crime?.title || 'Firibgarlik'),
-      title: adapt(crime?.title || crime?.article || 'Firibgarlik'),
+      article: adapt(formatTitleCase(crime?.article || crime?.title || 'Firibgarlik')),
+      title: adapt(formatTitleCase(crime?.title || crime?.article || 'Firibgarlik')),
       category: adapt(crime?.category || ''),
       gravity: adapt(crime?.gravity || ''),
       description: adapt(crime?.description || crime?.title || ''),
@@ -325,7 +326,7 @@ export function buildTemplateContext(
       card_number: formatCardSpaced(victimCard?.card_number),
       masked_number: maskCard(victimCard?.card_number),
       expire_date: victimCard?.expire_date || '',
-      full_name: adapt(victimCard?.full_name || cFullName),
+      full_name: adapt(formatUzbekName(victimCard?.full_name) || cFullName),
       bank: {
         id: victimCard?.bank?.id || '',
         name: adapt(victimCard?.bank?.name || ''),
@@ -334,7 +335,7 @@ export function buildTemplateContext(
       },
       // Aliases
       number: formatCardSpaced(victimCard?.card_number),
-      holder: adapt(victimCard?.full_name || cFullName),
+      holder: adapt(formatUzbekName(victimCard?.full_name) || cFullName),
     },
 
     // ------------------------------------------------------------------------
@@ -345,7 +346,7 @@ export function buildTemplateContext(
       card_number: formatCardSpaced(fraudCard?.card_number),
       masked_number: maskCard(fraudCard?.card_number),
       expire_date: fraudCard?.expire_date || '',
-      full_name: adapt(fraudCard?.full_name || ''),
+      full_name: adapt(formatUzbekName(fraudCard?.full_name || '')),
       bank: {
         id: fraudCard?.bank?.id || '',
         name: adapt(fraudCard?.bank?.name || ''),
@@ -354,7 +355,7 @@ export function buildTemplateContext(
       },
       // Aliases
       number: formatCardSpaced(fraudCard?.card_number),
-      holder: adapt(fraudCard?.full_name || ''),
+      holder: adapt(formatUzbekName(fraudCard?.full_name || '')),
     },
 
     // ------------------------------------------------------------------------

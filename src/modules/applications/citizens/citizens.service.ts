@@ -3,6 +3,7 @@ import { InjectRepository } from '@nestjs/typeorm';
 import { FindOptionsWhere, ILike, Repository } from 'typeorm';
 
 import type { PaginatedResult } from '../../../common/interfaces/pagination.interface';
+import { formatUzbekName } from '../../../common/utils/name-formatter.util';
 import { Citizen } from './citizen.entity';
 import type { CreateCitizenDto } from './dto/create-citizen.dto';
 import type { UpdateCitizenDto } from './dto/update-citizen.dto';
@@ -15,7 +16,13 @@ export class CitizensService {
   ) {}
 
   async create(dto: CreateCitizenDto): Promise<Citizen> {
-    const citizen = this.citizenRepo.create(dto);
+    const citizen = this.citizenRepo.create({
+      ...dto,
+      first_name: dto.first_name ? formatUzbekName(dto.first_name) : null,
+      last_name: dto.last_name ? formatUzbekName(dto.last_name) : null,
+      middle_name: dto.middle_name ? formatUzbekName(dto.middle_name) : null,
+      passport: dto.passport ? dto.passport.trim().toUpperCase() : null,
+    });
     return this.citizenRepo.save(citizen);
   }
 
@@ -115,7 +122,20 @@ export class CitizensService {
 
   async update(id: string, dto: UpdateCitizenDto): Promise<Citizen> {
     const citizen = await this.findOne(id);
-    Object.assign(citizen, dto);
+    const updatedData: Partial<Citizen> = { ...dto };
+    if (dto.first_name !== undefined) {
+      updatedData.first_name = dto.first_name ? formatUzbekName(dto.first_name) : null;
+    }
+    if (dto.last_name !== undefined) {
+      updatedData.last_name = dto.last_name ? formatUzbekName(dto.last_name) : null;
+    }
+    if (dto.middle_name !== undefined) {
+      updatedData.middle_name = dto.middle_name ? formatUzbekName(dto.middle_name) : null;
+    }
+    if (dto.passport !== undefined) {
+      updatedData.passport = dto.passport ? dto.passport.trim().toUpperCase() : null;
+    }
+    Object.assign(citizen, updatedData);
     return this.citizenRepo.save(citizen);
   }
 
