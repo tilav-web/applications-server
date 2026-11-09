@@ -416,6 +416,14 @@ export class TemplatesManagementService implements OnApplicationBootstrap {
             },
             payment_provider: true,
           },
+          application_status: true,
+          custom_fields: {
+            citizen: { district: true, mahalla: true },
+            card: { bank: true },
+            crime: true,
+            district: true,
+            transfer: { payment_provider: true },
+          },
         },
       });
 
@@ -453,8 +461,22 @@ export class TemplatesManagementService implements OnApplicationBootstrap {
         crime: {
           article: '168-modda',
           part: '3-qismi',
-          description: 'Firibgarlik',
+          title: 'Firibgarlik',
+          category: 'Mulkka qarshi jinoyatlar',
+          description: 'O‘zganing mulkini aldash yoki ishonchni suiiste’mol qilish yo‘li bilan talon-toroj qilish',
         } as any,
+        application_status: {
+          name: 'Jarayonda',
+          code: 'PROCESSING',
+          description: 'Ariza bo‘yicha tergov harakatlari olib borilmoqda',
+        } as any,
+        custom_fields: [
+          {
+            key: 'dalil_tavsifi',
+            label: 'Dalillar tavsifi',
+            value: 'Fuqaroning telefoni ko‘zdan kechirildi va skrinshotlar ilova qilindi',
+          },
+        ] as any,
         district: { name: 'Qarshi tumani' } as any,
         card: {
           card_number: '8600123456789012',

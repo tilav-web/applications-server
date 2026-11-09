@@ -484,7 +484,14 @@ export class DocumentsService {
           sender_card: { bank: true },
           receiver_card: { bank: true },
         },
-        custom_fields: true,
+        application_status: true,
+        custom_fields: {
+          citizen: { district: true, mahalla: true },
+          card: { bank: true },
+          crime: true,
+          district: true,
+          transfer: { payment_provider: true },
+        },
       },
     });
 
@@ -707,6 +714,14 @@ export class DocumentsService {
             sender_card: { bank: true },
             receiver_card: { bank: true },
           },
+          application_status: true,
+          custom_fields: {
+            citizen: { district: true, mahalla: true },
+            card: { bank: true },
+            crime: true,
+            district: true,
+            transfer: { payment_provider: true },
+          },
         },
       });
 
@@ -814,7 +829,14 @@ export class DocumentsService {
           sender_card: { bank: true },
           receiver_card: { bank: true },
         },
-        custom_fields: true,
+        application_status: true,
+        custom_fields: {
+          citizen: { district: true, mahalla: true },
+          card: { bank: true },
+          crime: true,
+          district: true,
+          transfer: { payment_provider: true },
+        },
       },
     });
 
