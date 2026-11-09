@@ -386,7 +386,40 @@ export class ApplicationsService {
     let cardId = dto.card_id || null;
     let transferId = dto.transfer_id || null;
 
-    // 1. Fuqaro (Agar citizen_id berilgan yoki berilmagan bo'lsa)
+    // 0. Agar bu mavjud arizani tahrirlash bo'lsa (applicationId bor), lekin dto da ID lar kelmagan bo'lsa,
+    // arizaning mavjud bog'langan ID larini bazadan olamiz (fuqaroni yo'qotib qo'ymaslik uchun):
+    if (applicationId) {
+      const existingApp = await this.applicationRepo.findOne({
+        where: { id: applicationId },
+        select: {
+          id: true,
+          citizen_id: true,
+          district_id: true,
+          crime_id: true,
+          card_id: true,
+          transfer_id: true,
+        },
+      });
+      if (existingApp) {
+        if (!citizenId && existingApp.citizen_id) {
+          citizenId = existingApp.citizen_id;
+        }
+        if (!districtId && existingApp.district_id) {
+          districtId = existingApp.district_id;
+        }
+        if (!crimeId && existingApp.crime_id) {
+          crimeId = existingApp.crime_id;
+        }
+        if (!cardId && existingApp.card_id) {
+          cardId = existingApp.card_id;
+        }
+        if (!transferId && existingApp.transfer_id) {
+          transferId = existingApp.transfer_id;
+        }
+      }
+    }
+
+    // 1. Fuqaro (Agar citizen_id berilgan yoki arizadan olingan bo'lsa)
     if (citizenId && dto.citizen_data && Object.keys(dto.citizen_data).length > 0) {
       const data = dto.citizen_data as Record<string, string | null | undefined>;
       const existing = await this.citizenRepo.findOne({ where: { id: citizenId } });
@@ -396,7 +429,7 @@ export class ApplicationsService {
           const dName = data.district_name.trim();
           let d = await this.districtRepo.findOne({ where: { name: ILike(dName) } });
           if (!d) {
-            d = await this.districtRepo.save(this.districtRepo.create({ name: dName }));
+            d = await this.districtRepo.save(this.districtRepo.create({ name: formatTitleCase(dName) }));
           }
           citDistrictId = d.id;
         }
@@ -414,7 +447,7 @@ export class ApplicationsService {
           });
           if (!m) {
             m = await this.mahallaRepo.save(
-              this.mahallaRepo.create({ name: mName, district_id: citDistrictId }),
+              this.mahallaRepo.create({ name: formatTitleCase(mName), district_id: citDistrictId }),
             );
           }
           citMahallaId = m.id;
@@ -431,26 +464,47 @@ export class ApplicationsService {
         if (data.last_name) existing.last_name = formatUzbekName(data.last_name);
         if (data.middle_name !== undefined)
           existing.middle_name = data.middle_name ? formatUzbekName(data.middle_name) : null;
+        if (data.passport !== undefined)
+          existing.passport = data.passport ? data.passport.trim().toUpperCase() : null;
+        if (data.pinfl !== undefined)
+          existing.pinfl = data.pinfl ? data.pinfl.trim() : null;
+        if (data.phone_number !== undefined)
+          existing.phone_number = data.phone_number ? data.phone_number.replace(/\D/g, '') : null;
         await this.citizenRepo.save(existing);
       }
     } else if (!citizenId && dto.citizen_data && Object.keys(dto.citizen_data).length > 0) {
       const data = dto.citizen_data as Record<string, string>;
-      if (data.first_name || data.passport || data.phone_number) {
+      if (data.first_name || data.passport || data.phone_number || data.pinfl) {
         let existingCitizen: Citizen | null = null;
-        if (data.passport) {
-          existingCitizen = await this.citizenRepo.findOne({ where: { passport: data.passport.trim().toUpperCase() } });
-        }
-        if (!existingCitizen && data.pinfl) {
-          existingCitizen = await this.citizenRepo.findOne({ where: { pinfl: data.pinfl.trim() } });
-        }
-        if (!existingCitizen && data.phone_number && data.first_name && data.last_name) {
+        if (data.passport && data.passport.trim()) {
           existingCitizen = await this.citizenRepo.findOne({
-            where: {
-              phone_number: data.phone_number.replace(/\D/g, ''),
-              first_name: formatUzbekName(data.first_name),
-              last_name: formatUzbekName(data.last_name),
-            },
+            where: { passport: data.passport.trim().toUpperCase() },
           });
+        }
+        if (!existingCitizen && data.pinfl && data.pinfl.trim()) {
+          existingCitizen = await this.citizenRepo.findOne({
+            where: { pinfl: data.pinfl.trim() },
+          });
+        }
+        const cleanPhone = data.phone_number ? data.phone_number.replace(/\D/g, '') : null;
+        if (!existingCitizen && cleanPhone && cleanPhone.length >= 7) {
+          existingCitizen = await this.citizenRepo.findOne({
+            where: { phone_number: cleanPhone },
+          });
+        }
+        if (!existingCitizen && data.first_name && data.last_name) {
+          const fName = formatUzbekName(data.first_name);
+          const lName = formatUzbekName(data.last_name);
+          const nameMatches = await this.citizenRepo.find({
+            where: { first_name: fName, last_name: lName },
+          });
+          if (nameMatches.length === 1) {
+            existingCitizen = nameMatches[0];
+          } else if (nameMatches.length > 1 && data.middle_name) {
+            const mName = formatUzbekName(data.middle_name);
+            const mMatch = nameMatches.find((c) => c.middle_name === mName);
+            if (mMatch) existingCitizen = mMatch;
+          }
         }
 
         let citDistrictId = data.district_id || null;
@@ -499,6 +553,12 @@ export class ApplicationsService {
           if (lName) existingCitizen.last_name = lName;
           if (mName !== null && mName !== undefined)
             existingCitizen.middle_name = mName;
+          if (data.passport !== undefined)
+            existingCitizen.passport = data.passport ? data.passport.trim().toUpperCase() : null;
+          if (data.pinfl !== undefined)
+            existingCitizen.pinfl = data.pinfl ? data.pinfl.trim() : null;
+          if (data.phone_number !== undefined)
+            existingCitizen.phone_number = data.phone_number ? data.phone_number.replace(/\D/g, '') : null;
           await this.citizenRepo.save(existingCitizen);
           citizenId = existingCitizen.id;
         } else {
@@ -773,7 +833,16 @@ export class ApplicationsService {
   }
 
   async create(dto: CreateApplicationDto): Promise<Application> {
-    const { custom_fields, date, ...applicationData } = dto;
+    const {
+      custom_fields,
+      date,
+      citizen_data,
+      district_data,
+      crime_data,
+      card_data,
+      transfer_data,
+      ...applicationData
+    } = dto;
 
     // 1. Ariza raqami ko'rsatilgan bo'lsa tozalab olamiz, aks holda null (auto-generate qilinmaydi)
     const appNumber = applicationData.application_number?.trim() || null;
@@ -1778,9 +1847,26 @@ export class ApplicationsService {
 
   async update(id: string, dto: UpdateApplicationDto): Promise<Application> {
     const application = await this.findOne(id);
-    const { custom_fields, date, ...applicationData } = dto;
+    const {
+      custom_fields,
+      date,
+      citizen_data,
+      district_data,
+      crime_data,
+      card_data,
+      transfer_data,
+      ...applicationData
+    } = dto;
 
     const resolved = await this.resolvePrimaryModels(dto, id);
+
+    // Stale loaded relation ob'ektlarini olib tashlaymiz, aks holda TypeORM in-memory eskilarini qayta yozib yuboradi:
+    delete (application as unknown as Record<string, unknown>).citizen;
+    delete (application as unknown as Record<string, unknown>).district;
+    delete (application as unknown as Record<string, unknown>).crime;
+    delete (application as unknown as Record<string, unknown>).card;
+    delete (application as unknown as Record<string, unknown>).transfer;
+    delete (application as unknown as Record<string, unknown>).application_status;
 
     Object.assign(application, applicationData, resolved);
     if (applicationData.application_number !== undefined) {

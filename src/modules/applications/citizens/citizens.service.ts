@@ -16,12 +16,37 @@ export class CitizensService {
   ) {}
 
   async create(dto: CreateCitizenDto): Promise<Citizen> {
+    const cleanPassport = dto.passport ? dto.passport.trim().toUpperCase() : null;
+    const cleanPinfl = dto.pinfl ? dto.pinfl.trim() : null;
+    const cleanPhone = dto.phone_number ? dto.phone_number.replace(/\D/g, '') : null;
+
+    if (cleanPassport) {
+      const existing = await this.citizenRepo.findOne({ where: { passport: cleanPassport } });
+      if (existing) return existing;
+    }
+    if (cleanPinfl) {
+      const existing = await this.citizenRepo.findOne({ where: { pinfl: cleanPinfl } });
+      if (existing) return existing;
+    }
+    if (cleanPhone && cleanPhone.length >= 7 && dto.first_name && dto.last_name) {
+      const existing = await this.citizenRepo.findOne({
+        where: {
+          phone_number: cleanPhone,
+          first_name: formatUzbekName(dto.first_name),
+          last_name: formatUzbekName(dto.last_name),
+        },
+      });
+      if (existing) return existing;
+    }
+
     const citizen = this.citizenRepo.create({
       ...dto,
       first_name: dto.first_name ? formatUzbekName(dto.first_name) : null,
       last_name: dto.last_name ? formatUzbekName(dto.last_name) : null,
       middle_name: dto.middle_name ? formatUzbekName(dto.middle_name) : null,
-      passport: dto.passport ? dto.passport.trim().toUpperCase() : null,
+      passport: cleanPassport,
+      pinfl: cleanPinfl,
+      phone_number: cleanPhone,
     });
     return this.citizenRepo.save(citizen);
   }
@@ -134,6 +159,12 @@ export class CitizensService {
     }
     if (dto.passport !== undefined) {
       updatedData.passport = dto.passport ? dto.passport.trim().toUpperCase() : null;
+    }
+    if (dto.pinfl !== undefined) {
+      updatedData.pinfl = dto.pinfl ? dto.pinfl.trim() : null;
+    }
+    if (dto.phone_number !== undefined) {
+      updatedData.phone_number = dto.phone_number ? dto.phone_number.replace(/\D/g, '') : null;
     }
     Object.assign(citizen, updatedData);
     return this.citizenRepo.save(citizen);
