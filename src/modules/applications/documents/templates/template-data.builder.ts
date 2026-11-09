@@ -15,6 +15,8 @@ export interface TemplateDataContext {
   district: Record<string, any>;
   victim_card: Record<string, any>;
   fraud_card: Record<string, any>;
+  suspect: Record<string, any>;
+  suspect_tree: Array<Record<string, any>>;
   transfer: Record<string, any>;
   transfers: Array<Record<string, any>>;
   custom: Record<string, any>;
@@ -156,6 +158,68 @@ export function buildTemplateContext(
     provider_name: adapt(t.payment_provider?.name || ''),
   }));
 
+  // 6b. Suspect Tree parser (Firibgar / Gumonlanuvchi ma'lumotlari daraxti)
+  const rawSuspectTree: any[] = Array.isArray(application.suspect_tree)
+    ? application.suspect_tree
+    : [];
+
+  const branchPaths: string[] = [];
+  const leafValues: string[] = [];
+  const detectedUsernames: string[] = [];
+  const detectedPhones: string[] = [];
+  const detectedCards: string[] = [];
+
+  const cleanCardRegex = /\b(?:8600|9860|5614|6262|4\d{3}|5\d{3})[\d\s-]{12,18}\b/;
+  const phoneRegex = /(?:\+?998[\s-]?)?[0-9]{2}[\s-]?[0-9]{3}[\s-]?[0-9]{2}[\s-]?[0-9]{2}/;
+
+  const walkSuspectTree = (nodes: any[], currentPath: string[] = []) => {
+    for (const node of nodes) {
+      if (!node) continue;
+      const text = (node.label || node.value || '').trim();
+      if (!text) continue;
+
+      const newPath = [...currentPath, text];
+
+      if (cleanCardRegex.test(text)) {
+        detectedCards.push(text);
+      }
+      if (phoneRegex.test(text)) {
+        detectedPhones.push(text);
+      }
+      if (text.startsWith('@') || currentPath.some((p) => /user|nik|foydalanuvchi/i.test(p))) {
+        detectedUsernames.push(text);
+      }
+
+      if (node.children && Array.isArray(node.children) && node.children.length > 0) {
+        walkSuspectTree(node.children, newPath);
+      } else {
+        branchPaths.push(newPath.join(' ➔ '));
+        leafValues.push(text);
+      }
+    }
+  };
+
+  if (rawSuspectTree.length > 0) {
+    walkSuspectTree(rawSuspectTree);
+  }
+
+  const suspectDetailsStr = branchPaths.join('; ');
+  const suspectUsernamesStr = Array.from(new Set(detectedUsernames)).join(', ');
+  const suspectPhonesStr = Array.from(new Set(detectedPhones)).join(', ');
+  const suspectCardsStr = Array.from(new Set(detectedCards)).join(', ');
+  const suspectSummaryStr = Array.from(new Set(leafValues)).join(', ');
+
+  const formattedSuspectTree = branchPaths.map((p, idx) => {
+    const parts = p.split(' ➔ ');
+    return {
+      index: String(idx + 1),
+      path: adapt(p),
+      text: adapt(p),
+      root: adapt(parts[0] || ''),
+      leaf: adapt(parts[parts.length - 1] || ''),
+    };
+  });
+
   // 7. Dynamic Custom Fields parser
   const customFieldsContext: Record<string, any> = {};
   if (application.custom_fields && Array.isArray(application.custom_fields)) {
@@ -296,6 +360,8 @@ export function buildTemplateContext(
       },
       created_at: formatDateUzbek(application.created_at, script),
       updated_at: formatDateUzbek(application.updated_at, script),
+      suspect_details: adapt(suspectDetailsStr),
+      suspect_tree_summary: adapt(suspectSummaryStr),
     },
 
     // ------------------------------------------------------------------------
@@ -357,6 +423,20 @@ export function buildTemplateContext(
       number: formatCardSpaced(fraudCard?.card_number),
       holder: adapt(formatUzbekName(fraudCard?.full_name || '')),
     },
+
+    // ------------------------------------------------------------------------
+    // Model 6b: Suspect / Gumonlanuvchi ma'lumotlari daraxti
+    // ------------------------------------------------------------------------
+    suspect: {
+      details: adapt(suspectDetailsStr),
+      usernames: adapt(suspectUsernamesStr),
+      phones: adapt(suspectPhonesStr),
+      cards: adapt(suspectCardsStr),
+      raw_summary: adapt(suspectSummaryStr),
+      count: branchPaths.length,
+    },
+    suspect_tree: formattedSuspectTree,
+    suspect_details: adapt(suspectDetailsStr),
 
     // ------------------------------------------------------------------------
     // Model 7: Transfer (Asosiy / Birlamchi to'lov o'tkazmasi)
