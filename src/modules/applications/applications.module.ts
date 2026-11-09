@@ -18,6 +18,8 @@ import { ApplicationDocument } from './documents/application-document.entity';
 import { DocumentsModule } from './documents/documents.module';
 import { ApplicationStatus } from './statuses/application-status.entity';
 import { ApplicationStatusesModule } from './statuses/application-statuses.module';
+import { SuspectFieldConfig } from './suspect-fields/suspect-field-config.entity';
+import { SuspectFieldConfigsModule } from './suspect-fields/suspect-field-configs.module';
 import { Bank } from './transfers/banks/bank.entity';
 import { BanksModule } from './transfers/banks/banks.module';
 import { Card } from './transfers/cards/card.entity';
@@ -44,6 +46,7 @@ import { TransfersModule } from './transfers/transfers.module';
       TransferCustomField,
       ApplicationStatus,
       ApplicationDocument,
+      SuspectFieldConfig,
     ]),
     AuthModule,
     CitizensModule,
@@ -51,6 +54,7 @@ import { TransfersModule } from './transfers/transfers.module';
     DistrictsModule,
     MahallasModule,
     ApplicationStatusesModule,
+    SuspectFieldConfigsModule,
     BanksModule,
     PaymentProvidersModule,
     CardsModule,
@@ -59,6 +63,6 @@ import { TransfersModule } from './transfers/transfers.module';
   ],
   controllers: [ApplicationsController],
   providers: [ApplicationsService],
-  exports: [ApplicationsService],
+  exports: [ApplicationsService, SuspectFieldConfigsModule],
 })
 export class ApplicationsModule {}

@@ -16,12 +16,17 @@ import { Repository } from 'typeorm';
 
 import { MinioService } from '../../../minio/minio.service';
 import { Application } from '../../application.entity';
+import { SuspectFieldConfig } from '../../suspect-fields/suspect-field-config.entity';
 import { Transfer } from '../../transfers/transfer.entity';
 import { DocxEngineService } from './docx-engine.service';
 import { DocumentTemplate } from './document-template.entity';
 import { CreateTemplateDto, UpdateTemplateDto } from './dto/template.dto';
 import { buildTemplateContext } from './template-data.builder';
-import { TEMPLATE_VARIABLES_DICTIONARY } from './template-variables.dictionary';
+import {
+  TemplateCategoryConfig,
+  TemplateVariableItem,
+  TEMPLATE_VARIABLES_DICTIONARY,
+} from './template-variables.dictionary';
 
 @Injectable()
 export class TemplatesManagementService implements OnApplicationBootstrap {
@@ -38,6 +43,8 @@ export class TemplatesManagementService implements OnApplicationBootstrap {
     private readonly applicationRepo: Repository<Application>,
     @InjectRepository(Transfer)
     private readonly transferRepo: Repository<Transfer>,
+    @InjectRepository(SuspectFieldConfig)
+    private readonly suspectFieldConfigRepo: Repository<SuspectFieldConfig>,
     private readonly minioService: MinioService,
     private readonly configService: ConfigService,
     private readonly docxEngine: DocxEngineService,
@@ -89,7 +96,69 @@ export class TemplatesManagementService implements OnApplicationBootstrap {
   /**
    * O'zgaruvchilar lug'atini olish (Frontend Drawer uchun)
    */
-  getVariablesDictionary() {
+  async getVariablesDictionary(): Promise<TemplateCategoryConfig[]> {
+    let customSuspectItems: TemplateVariableItem[] = [];
+    try {
+      const activeConfigs = await this.suspectFieldConfigRepo.find({
+        where: { is_active: true },
+        order: { sort_order: 'ASC', created_at: 'ASC' },
+      });
+
+      if (activeConfigs.length > 0) {
+        customSuspectItems = [
+          {
+            tag: '{{suspect.details}}',
+            rawKey: 'suspect.details',
+            label: 'To‘liq ro‘yxat matni (details)',
+            modelName: 'Suspect',
+            description: 'Barcha kiritilgan parametrlar matni (masalan: Telegram Username: @tilav_web; Telefon: +998...)',
+            sampleValue: 'Telegram Username: @tilav_web; Telegram ID: 12345678',
+          },
+          {
+            tag: '{{#suspect_list}} • {{label}}: {{value}} {{#note}}({{note}}){{/note}}\n{{/suspect_list}}',
+            rawKey: 'suspect_list',
+            label: 'Parametrlar ro‘yxati sikli (suspect_list)',
+            modelName: 'Suspect',
+            description: 'Har bir parametrni alohida qatorda chiqarish uchun docx sikli (loop)',
+            sampleValue: '• Telegram Username: @tilav_web (Asosiy aloqa)\n• Telegram ID: 12345678',
+          },
+        ];
+
+        for (const cfg of activeConfigs) {
+          customSuspectItems.push({
+            tag: `{{suspect.${cfg.key}}}`,
+            rawKey: `suspect.${cfg.key}`,
+            label: `${cfg.label} (${cfg.key})`,
+            modelName: 'Suspect',
+            description: cfg.description || `${cfg.label} qiymati`,
+            sampleValue: cfg.sample_value || '@username',
+          });
+          customSuspectItems.push({
+            tag: `{{suspect.${cfg.key}_note}}`,
+            rawKey: `suspect.${cfg.key}_note`,
+            label: `${cfg.label} izohi (${cfg.key}_note)`,
+            modelName: 'Suspect',
+            description: `${cfg.label} uchun kiritilgan izoh`,
+            sampleValue: 'Asosiy kanal',
+          });
+        }
+      }
+    } catch (e: any) {
+      this.logger.warn(`getVariablesDictionary suspect_field_configs olishda xatolik: ${e.message}`);
+    }
+
+    if (customSuspectItems.length > 0) {
+      return TEMPLATE_VARIABLES_DICTIONARY.map((cat) => {
+        if (cat.id === 'suspect') {
+          return {
+            ...cat,
+            items: customSuspectItems,
+          };
+        }
+        return cat;
+      });
+    }
+
     return TEMPLATE_VARIABLES_DICTIONARY;
   }
 

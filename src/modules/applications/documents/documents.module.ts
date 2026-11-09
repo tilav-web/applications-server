@@ -6,6 +6,7 @@ import { AuthModule } from '../../auth/auth.module';
 import { MinioModule } from '../../minio/minio.module';
 import { User } from '../../users/user.entity';
 import { Application } from '../application.entity';
+import { SuspectFieldConfig } from '../suspect-fields/suspect-field-config.entity';
 import { Card } from '../transfers/cards/card.entity';
 import { Transfer } from '../transfers/transfer.entity';
 import { ApplicationDocument } from './application-document.entity';
@@ -25,6 +26,7 @@ import { TemplatesManagementService } from './templates/templates-management.ser
       DocumentTemplate,
       Transfer,
       Card,
+      SuspectFieldConfig,
     ]),
     MinioModule,
     ConfigModule,

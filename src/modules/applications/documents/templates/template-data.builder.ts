@@ -16,6 +16,7 @@ export interface TemplateDataContext {
   victim_card: Record<string, any>;
   fraud_card: Record<string, any>;
   suspect: Record<string, any>;
+  suspect_list?: Array<Record<string, any>>;
   suspect_tree: Array<Record<string, any>>;
   transfer: Record<string, any>;
   transfers: Array<Record<string, any>>;
@@ -158,10 +159,14 @@ export function buildTemplateContext(
     provider_name: adapt(t.payment_provider?.name || ''),
   }));
 
-  // 6b. Suspect Tree parser (Firibgar / Gumonlanuvchi ma'lumotlari daraxti)
-  const rawSuspectTree: any[] = Array.isArray(application.suspect_tree)
+  // 6b. Suspect Fields / Tree parser (Firibgar / Gumonlanuvchi ma'lumotlari)
+  const rawSuspectData: any[] = Array.isArray(application.suspect_tree)
     ? application.suspect_tree
     : [];
+
+  const suspectKeyValues: Record<string, string> = {};
+  const suspectList: Array<Record<string, any>> = [];
+  const suspectDetailsLines: string[] = [];
 
   const branchPaths: string[] = [];
   const leafValues: string[] = [];
@@ -172,38 +177,69 @@ export function buildTemplateContext(
   const cleanCardRegex = /\b(?:8600|9860|5614|6262|4\d{3}|5\d{3})[\d\s-]{12,18}\b/;
   const phoneRegex = /(?:\+?998[\s-]?)?[0-9]{2}[\s-]?[0-9]{3}[\s-]?[0-9]{2}[\s-]?[0-9]{2}/;
 
-  const walkSuspectTree = (nodes: any[], currentPath: string[] = []) => {
-    for (const node of nodes) {
-      if (!node) continue;
-      const text = (node.label || node.value || '').trim();
-      if (!text) continue;
+  for (let i = 0; i < rawSuspectData.length; i++) {
+    const item = rawSuspectData[i];
+    if (!item) continue;
 
-      const newPath = [...currentPath, text];
+    // Check if item is 3-column format: { field_key, value, note }
+    if (item.field_key !== undefined || (item.value !== undefined && !item.children)) {
+      const key = (item.field_key || item.key || `field_${i + 1}`).trim();
+      const val = (item.value || '').trim();
+      const note = (item.note || item.description || '').trim();
+      const label = (item.field_label || item.label || key).trim();
 
-      if (cleanCardRegex.test(text)) {
-        detectedCards.push(text);
-      }
-      if (phoneRegex.test(text)) {
-        detectedPhones.push(text);
-      }
-      if (text.startsWith('@') || currentPath.some((p) => /user|nik|foydalanuvchi/i.test(p))) {
-        detectedUsernames.push(text);
-      }
+      if (val) {
+        suspectKeyValues[key] = adapt(val);
+        if (note) {
+          suspectKeyValues[`${key}_note`] = adapt(note);
+        }
 
-      if (node.children && Array.isArray(node.children) && node.children.length > 0) {
-        walkSuspectTree(node.children, newPath);
-      } else {
-        branchPaths.push(newPath.join(' ➔ '));
-        leafValues.push(text);
+        if (cleanCardRegex.test(val)) detectedCards.push(val);
+        if (phoneRegex.test(val)) detectedPhones.push(val);
+        if (val.startsWith('@') || /user|nik|tg/i.test(key)) detectedUsernames.push(val);
+        leafValues.push(val);
+
+        const line = `${label}: ${val}${note ? ` (${note})` : ''}`;
+        suspectDetailsLines.push(line);
+
+        suspectList.push({
+          index: String(suspectList.length + 1),
+          key: adapt(key),
+          label: adapt(label),
+          value: adapt(val),
+          note: adapt(note),
+          text: adapt(line),
+          path: adapt(line),
+        });
       }
+    } else {
+      // Tree format: recursive walk
+      const walk = (nodes: any[], currentPath: string[] = []) => {
+        for (const node of nodes) {
+          if (!node) continue;
+          const text = (node.label || node.value || '').trim();
+          if (!text) continue;
+          const newPath = [...currentPath, text];
+          if (cleanCardRegex.test(text)) detectedCards.push(text);
+          if (phoneRegex.test(text)) detectedPhones.push(text);
+          if (text.startsWith('@')) detectedUsernames.push(text);
+          if (node.children && Array.isArray(node.children) && node.children.length > 0) {
+            walk(node.children, newPath);
+          } else {
+            branchPaths.push(newPath.join(' ➔ '));
+            leafValues.push(text);
+          }
+        }
+      };
+      walk([item]);
     }
-  };
-
-  if (rawSuspectTree.length > 0) {
-    walkSuspectTree(rawSuspectTree);
   }
 
-  const suspectDetailsStr = branchPaths.join('; ');
+  const allDetails = [
+    ...suspectDetailsLines,
+    ...branchPaths,
+  ];
+  const suspectDetailsStr = allDetails.join('; ');
   const suspectUsernamesStr = Array.from(new Set(detectedUsernames)).join(', ');
   const suspectPhonesStr = Array.from(new Set(detectedPhones)).join(', ');
   const suspectCardsStr = Array.from(new Set(detectedCards)).join(', ');
@@ -219,6 +255,8 @@ export function buildTemplateContext(
       leaf: adapt(parts[parts.length - 1] || ''),
     };
   });
+
+  const finalSuspectList = suspectList.length > 0 ? suspectList : formattedSuspectTree;
 
   // 7. Dynamic Custom Fields parser
   const customFieldsContext: Record<string, any> = {};
@@ -425,17 +463,20 @@ export function buildTemplateContext(
     },
 
     // ------------------------------------------------------------------------
-    // Model 6b: Suspect / Gumonlanuvchi ma'lumotlari daraxti
+    // Model 6b: Suspect / Gumonlanuvchi ma'lumotlari
     // ------------------------------------------------------------------------
     suspect: {
       details: adapt(suspectDetailsStr),
+      summary: adapt(suspectDetailsStr),
       usernames: adapt(suspectUsernamesStr),
       phones: adapt(suspectPhonesStr),
       cards: adapt(suspectCardsStr),
       raw_summary: adapt(suspectSummaryStr),
-      count: branchPaths.length,
+      count: finalSuspectList.length,
+      ...suspectKeyValues,
     },
-    suspect_tree: formattedSuspectTree,
+    suspect_list: finalSuspectList,
+    suspect_tree: finalSuspectList,
     suspect_details: adapt(suspectDetailsStr),
 
     // ------------------------------------------------------------------------
