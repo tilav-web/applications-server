@@ -1,4 +1,4 @@
-import { Injectable, NotFoundException } from '@nestjs/common';
+import { Injectable, NotFoundException, OnModuleInit } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { FindOptionsWhere, ILike, Repository } from 'typeorm';
 
@@ -8,12 +8,37 @@ import { Crime } from './crime.entity';
 import type { CreateCrimeDto } from './dto/create-crime.dto';
 import type { UpdateCrimeDto } from './dto/update-crime.dto';
 
+const DEFAULT_CRIMES = [
+  'Фирибгарлик',
+  'Ўғрилик',
+  'Ҳақорат қилиш',
+  'Расм тарқатиш',
+  'Бошқа',
+  'Адашиб ташлаган',
+];
+
 @Injectable()
-export class CrimesService {
+export class CrimesService implements OnModuleInit {
   constructor(
     @InjectRepository(Crime)
     private readonly crimeRepo: Repository<Crime>,
   ) {}
+
+  async onModuleInit() {
+    for (const name of DEFAULT_CRIMES) {
+      const existing = await this.crimeRepo.findOne({
+        where: [{ article: ILike(name) }, { title: ILike(name) }],
+      });
+      if (!existing) {
+        await this.crimeRepo.save(
+          this.crimeRepo.create({
+            article: name,
+            title: name,
+          }),
+        );
+      }
+    }
+  }
 
   async create(dto: CreateCrimeDto): Promise<Crime> {
     const article = dto.article ? formatTitleCase(dto.article) : '';
@@ -32,11 +57,7 @@ export class CrimesService {
     let where: FindOptionsWhere<Crime> | FindOptionsWhere<Crime>[] = {};
     if (search) {
       const q = `%${search}%`;
-      where = [
-        { article: ILike(q) },
-        { title: ILike(q) },
-        { category: ILike(q) },
-      ];
+      where = [{ article: ILike(q) }, { title: ILike(q) }, { category: ILike(q) }];
     }
 
     const [items, total] = await this.crimeRepo.findAndCount({
@@ -81,7 +102,9 @@ export class CrimesService {
       updatedData.article = dto.article ? formatTitleCase(dto.article) : '';
     }
     if (dto.title !== undefined) {
-      updatedData.title = dto.title ? formatTitleCase(dto.title) : (updatedData.article || crime.article);
+      updatedData.title = dto.title
+        ? formatTitleCase(dto.title)
+        : updatedData.article || crime.article;
     }
     Object.assign(crime, updatedData);
     return this.crimeRepo.save(crime);
