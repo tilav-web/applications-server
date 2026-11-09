@@ -94,3 +94,4 @@ export function formatTitleCase(str?: string | null): string {
     })
     .join(' ');
 }
+
