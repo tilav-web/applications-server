@@ -517,9 +517,12 @@ export class TemplatesManagementService implements OnApplicationBootstrap {
       this.logger.log('Shablonlar jadvali bo‘sh. Boshlang‘ich rasmiy shablonlar bazaga kiritilmoqda...');
 
       const possibleDirs = [
+        path.resolve(process.cwd(), 'templates'),
         path.resolve(process.cwd(), 'docx_templates'),
         path.resolve(process.cwd(), '../docx_templates'),
+        path.resolve(process.cwd(), '../templates'),
         path.resolve(__dirname, '../../../../../../docx_templates'),
+        path.resolve(__dirname, '../../../../../../templates'),
       ];
 
       let baseTemplatesDir = '';
