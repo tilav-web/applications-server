@@ -1,6 +1,6 @@
 import { Injectable, NotFoundException } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { FindOptionsWhere, ILike, Not, Repository } from 'typeorm';
+import { FindOptionsWhere, ILike, In, Not, Repository } from 'typeorm';
 
 import { ApplicationStatus } from '../../common/enums/application-status.enum';
 import { TransferCustomFieldType } from '../../common/enums/transfer-custom-field-type.enum';
@@ -413,7 +413,11 @@ export class ApplicationsService {
         if (!crimeId && existingApp.crime_id) {
           crimeId = existingApp.crime_id;
         }
-        if (crimeMethodId === null && existingApp.crime_method_id && dto.crime_method_id === undefined) {
+        if (
+          crimeMethodId === null &&
+          existingApp.crime_method_id &&
+          dto.crime_method_id === undefined
+        ) {
           crimeMethodId = existingApp.crime_method_id;
         }
         if (!cardId && existingApp.card_id) {
@@ -881,75 +885,247 @@ export class ApplicationsService {
   }
 
   async findAll(
-    page = 1,
-    limit = 10,
-    search?: string,
-    status?: string,
+    pageOrParams:
+      | number
+      | {
+          page?: number;
+          limit?: number;
+          search?: string;
+          status?: string;
+          status_id?: string;
+          district_id?: string;
+          crime_id?: string;
+          crime_method_id?: string;
+          application_number?: string;
+          citizen_name?: string;
+          description?: string;
+          date?: string;
+          date_from?: string;
+          date_to?: string;
+          relations_filter?: string;
+        } = 1,
+    limitParam = 10,
+    searchParam?: string,
+    statusParam?: string,
   ): Promise<PaginatedResult<Application>> {
-    const where: FindOptionsWhere<Application> = {};
-    if (status) {
-      const matchingSt = await this.statusRepo.findOne({
-        where: [{ id: status }, { code: status }, { name: ILike(status) }],
+    let page = 1;
+    let limit = 10;
+    let search: string | undefined;
+    let status: string | undefined;
+    let status_id: string | undefined;
+    let district_id: string | undefined;
+    let crime_id: string | undefined;
+    let crime_method_id: string | undefined;
+    let application_number: string | undefined;
+    let citizen_name: string | undefined;
+    let description: string | undefined;
+    let date: string | undefined;
+    let date_from: string | undefined;
+    let date_to: string | undefined;
+    let relations_filter: string | undefined;
+
+    if (typeof pageOrParams === 'object') {
+      page = Number(pageOrParams.page) || 1;
+      limit = Number(pageOrParams.limit) || 10;
+      search = pageOrParams.search;
+      status = pageOrParams.status;
+      status_id = pageOrParams.status_id;
+      district_id = pageOrParams.district_id;
+      crime_id = pageOrParams.crime_id;
+      crime_method_id = pageOrParams.crime_method_id;
+      application_number = pageOrParams.application_number;
+      citizen_name = pageOrParams.citizen_name;
+      description = pageOrParams.description;
+      date = pageOrParams.date;
+      date_from = pageOrParams.date_from;
+      date_to = pageOrParams.date_to;
+      relations_filter = pageOrParams.relations_filter;
+    } else {
+      page = Number(pageOrParams) || 1;
+      limit = Number(limitParam) || 10;
+      search = searchParam;
+      status = statusParam;
+    }
+
+    const qb = this.applicationRepo
+      .createQueryBuilder('app')
+      .leftJoin('app.application_status', 'application_status')
+      .leftJoin('app.citizen', 'citizen')
+      .leftJoin('app.district', 'district')
+      .leftJoin('app.crime', 'crime');
+
+    if (search && search.trim()) {
+      const q = `%${search.trim()}%`;
+      qb.andWhere(
+        '(app.application_number ILIKE :q OR app.description ILIKE :q OR app.officer_notes ILIKE :q OR citizen.first_name ILIKE :q OR citizen.last_name ILIKE :q OR citizen.middle_name ILIKE :q OR citizen.phone_number ILIKE :q OR citizen.passport ILIKE :q)',
+        { q },
+      );
+    }
+
+    const stVal = status_id || status;
+    if (stVal && stVal.trim()) {
+      const val = stVal.trim();
+      qb.andWhere(
+        '(app.status_id = :stVal OR app.status ILIKE :stVal OR application_status.code ILIKE :stVal OR application_status.name ILIKE :stVal)',
+        { stVal: val },
+      );
+    }
+
+    if (district_id && district_id.trim()) {
+      qb.andWhere('app.district_id = :district_id', { district_id: district_id.trim() });
+    }
+
+    if (crime_id && crime_id.trim()) {
+      qb.andWhere('app.crime_id = :crime_id', { crime_id: crime_id.trim() });
+    }
+
+    if (crime_method_id && crime_method_id.trim()) {
+      qb.andWhere('app.crime_method_id = :crime_method_id', {
+        crime_method_id: crime_method_id.trim(),
       });
-      if (matchingSt) {
-        where.status_id = matchingSt.id;
-      } else {
-        where.status = status;
-      }
     }
 
-    const take = limit;
-    const skip = (page - 1) * limit;
-
-    let whereCondition: FindOptionsWhere<Application> | FindOptionsWhere<Application>[] = where;
-
-    if (search) {
-      const q = `%${search}%`;
-      whereCondition = [
-        { ...where, application_number: ILike(q) },
-        { ...where, description: ILike(q) },
-        { ...where, officer_notes: ILike(q) },
-      ];
+    if (application_number && application_number.trim()) {
+      qb.andWhere('app.application_number ILIKE :appNum', {
+        appNum: `%${application_number.trim()}%`,
+      });
     }
 
-    const [items, total] = await this.applicationRepo.findAndCount({
-      where: whereCondition,
-      relations: {
-        application_status: true,
-        documents: true,
+    if (citizen_name && citizen_name.trim()) {
+      const cName = `%${citizen_name.trim()}%`;
+      qb.andWhere(
+        "(citizen.first_name ILIKE :cName OR citizen.last_name ILIKE :cName OR citizen.middle_name ILIKE :cName OR CONCAT(COALESCE(citizen.last_name,''), ' ', COALESCE(citizen.first_name,'')) ILIKE :cName OR citizen.phone_number ILIKE :cName OR citizen.passport ILIKE :cName)",
+        { cName },
+      );
+    }
+
+    if (description && description.trim()) {
+      const desc = `%${description.trim()}%`;
+      qb.andWhere('(app.description ILIKE :desc OR app.officer_notes ILIKE :desc)', { desc });
+    }
+
+    if (date && date.trim()) {
+      const dStr = date.trim();
+      qb.andWhere("TO_CHAR(COALESCE(app.date, app.created_at), 'YYYY-MM-DD') = :filterDate", {
+        filterDate: dStr,
+      });
+    }
+
+    if (date_from && date_from.trim()) {
+      qb.andWhere('COALESCE(app.date, app.created_at) >= :date_from', {
+        date_from: new Date(date_from.trim()),
+      });
+    }
+
+    if (date_to && date_to.trim()) {
+      const dTo = new Date(date_to.trim());
+      dTo.setHours(23, 59, 59, 999);
+      qb.andWhere('COALESCE(app.date, app.created_at) <= :date_to', { date_to: dTo });
+    }
+
+    qb.orderBy('app.created_at', 'DESC');
+
+    const relations = {
+      application_status: true,
+      documents: true,
+      citizen: { district: true, mahalla: true },
+      district: true,
+      crime: true,
+      crime_method: true,
+      card: { bank: true, citizen: true },
+      transfer: {
+        payment_provider: true,
+        sender_card: true,
+        receiver_card: true,
+        custom_fields: {
+          bank: true,
+          card: true,
+          citizen: true,
+        },
+      },
+      custom_fields: {
         citizen: { district: true, mahalla: true },
-        district: true,
-        crime: true,
-        crime_method: true,
         card: { bank: true, citizen: true },
+        crime: true,
+        district: true,
         transfer: {
           payment_provider: true,
           sender_card: true,
           receiver_card: true,
-          custom_fields: {
-            bank: true,
-            card: true,
-            citizen: true,
-          },
-        },
-        custom_fields: {
-          citizen: { district: true, mahalla: true },
-          card: { bank: true, citizen: true },
-          crime: true,
-          district: true,
-          transfer: {
-            payment_provider: true,
-            sender_card: true,
-            receiver_card: true,
-          },
         },
       },
-      order: { created_at: 'DESC' },
-      skip,
-      take,
-    });
+    };
 
-    await this.attachRelationsSummaries(items);
+    if (relations_filter === 'with_relations' || relations_filter === 'fraud_card') {
+      const matchedApps = await qb.select('app.id').getMany();
+      const allIds = matchedApps.map((a) => a.id);
+      if (allIds.length === 0) {
+        return {
+          items: [],
+          meta: {
+            total: 0,
+            page,
+            limit,
+            totalPages: 1,
+            hasNextPage: false,
+            hasPreviousPage: false,
+          },
+        };
+      }
+
+      const allItems = await this.applicationRepo.find({
+        where: { id: In(allIds) },
+        relations,
+      });
+      allItems.sort((a, b) => allIds.indexOf(a.id) - allIds.indexOf(b.id));
+      await this.attachRelationsSummaries(allItems);
+
+      const filtered = allItems.filter((item) => {
+        if (relations_filter === 'with_relations') {
+          return item.relations_summary && item.relations_summary.total > 0;
+        }
+        if (relations_filter === 'fraud_card') {
+          return item.relations_summary && item.relations_summary.has_fraud_card_link;
+        }
+        return true;
+      });
+
+      const total = filtered.length;
+      const skip = (page - 1) * limit;
+      const paginatedItems = filtered.slice(skip, skip + limit);
+      const totalPages = Math.ceil(total / limit) || 1;
+
+      return {
+        items: paginatedItems,
+        meta: {
+          total,
+          page,
+          limit,
+          totalPages,
+          hasNextPage: page < totalPages,
+          hasPreviousPage: page > 1,
+        },
+      };
+    }
+
+    const skip = (page - 1) * limit;
+    const [matchedApps, total] = await qb
+      .select(['app.id', 'app.created_at'])
+      .skip(skip)
+      .take(limit)
+      .getManyAndCount();
+
+    const ids = matchedApps.map((a) => a.id);
+    let items: Application[] = [];
+
+    if (ids.length > 0) {
+      items = await this.applicationRepo.find({
+        where: { id: In(ids) },
+        relations,
+      });
+      items.sort((a, b) => ids.indexOf(a.id) - ids.indexOf(b.id));
+      await this.attachRelationsSummaries(items);
+    }
 
     const totalPages = Math.ceil(total / limit) || 1;
 

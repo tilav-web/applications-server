@@ -32,8 +32,35 @@ export class ApplicationsController {
     @Query('limit') limit?: number,
     @Query('search') search?: string,
     @Query('status') status?: string,
+    @Query('status_id') status_id?: string,
+    @Query('district_id') district_id?: string,
+    @Query('crime_id') crime_id?: string,
+    @Query('crime_method_id') crime_method_id?: string,
+    @Query('application_number') application_number?: string,
+    @Query('citizen_name') citizen_name?: string,
+    @Query('description') description?: string,
+    @Query('date') date?: string,
+    @Query('date_from') date_from?: string,
+    @Query('date_to') date_to?: string,
+    @Query('relations_filter') relations_filter?: string,
   ) {
-    return this.applicationsService.findAll(Number(page) || 1, Number(limit) || 10, search, status);
+    return this.applicationsService.findAll({
+      page: Number(page) || 1,
+      limit: Number(limit) || 10,
+      search,
+      status,
+      status_id,
+      district_id,
+      crime_id,
+      crime_method_id,
+      application_number,
+      citizen_name,
+      description,
+      date,
+      date_from,
+      date_to,
+      relations_filter,
+    });
   }
 
   /**
