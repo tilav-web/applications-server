@@ -19,6 +19,8 @@ import { DocumentsModule } from './documents/documents.module';
 import { ApplicationsExcelService } from './export/applications-excel.service';
 import { Mahalla } from './mahallas/mahalla.entity';
 import { MahallasModule } from './mahallas/mahallas.module';
+import { ApplicationsReportsController } from './reports/applications-reports.controller';
+import { ApplicationsReportsService } from './reports/applications-reports.service';
 import { ApplicationStatus } from './statuses/application-status.entity';
 import { ApplicationStatusesModule } from './statuses/application-statuses.module';
 import { SuspectFieldConfig } from './suspect-fields/suspect-field-config.entity';
@@ -66,11 +68,12 @@ import { TransfersModule } from './transfers/transfers.module';
     TransfersModule,
     DocumentsModule,
   ],
-  controllers: [ApplicationsController],
-  providers: [ApplicationsService, ApplicationsExcelService],
+  controllers: [ApplicationsController, ApplicationsReportsController],
+  providers: [ApplicationsService, ApplicationsExcelService, ApplicationsReportsService],
   exports: [
     ApplicationsService,
     ApplicationsExcelService,
+    ApplicationsReportsService,
     SuspectFieldConfigsModule,
     CrimeMethodsModule,
   ],
