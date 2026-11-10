@@ -15,6 +15,8 @@ import type { CreateApplicationDto } from './dto/create-application.dto';
 import type { UpdateApplicationDto } from './dto/update-application.dto';
 import { Mahalla } from './mahallas/mahalla.entity';
 import { ApplicationStatus as ApplicationStatusEntity } from './statuses/application-status.entity';
+import { ApplicationsExcelService } from './export/applications-excel.service';
+import type { Response } from 'express';
 import { Bank } from './transfers/banks/bank.entity';
 import { Card } from './transfers/cards/card.entity';
 import { TransferCustomField } from './transfers/custom-fields/transfer-custom-field.entity';
@@ -48,6 +50,7 @@ export class ApplicationsService {
     private readonly transferCustomFieldRepo: Repository<TransferCustomField>,
     @InjectRepository(ApplicationStatusEntity)
     private readonly statusRepo: Repository<ApplicationStatusEntity>,
+    private readonly excelService: ApplicationsExcelService,
   ) {}
 
   private async processCustomFields(
@@ -1140,6 +1143,49 @@ export class ApplicationsService {
         hasPreviousPage: page > 1,
       },
     };
+  }
+
+  /**
+   * Filterlangan barcha arizalarni Excel (.xlsx) faylga eksport qilish
+   */
+  async exportToExcel(
+    params: {
+      search?: string;
+      status?: string;
+      status_id?: string;
+      district_id?: string;
+      crime_id?: string;
+      crime_method_id?: string;
+      application_number?: string;
+      citizen_name?: string;
+      description?: string;
+      date?: string;
+      date_from?: string;
+      date_to?: string;
+      relations_filter?: string;
+    },
+    res: Response,
+  ): Promise<void> {
+    const result = await this.findAll({
+      ...params,
+      page: 1,
+      limit: 10000,
+    });
+
+    const workbook = await this.excelService.generateWorkbook(result.items);
+
+    const now = new Date();
+    const dateStr = now.toISOString().slice(0, 10);
+    const fileName = `Arizalar_Hisoboti_${dateStr}.xlsx`;
+
+    res.setHeader(
+      'Content-Type',
+      'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+    );
+    res.setHeader('Content-Disposition', `attachment; filename="${fileName}"`);
+
+    await workbook.xlsx.write(res);
+    res.end();
   }
 
   /**

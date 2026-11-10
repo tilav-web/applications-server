@@ -5,6 +5,7 @@ import { AuthModule } from '../auth/auth.module';
 import { Application } from './application.entity';
 import { ApplicationsController } from './applications.controller';
 import { ApplicationsService } from './applications.service';
+import { ApplicationsExcelService } from './export/applications-excel.service';
 import { Citizen } from './citizens/citizen.entity';
 import { CitizensModule } from './citizens/citizens.module';
 import { Crime } from './crimes/crime.entity';
@@ -66,7 +67,12 @@ import { TransfersModule } from './transfers/transfers.module';
     DocumentsModule,
   ],
   controllers: [ApplicationsController],
-  providers: [ApplicationsService],
-  exports: [ApplicationsService, SuspectFieldConfigsModule, CrimeMethodsModule],
+  providers: [ApplicationsService, ApplicationsExcelService],
+  exports: [
+    ApplicationsService,
+    ApplicationsExcelService,
+    SuspectFieldConfigsModule,
+    CrimeMethodsModule,
+  ],
 })
 export class ApplicationsModule {}
