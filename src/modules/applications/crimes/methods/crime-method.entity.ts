@@ -52,3 +52,4 @@ export class CrimeMethod extends BaseEntity {
   @OneToMany('Application', 'crime_method')
   applications: Application[];
 }
+

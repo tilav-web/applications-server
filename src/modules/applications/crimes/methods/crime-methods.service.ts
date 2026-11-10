@@ -223,3 +223,4 @@ export class CrimeMethodsService implements OnApplicationBootstrap {
     return { success: true, message: `Jinoyat usuli o‘chirildi: "${item.name}"` };
   }
 }
+

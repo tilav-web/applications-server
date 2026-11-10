@@ -54,3 +54,4 @@ export class CrimeMethodsController {
     return this.service.remove(id);
   }
 }
+
