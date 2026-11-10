@@ -18,14 +18,14 @@ import { MinioService } from '../../../minio/minio.service';
 import { Application } from '../../application.entity';
 import { SuspectFieldConfig } from '../../suspect-fields/suspect-field-config.entity';
 import { Transfer } from '../../transfers/transfer.entity';
-import { DocxEngineService } from './docx-engine.service';
 import { DocumentTemplate } from './document-template.entity';
+import { DocxEngineService } from './docx-engine.service';
 import { CreateTemplateDto, UpdateTemplateDto } from './dto/template.dto';
 import { buildTemplateContext } from './template-data.builder';
 import {
+  TEMPLATE_VARIABLES_DICTIONARY,
   TemplateCategoryConfig,
   TemplateVariableItem,
-  TEMPLATE_VARIABLES_DICTIONARY,
 } from './template-variables.dictionary';
 
 @Injectable()

@@ -7,8 +7,10 @@ import {
   Patch,
   Post,
   Query,
+  Res,
   UseGuards,
 } from '@nestjs/common';
+import type { Response } from 'express';
 
 import { JwtAuthGuard } from '../../../common/guards/jwt-auth.guard';
 import { CitizensService } from './citizens.service';
@@ -49,6 +51,35 @@ export class CitizensController {
       gender,
       birthDate,
     });
+  }
+
+  @Get('export/excel')
+  async exportExcel(
+    @Res() res: Response,
+    @Query('search') search?: string,
+    @Query('first_name') firstName?: string,
+    @Query('last_name') lastName?: string,
+    @Query('middle_name') middleName?: string,
+    @Query('passport') passport?: string,
+    @Query('phone_number') phoneNumber?: string,
+    @Query('pinfl') pinfl?: string,
+    @Query('gender') gender?: string,
+    @Query('birth_date') birthDate?: string,
+  ) {
+    return this.citizensService.exportToExcel(
+      search,
+      {
+        firstName,
+        lastName,
+        middleName,
+        passport,
+        phoneNumber,
+        pinfl,
+        gender,
+        birthDate,
+      },
+      res,
+    );
   }
 
   @Get(':id')

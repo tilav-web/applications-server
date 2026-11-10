@@ -4,18 +4,18 @@ import { InjectRepository } from '@nestjs/typeorm';
 import { randomUUID } from 'crypto';
 import { Document, Packer, Paragraph } from 'docx';
 import * as fs from 'fs';
-import * as path from 'path';
 import JSZip from 'jszip';
+import * as path from 'path';
 import { Repository } from 'typeorm';
 
 import { MinioService } from '../../minio/minio.service';
 import { User } from '../../users/user.entity';
 import { Application } from '../application.entity';
+import { Transfer } from '../transfers/transfer.entity';
 import { ApplicationDocument } from './application-document.entity';
 import { GenerateFromTemplateDto } from './dto/generate-from-template.dto';
-import { Transfer } from '../transfers/transfer.entity';
-import { DocxEngineService } from './templates/docx-engine.service';
 import { DocumentTemplate } from './templates/document-template.entity';
+import { DocxEngineService } from './templates/docx-engine.service';
 import { buildTemplateContext } from './templates/template-data.builder';
 import { DocumentTemplateConfig, OFFICIAL_TEMPLATES } from './templates/templates.config';
 import { adaptToScript, formatAmountNumber, formatDateUzbek } from './utils/transliterate.util';
@@ -285,7 +285,7 @@ export class DocumentsService {
 
     // 2 = Document is ready for saving, 6 = Document being edited, but force-saved
     if (body?.status === 2 || body?.status === 6) {
-      let downloadUrl: string = body.url;
+      const downloadUrl: string = body.url;
       if (!downloadUrl) {
         this.logger.warn(`Callbackda status ${body.status} bo'lsa-da yuklab olish URL si yo'q`);
         return { error: 0 };

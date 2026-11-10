@@ -12,8 +12,8 @@ import { Transfer } from '../transfers/transfer.entity';
 import { ApplicationDocument } from './application-document.entity';
 import { DocumentsController } from './documents.controller';
 import { DocumentsService } from './documents.service';
-import { DocxEngineService } from './templates/docx-engine.service';
 import { DocumentTemplate } from './templates/document-template.entity';
+import { DocxEngineService } from './templates/docx-engine.service';
 import { TemplatesController } from './templates/templates.controller';
 import { TemplatesManagementService } from './templates/templates-management.service';
 

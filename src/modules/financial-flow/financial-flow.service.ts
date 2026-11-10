@@ -298,7 +298,7 @@ export class FinancialFlowService {
       const appDate: string | null = rawDate
         ? typeof rawDate === 'string'
           ? rawDate
-          : (rawDate as Date).toISOString()
+          : rawDate.toISOString()
         : null;
       const citizenName = app.citizen
         ? `${app.citizen.last_name || ''} ${app.citizen.first_name || ''}`.trim()

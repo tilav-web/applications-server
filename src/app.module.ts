@@ -4,14 +4,13 @@ import { TypeOrmModule } from '@nestjs/typeorm';
 
 import { Application } from './modules/applications/application.entity';
 import { ApplicationsModule } from './modules/applications/applications.module';
-import { FinancialFlowModule } from './modules/financial-flow/financial-flow.module';
 import { Citizen } from './modules/applications/citizens/citizen.entity';
 import { Crime } from './modules/applications/crimes/crime.entity';
 import { CrimeMethod } from './modules/applications/crimes/methods/crime-method.entity';
 import { ApplicationCustomField } from './modules/applications/custom-fields/application-custom-field.entity';
+import { District } from './modules/applications/districts/district.entity';
 import { ApplicationDocument } from './modules/applications/documents/application-document.entity';
 import { DocumentTemplate } from './modules/applications/documents/templates/document-template.entity';
-import { District } from './modules/applications/districts/district.entity';
 import { Mahalla } from './modules/applications/mahallas/mahalla.entity';
 import { Bank } from './modules/applications/transfers/banks/bank.entity';
 import { Card } from './modules/applications/transfers/cards/card.entity';
@@ -20,6 +19,7 @@ import { PaymentProvider } from './modules/applications/transfers/payment_provid
 import { Transfer } from './modules/applications/transfers/transfer.entity';
 import { Auth } from './modules/auth/auth.entity';
 import { AuthModule } from './modules/auth/auth.module';
+import { FinancialFlowModule } from './modules/financial-flow/financial-flow.module';
 import { MinioModule } from './modules/minio/minio.module';
 import { RedisModule } from './modules/redis/redis.module';
 import { User } from './modules/users/user.entity';

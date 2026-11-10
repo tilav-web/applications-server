@@ -1,5 +1,6 @@
 import { Injectable, NotFoundException } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
+import type { Response } from 'express';
 import { FindOptionsWhere, ILike, Repository } from 'typeorm';
 
 import type { PaginatedResult } from '../../../common/interfaces/pagination.interface';
@@ -7,12 +8,14 @@ import { formatUzbekName } from '../../../common/utils/name-formatter.util';
 import { Citizen } from './citizen.entity';
 import type { CreateCitizenDto } from './dto/create-citizen.dto';
 import type { UpdateCitizenDto } from './dto/update-citizen.dto';
+import { CitizensExcelService } from './export/citizens-excel.service';
 
 @Injectable()
 export class CitizensService {
   constructor(
     @InjectRepository(Citizen)
     private readonly citizenRepo: Repository<Citizen>,
+    private readonly excelService: CitizensExcelService,
   ) {}
 
   async create(dto: CreateCitizenDto): Promise<Citizen> {
@@ -174,5 +177,81 @@ export class CitizensService {
     const citizen = await this.findOne(id);
     await this.citizenRepo.remove(citizen);
     return { success: true, message: "Fuqaro muvaffaqiyatli o'chirildi" };
+  }
+
+  async exportToExcel(
+    search?: string,
+    filters?: {
+      firstName?: string;
+      lastName?: string;
+      middleName?: string;
+      passport?: string;
+      phoneNumber?: string;
+      pinfl?: string;
+      gender?: string;
+      birthDate?: string;
+    },
+    res?: Response,
+  ): Promise<void> {
+    const conditions: FindOptionsWhere<Citizen> = {};
+    if (filters?.firstName?.trim()) {
+      conditions.first_name = ILike(`%${filters.firstName.trim()}%`);
+    }
+    if (filters?.lastName?.trim()) {
+      conditions.last_name = ILike(`%${filters.lastName.trim()}%`);
+    }
+    if (filters?.middleName?.trim()) {
+      conditions.middle_name = ILike(`%${filters.middleName.trim()}%`);
+    }
+    if (filters?.passport?.trim()) {
+      conditions.passport = ILike(`%${filters.passport.trim()}%`);
+    }
+    if (filters?.phoneNumber?.trim()) {
+      conditions.phone_number = ILike(`%${filters.phoneNumber.trim()}%`);
+    }
+    if (filters?.pinfl?.trim()) {
+      conditions.pinfl = ILike(`%${filters.pinfl.trim()}%`);
+    }
+    if (filters?.gender?.trim()) {
+      conditions.gender = filters.gender.trim() as 'male' | 'female';
+    }
+    if (filters?.birthDate?.trim()) {
+      conditions.birth_date = filters.birthDate.trim();
+    }
+
+    let where: FindOptionsWhere<Citizen> | FindOptionsWhere<Citizen>[] = conditions;
+
+    if (Object.keys(conditions).length === 0 && search?.trim()) {
+      const q = `%${search.trim()}%`;
+      where = [
+        { first_name: ILike(q) },
+        { last_name: ILike(q) },
+        { middle_name: ILike(q) },
+        { passport: ILike(q) },
+        { phone_number: ILike(q) },
+        { pinfl: ILike(q) },
+      ];
+    }
+
+    const items = await this.citizenRepo.find({
+      where,
+      relations: { cards: true, applications: true, district: true, mahalla: true },
+      order: { created_at: 'DESC' },
+      take: 10000,
+    });
+
+    const workbook = await this.excelService.generateWorkbook(items);
+    const dateStr = new Date().toISOString().slice(0, 10);
+    const fileName = `Fuqarolar_Bazasi_${dateStr}.xlsx`;
+
+    if (res) {
+      res.setHeader(
+        'Content-Type',
+        'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+      );
+      res.setHeader('Content-Disposition', `attachment; filename="${fileName}"`);
+      await workbook.xlsx.write(res);
+      res.end();
+    }
   }
 }

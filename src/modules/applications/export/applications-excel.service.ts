@@ -3,69 +3,113 @@ import * as ExcelJS from 'exceljs';
 
 import { Application } from '../application.entity';
 
+interface TransferItem {
+  amount?: number | string | null;
+  currency?: string | null;
+  transfer_date?: string | Date | null;
+  status?: string | null;
+  sender_card?: {
+    card_number?: string | null;
+    bank?: { name?: string | null } | null;
+  } | null;
+  sender_bank_name?: string | null;
+  receiver_card?: {
+    card_number?: string | null;
+    bank?: { name?: string | null } | null;
+    citizen?: {
+      first_name?: string | null;
+      last_name?: string | null;
+      middle_name?: string | null;
+    } | null;
+  } | null;
+  receiver_bank_name?: string | null;
+  receiver_name?: string | null;
+  payment_provider?: { name?: string | null } | null;
+  provider_name?: string | null;
+}
+
+interface SuspectNodeItem {
+  label?: string;
+  value?: string;
+  note?: string;
+  children?: SuspectNodeItem[];
+}
+
 @Injectable()
 export class ApplicationsExcelService {
-  async generateWorkbook(applications: Application[]): Promise<ExcelJS.Workbook> {
+  generateWorkbook(applications: Application[]): Promise<ExcelJS.Workbook> {
     const workbook = new ExcelJS.Workbook();
     workbook.creator = 'IIV Xavfsiz Shaxar / Qashqadaryo viloyati IIB';
     workbook.created = new Date();
     workbook.modified = new Date();
 
-    // 1. Sheet 1: Arizalar ro'yxati (Asosiy)
+    // Hisob-kitoblar va qator chegaralari
+    const totalApps = applications.length;
+    const allTransfersCount = applications.reduce(
+      (cnt, app) => cnt + this.extractAllTransfers(app).length,
+      0,
+    );
+    const allSuspectsCount = applications.reduce(
+      (cnt, app) => cnt + this.extractSuspectItems(app.suspect_tree).length,
+      0,
+    );
+
+    // 1. Sheet 1: Arizalar ro'yxati (Bosh jadval)
     this.buildApplicationsSheet(workbook, applications);
 
-    // 2. Sheet 2: Pul o'tkazmalari & Moliyaviy zarar
+    // 2. Sheet 2: Pul o'tkazmalari (Barcha tranzaksiyalar)
     this.buildTransfersSheet(workbook, applications);
 
-    // 3. Sheet 3: Gumonlanuvchilar belgilari
+    // 3. Sheet 3: Gumonlanuvchilar (Raqamli identifikatorlar)
     this.buildSuspectsSheet(workbook, applications);
 
-    // 4. Sheet 4: Xulosa va Statistika (Formulalar bilan)
-    this.buildSummarySheet(workbook, applications.length);
+    // 4. Sheet 4: Xulosa va Statistika (Dinamik formulalar)
+    this.buildSummarySheet(workbook, applications, totalApps, allTransfersCount, allSuspectsCount);
 
-    return workbook;
+    return Promise.resolve(workbook);
   }
 
   /**
-   * 1-SHEET: Arizalar ro'yxati
+   * 1-SHEET: Arizalar ro'yxati (Bosh jadval)
+   * Har bir arizaning o'tkazmalar soni va zarar miqdori 2-tabdan dinamik SUMIF / COUNTIF formulasi orqali hisoblanadi!
    */
   private buildApplicationsSheet(workbook: ExcelJS.Workbook, applications: Application[]): void {
     const ws = workbook.addWorksheet("Arizalar ro'yxati", {
       views: [{ state: 'frozen', ySplit: 1 }],
-      properties: { tabColor: { argb: '1E3A8A' } },
+      // Qat'iy oq-qora qoida: hech qanday tabColor ishlatilmaydi
     });
 
     ws.columns = [
       { header: '№', key: 'idx', width: 6 },
       { header: 'Ariza Raqami', key: 'app_num', width: 22 },
       { header: 'Ariza Sanasi', key: 'date', width: 14 },
-      { header: 'Holati', key: 'status', width: 16 },
+      { header: 'Holati', key: 'status', width: 18 },
       { header: 'Hudud (Tuman)', key: 'district', width: 18 },
       { header: 'Mahalla', key: 'mahalla', width: 20 },
       { header: 'Jinoyat Moddasi', key: 'crime', width: 24 },
-      { header: 'Jinoyat Usuli', key: 'crime_method', width: 32 },
+      { header: 'Jinoyat Usuli', key: 'crime_method', width: 28 },
       { header: 'Arizachi (F.I.SH)', key: 'citizen_name', width: 28 },
       { header: 'Jinsi', key: 'gender', width: 10 },
       { header: 'Telefon Raqam', key: 'phone', width: 18 },
       { header: 'Pasport Seriya', key: 'passport', width: 16 },
       { header: 'JShShIR (PINFL)', key: 'pinfl', width: 18 },
       { header: 'Yashash Manzili', key: 'address', width: 35 },
-      { header: "O'tkazmalar Soni", key: 'transfers_count', width: 16 },
-      { header: "Zarar Miqdori (so'm)", key: 'total_amount', width: 22 },
+      { header: "O'tkazmalar Soni", key: 'transfers_count', width: 18 },
+      { header: "Zarar Miqdori (so'm)", key: 'total_amount', width: 24 },
+      { header: 'Gumonlanuvchilar', key: 'suspects_count', width: 18 },
       { header: 'Tafsilot (Fabula)', key: 'description', width: 45 },
       { header: 'Xodim Qaydlari', key: 'notes', width: 35 },
     ];
 
-    this.styleHeaderRow(ws.getRow(1), '1E3A8A');
+    // Monoxrom audit sarlavhasi
+    this.styleHeaderRow(ws.getRow(1));
 
     applications.forEach((app, index) => {
+      const rowNum = index + 2; // Sarlavha 1-qator bo'lgani uchun ma'lumotlar 2-qatordan boshlanadi
       const citizen = app.citizen;
       const citizenName = citizen
         ? [citizen.last_name, citizen.first_name, citizen.middle_name].filter(Boolean).join(' ')
         : '—';
-
-      const transfers = this.extractAllTransfers(app);
-      const totalAmount = transfers.reduce((sum, t) => sum + (Number(t.amount) || 0), 0);
 
       const dateStr = app.date
         ? new Date(app.date).toISOString().slice(0, 10)
@@ -74,10 +118,21 @@ export class ApplicationsExcelService {
           : '—';
 
       const statusName = app.application_status?.name || app.status || 'Yangi';
+      const appNumber = app.application_number || `AR-${app.id}`;
+
+      // Relyatsion professional formulalar:
+      // O'tkazmalar soni: 2-tabdagi 'Pul o'tkazmalari' B ustunida ushbu ariza raqamini sanaydi
+      const transfersFormula = `COUNTIF('Pul o''tkazmalari'!$B:$B, B${rowNum})`;
+
+      // Zarar miqdori: 2-tabdagi 'Pul o'tkazmalari' B ustunida mos ariza raqamining F (summa) ustunini yig'adi
+      const amountFormula = `SUMIF('Pul o''tkazmalari'!$B:$B, B${rowNum}, 'Pul o''tkazmalari'!$F:$F)`;
+
+      // Gumonlanuvchilar soni: 3-tabdagi 'Gumonlanuvchilar' B ustunida mos ariza raqamini sanaydi
+      const suspectsFormula = `COUNTIF('Gumonlanuvchilar'!$B:$B, B${rowNum})`;
 
       const row = ws.addRow({
         idx: index + 1,
-        app_num: app.application_number || '—',
+        app_num: appNumber,
         date: dateStr,
         status: statusName,
         district: app.district?.name || citizen?.district?.name || '—',
@@ -90,31 +145,82 @@ export class ApplicationsExcelService {
         passport: citizen?.passport || '—',
         pinfl: citizen?.pinfl || '—',
         address: citizen?.address || '—',
-        transfers_count: transfers.length,
-        total_amount: totalAmount,
+        transfers_count: { formula: transfersFormula },
+        total_amount: { formula: amountFormula },
+        suspects_count: { formula: suspectsFormula },
         description: app.description || '—',
         notes: app.officer_notes || '—',
       });
 
-      this.styleDataRow(row, index);
+      this.styleDataRow(row);
 
-      // Total amount formatting
+      // Karta, PINFL, Telefon, Ariza raqami - har doim matn formatida (@)
+      row.getCell('app_num').numFmt = '@';
+      row.getCell('phone').numFmt = '@';
+      row.getCell('passport').numFmt = '@';
+      row.getCell('pinfl').numFmt = '@';
+
+      // Raqamlar va formulalar formatlash
       const amountCell = row.getCell('total_amount');
-      amountCell.numFmt = '#,##0 "so\'m"';
+      amountCell.numFmt = '#,##0.00';
       amountCell.alignment = { horizontal: 'right', vertical: 'middle' };
 
       const countCell = row.getCell('transfers_count');
+      countCell.numFmt = '#,##0';
       countCell.alignment = { horizontal: 'center', vertical: 'middle' };
+
+      const suspectCell = row.getCell('suspects_count');
+      suspectCell.numFmt = '#,##0';
+      suspectCell.alignment = { horizontal: 'center', vertical: 'middle' };
     });
+
+    // Tagidagi JAMI qatori (Buxgalteriya ikki qatorli double pastki chizig'i bilan)
+    const lastDataRow = ws.rowCount;
+    if (lastDataRow >= 2) {
+      const summaryRow = ws.addRow({
+        idx: '',
+        app_num: '',
+        date: '',
+        status: '',
+        district: '',
+        mahalla: '',
+        crime: '',
+        crime_method: '',
+        citizen_name: '',
+        gender: '',
+        phone: '',
+        passport: '',
+        pinfl: '',
+        address: 'JAMI:',
+        transfers_count: { formula: `SUM(O2:O${lastDataRow})` },
+        total_amount: { formula: `SUM(P2:P${lastDataRow})` },
+        suspects_count: { formula: `SUM(Q2:Q${lastDataRow})` },
+        description: '',
+        notes: '',
+      });
+
+      this.styleTotalRow(summaryRow);
+
+      summaryRow.getCell('address').alignment = { horizontal: 'right', vertical: 'middle' };
+      summaryRow.getCell('transfers_count').numFmt = '#,##0';
+      summaryRow.getCell('transfers_count').alignment = {
+        horizontal: 'center',
+        vertical: 'middle',
+      };
+      summaryRow.getCell('total_amount').numFmt = '#,##0.00';
+      summaryRow.getCell('total_amount').alignment = { horizontal: 'right', vertical: 'middle' };
+      summaryRow.getCell('suspects_count').numFmt = '#,##0';
+      summaryRow.getCell('suspects_count').alignment = { horizontal: 'center', vertical: 'middle' };
+    }
   }
 
   /**
-   * 2-SHEET: Pul o'tkazmalari & Kartalar
+   * 2-SHEET: Pul o'tkazmalari
    */
   private buildTransfersSheet(workbook: ExcelJS.Workbook, applications: Application[]): void {
     const ws = workbook.addWorksheet("Pul o'tkazmalari", {
       views: [{ state: 'frozen', ySplit: 1 }],
-      properties: { tabColor: { argb: '059669' } },
+      // Qat'iy oq-qora qoida: tabColor yo'q
     });
 
     ws.columns = [
@@ -123,7 +229,7 @@ export class ApplicationsExcelService {
       { header: 'Arizachi F.I.SH', key: 'citizen_name', width: 28 },
       { header: 'Jabrlanuvchi Kartasi', key: 'sender_card', width: 22 },
       { header: "Xizmat Ko'rsatuvchi Bank", key: 'sender_bank', width: 24 },
-      { header: "O'tkazma Summasi", key: 'amount', width: 20 },
+      { header: "O'tkazma Summasi", key: 'amount', width: 22 },
       { header: 'Valyuta', key: 'currency', width: 10 },
       { header: "To'lov Provayderi / Ilova", key: 'provider', width: 24 },
       { header: "O'tkazma Sanasi", key: 'transfer_date', width: 18 },
@@ -133,7 +239,7 @@ export class ApplicationsExcelService {
       { header: 'Holati / Izoh', key: 'status', width: 18 },
     ];
 
-    this.styleHeaderRow(ws.getRow(1), '059669');
+    this.styleHeaderRow(ws.getRow(1));
 
     let transferIndex = 0;
     for (const app of applications) {
@@ -144,6 +250,7 @@ export class ApplicationsExcelService {
         : '—';
 
       const transfers = this.extractAllTransfers(app);
+      const appNumber = app.application_number || `AR-${app.id}`;
 
       for (const t of transfers) {
         transferIndex++;
@@ -163,7 +270,7 @@ export class ApplicationsExcelService {
 
         const row = ws.addRow({
           idx: transferIndex,
-          app_num: app.application_number || '—',
+          app_num: appNumber,
           citizen_name: citizenName,
           sender_card: senderCard,
           sender_bank: senderBank,
@@ -179,7 +286,12 @@ export class ApplicationsExcelService {
           status: t.status || 'Tugallangan',
         });
 
-        this.styleDataRow(row, transferIndex);
+        this.styleDataRow(row);
+
+        // Karta raqamlarini matn formatida saqlash (@)
+        row.getCell('app_num').numFmt = '@';
+        row.getCell('sender_card').numFmt = '@';
+        row.getCell('receiver_card').numFmt = '@';
 
         const amountCell = row.getCell('amount');
         amountCell.numFmt = '#,##0.00';
@@ -187,10 +299,10 @@ export class ApplicationsExcelService {
       }
     }
 
-    // Formulas: TOTAL and AVERAGE rows at the bottom
+    // Yakuniy qatorlar: JAMI, O'RTACHA va SONI
     const lastDataRow = ws.rowCount;
     if (lastDataRow >= 2) {
-      // Jami Summa Qatori
+      // 1. Jami Summa Qatori (Double border bilan)
       const totalRow = ws.addRow({
         idx: '',
         app_num: '',
@@ -207,13 +319,12 @@ export class ApplicationsExcelService {
         status: '',
       });
 
-      totalRow.font = { name: 'Segoe UI', size: 10, bold: true, color: { argb: '065F46' } };
-      totalRow.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'D1FAE5' } };
+      this.styleTotalRow(totalRow);
       totalRow.getCell('sender_bank').alignment = { horizontal: 'right', vertical: 'middle' };
       totalRow.getCell('amount').numFmt = '#,##0.00';
       totalRow.getCell('amount').alignment = { horizontal: 'right', vertical: 'middle' };
 
-      // O'rtacha Summa Qatori
+      // 2. O'rtacha Summa Qatori
       const avgRow = ws.addRow({
         idx: '',
         app_num: '',
@@ -229,14 +340,12 @@ export class ApplicationsExcelService {
         receiver_name: '',
         status: '',
       });
-
-      avgRow.font = { name: 'Segoe UI', size: 10, bold: true, color: { argb: '1E3A8A' } };
-      avgRow.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'EFF6FF' } };
+      this.styleSubTotalRow(avgRow);
       avgRow.getCell('sender_bank').alignment = { horizontal: 'right', vertical: 'middle' };
       avgRow.getCell('amount').numFmt = '#,##0.00';
       avgRow.getCell('amount').alignment = { horizontal: 'right', vertical: 'middle' };
 
-      // Jami O'tkazmalar Soni
+      // 3. Jami O'tkazmalar Soni Qatori
       const countRow = ws.addRow({
         idx: '',
         app_num: '',
@@ -252,8 +361,7 @@ export class ApplicationsExcelService {
         receiver_name: '',
         status: '',
       });
-      countRow.font = { name: 'Segoe UI', size: 10, bold: true };
-      countRow.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'F8FAFC' } };
+      this.styleSubTotalRow(countRow);
       countRow.getCell('sender_bank').alignment = { horizontal: 'right', vertical: 'middle' };
       countRow.getCell('amount').numFmt = '#,##0';
       countRow.getCell('amount').alignment = { horizontal: 'right', vertical: 'middle' };
@@ -261,12 +369,12 @@ export class ApplicationsExcelService {
   }
 
   /**
-   * 3-SHEET: Gumonlanuvchilar belgilari (Suspect Attributes)
+   * 3-SHEET: Gumonlanuvchilar belgilari
    */
   private buildSuspectsSheet(workbook: ExcelJS.Workbook, applications: Application[]): void {
     const ws = workbook.addWorksheet('Gumonlanuvchilar', {
       views: [{ state: 'frozen', ySplit: 1 }],
-      properties: { tabColor: { argb: 'DC2626' } },
+      // Qat'iy oq-qora qoida: tabColor yo'q
     });
 
     ws.columns = [
@@ -279,19 +387,20 @@ export class ApplicationsExcelService {
       { header: 'Qayd Sanasi', key: 'created_at', width: 16 },
     ];
 
-    this.styleHeaderRow(ws.getRow(1), 'DC2626');
+    this.styleHeaderRow(ws.getRow(1));
 
     let suspectIndex = 0;
     for (const app of applications) {
       const suspectItems = this.extractSuspectItems(app.suspect_tree);
       const dateStr = app.created_at ? new Date(app.created_at).toISOString().slice(0, 10) : '—';
       const crimeStr = app.crime ? app.crime.article || app.crime.title : '—';
+      const appNumber = app.application_number || `AR-${app.id}`;
 
       for (const item of suspectItems) {
         suspectIndex++;
         const row = ws.addRow({
           idx: suspectIndex,
-          app_num: app.application_number || '—',
+          app_num: appNumber,
           crime: crimeStr,
           field_name: item.label,
           field_value: item.value,
@@ -299,50 +408,85 @@ export class ApplicationsExcelService {
           created_at: dateStr,
         });
 
-        this.styleDataRow(row, suspectIndex);
+        this.styleDataRow(row);
 
-        row.getCell('field_value').font = {
-          name: 'Consolas',
+        row.getCell('app_num').numFmt = '@';
+        const valCell = row.getCell('field_value');
+        valCell.numFmt = '@';
+        valCell.font = {
+          name: 'Calibri',
           size: 10,
           bold: true,
-          color: { argb: '1E3A8A' },
+          color: { argb: '000000' },
         };
       }
+    }
+
+    // Gumonlanuvchilar bo'yicha JAMI qatori
+    const lastDataRow = ws.rowCount;
+    if (lastDataRow >= 2) {
+      const totalRow = ws.addRow({
+        idx: '',
+        app_num: '',
+        crime: '',
+        field_name: 'JAMI IDENTIFIKATORLAR:',
+        field_value: { formula: `COUNTA(E2:E${lastDataRow})` },
+        note: 'ta rekvizit',
+        created_at: '',
+      });
+
+      this.styleTotalRow(totalRow);
+      totalRow.getCell('field_name').alignment = { horizontal: 'right', vertical: 'middle' };
+      totalRow.getCell('field_value').numFmt = '#,##0';
+      totalRow.getCell('field_value').alignment = { horizontal: 'left', vertical: 'middle' };
     }
   }
 
   /**
    * 4-SHEET: Xulosa va Statistika (Excel Formulalari bilan)
    */
-  private buildSummarySheet(workbook: ExcelJS.Workbook, appCount: number): void {
+  private buildSummarySheet(
+    workbook: ExcelJS.Workbook,
+    applications: Application[],
+    appCount: number,
+    transferCount: number,
+    suspectCount: number,
+  ): void {
     const ws = workbook.addWorksheet('Xulosa va Statistika', {
-      properties: { tabColor: { argb: '7C3AED' } },
+      // Qat'iy oq-qora qoida: tabColor yo'q
     });
 
-    ws.columns = [{ width: 5 }, { width: 38 }, { width: 22 }, { width: 14 }, { width: 30 }];
+    ws.columns = [{ width: 5 }, { width: 42 }, { width: 24 }, { width: 14 }, { width: 30 }];
 
-    // Sarlavha
+    // Asosiy Sarlavha
     ws.mergeCells('B2:E2');
     const titleCell = ws.getCell('B2');
     titleCell.value = '«ARIZALAR VA MUROJAATLAR» TIZIMI TAHLILIY HISOBOTI';
-    titleCell.font = { name: 'Segoe UI', size: 14, bold: true, color: { argb: 'FFFFFF' } };
-    titleCell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: '1E293B' } };
+    titleCell.font = { name: 'Calibri', size: 13, bold: true, color: { argb: '000000' } };
+    titleCell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'F1F5F9' } };
     titleCell.alignment = { horizontal: 'center', vertical: 'middle' };
-    ws.getRow(2).height = 36;
+    this.applyBorder(ws.getRow(2), 2, 5);
+    ws.getRow(2).height = 32;
 
     // Generatsiya sanasi
     ws.mergeCells('B3:E3');
     const subTitle = ws.getCell('B3');
     subTitle.value = `Hisobot shakllantirilgan sana: ${new Date().toLocaleString('uz-UZ')}`;
-    subTitle.font = { name: 'Segoe UI', size: 9, italic: true, color: { argb: '64748B' } };
+    subTitle.font = { name: 'Calibri', size: 9, italic: true, color: { argb: '334155' } };
     subTitle.alignment = { horizontal: 'center', vertical: 'middle' };
+    ws.getRow(3).height = 20;
 
-    // Bo'lim 1: Moliyaviy va Umumiy Ko'rsatkichlar
-    const sec1 = ws.getCell('B5');
+    // Bo'lim 1: Moliyaviy va Asosiy Ko'rsatkichlar
+    let curRow = 5;
+    const sec1 = ws.getCell(`B${curRow}`);
     sec1.value = "1. ASOSIY UMUMIY VA MOLIYAVIY KO'RSATKICHLAR";
-    sec1.font = { name: 'Segoe UI', size: 11, bold: true, color: { argb: '1E3A8A' } };
+    sec1.font = { name: 'Calibri', size: 11, bold: true, color: { argb: '000000' } };
+    curRow++;
 
+    // Formula manbalari qator chegaralari
     const maxAppRow = Math.max(appCount + 1, 2);
+    const maxTransferRow = Math.max(transferCount + 1, 2);
+    const maxSuspectRow = Math.max(suspectCount + 1, 2);
 
     const kpiRows = [
       {
@@ -353,44 +497,44 @@ export class ApplicationsExcelService {
       },
       {
         title: "Jami noqonuniy pul o'tkazmalari",
-        formula: `COUNT('Pul o''tkazmalari'!F2:F10000)`,
+        formula: `COUNT('Pul o''tkazmalari'!F2:F${maxTransferRow})`,
         unit: 'ta tranzaksiya',
         format: '#,##0',
       },
       {
         title: 'Jami yetkazilgan moddiy zarar miqdori',
-        formula: `SUM('Pul o''tkazmalari'!F2:F10000)`,
+        formula: `SUM('Pul o''tkazmalari'!F2:F${maxTransferRow})`,
         unit: "so'm (UZS)",
         format: '#,##0.00',
       },
       {
         title: "O'rtacha bitta o'tkazma zarari",
-        formula: `AVERAGE('Pul o''tkazmalari'!F2:F10000)`,
+        formula: `IFERROR(AVERAGE('Pul o''tkazmalari'!F2:F${maxTransferRow}), 0)`,
         unit: "so'm (UZS)",
         format: '#,##0.00',
       },
       {
         title: 'Aniqlangan gumonlanuvchilar belgilari',
-        formula: `COUNTA('Gumonlanuvchilar'!B2:B10000)`,
+        formula: `COUNTA('Gumonlanuvchilar'!B2:B${maxSuspectRow})`,
         unit: 'ta rekvizit',
         format: '#,##0',
       },
     ];
 
-    let curRow = 6;
     kpiRows.forEach((kpi) => {
       const r = ws.getRow(curRow);
       r.getCell(2).value = kpi.title;
-      r.getCell(2).font = { name: 'Segoe UI', size: 10, bold: true };
+      r.getCell(2).font = { name: 'Calibri', size: 10, bold: true, color: { argb: '000000' } };
 
       const valCell = r.getCell(3);
       valCell.value = { formula: kpi.formula };
-      valCell.font = { name: 'Segoe UI', size: 11, bold: true, color: { argb: '059669' } };
+      valCell.font = { name: 'Calibri', size: 10.5, bold: true, color: { argb: '000000' } };
       valCell.numFmt = kpi.format;
-      valCell.alignment = { horizontal: 'right' };
+      valCell.alignment = { horizontal: 'right', vertical: 'middle' };
 
       r.getCell(4).value = kpi.unit;
-      r.getCell(4).font = { name: 'Segoe UI', size: 9, italic: true, color: { argb: '64748B' } };
+      r.getCell(4).font = { name: 'Calibri', size: 9, italic: true, color: { argb: '475569' } };
+      r.getCell(4).alignment = { horizontal: 'left', vertical: 'middle' };
 
       r.height = 24;
       this.applyBorder(r, 2, 4);
@@ -401,7 +545,7 @@ export class ApplicationsExcelService {
     curRow += 2;
     const sec2 = ws.getCell(`B${curRow}`);
     sec2.value = "2. ARIZALARNING HOLATLAR BO'YICHA TAQSIMOTI";
-    sec2.font = { name: 'Segoe UI', size: 11, bold: true, color: { argb: '1E3A8A' } };
+    sec2.font = { name: 'Calibri', size: 11, bold: true, color: { argb: '000000' } };
     curRow++;
 
     const statusRows = [
@@ -426,29 +570,118 @@ export class ApplicationsExcelService {
     statusRows.forEach((st) => {
       const r = ws.getRow(curRow);
       r.getCell(2).value = st.label;
-      r.getCell(2).font = { name: 'Segoe UI', size: 10 };
+      r.getCell(2).font = { name: 'Calibri', size: 10, color: { argb: '000000' } };
 
       const valCell = r.getCell(3);
       valCell.value = { formula: st.formula };
-      valCell.font = { name: 'Segoe UI', size: 10, bold: true, color: { argb: '1E3A8A' } };
+      valCell.font = { name: 'Calibri', size: 10, bold: true, color: { argb: '000000' } };
       valCell.numFmt = '#,##0';
-      valCell.alignment = { horizontal: 'right' };
+      valCell.alignment = { horizontal: 'right', vertical: 'middle' };
 
       r.getCell(4).value = 'ta';
-      r.getCell(4).font = { name: 'Segoe UI', size: 9, italic: true, color: { argb: '64748B' } };
+      r.getCell(4).font = { name: 'Calibri', size: 9, italic: true, color: { argb: '475569' } };
+      r.getCell(4).alignment = { horizontal: 'left', vertical: 'middle' };
 
       r.height = 22;
       this.applyBorder(r, 2, 4);
       curRow++;
     });
+
+    // Bo'lim 3: Tumanlar (Hududlar) kesimidagi tahlil
+    curRow += 2;
+    const sec3 = ws.getCell(`B${curRow}`);
+    sec3.value = "3. HUDUDLAR (TUMANLAR) BO'YICHA ARIZALAR VA ZARAR TAHLILI";
+    sec3.font = { name: 'Calibri', size: 11, bold: true, color: { argb: '000000' } };
+    curRow++;
+
+    // Tumanlar jadvali sarlavhasi
+    const distHeaderRow = ws.getRow(curRow);
+    distHeaderRow.getCell(2).value = 'Tuman / Shahar';
+    distHeaderRow.getCell(3).value = 'Arizalar soni';
+    distHeaderRow.getCell(4).value = 'Birligi';
+    distHeaderRow.getCell(5).value = 'Zarar miqdori';
+    distHeaderRow.height = 24;
+    distHeaderRow.eachCell((c) => {
+      c.font = { name: 'Calibri', size: 9.5, bold: true, color: { argb: '000000' } };
+      c.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'F1F5F9' } };
+      c.alignment = { horizontal: 'center', vertical: 'middle' };
+      c.border = {
+        top: { style: 'thin', color: { argb: '94A3B8' } },
+        bottom: { style: 'medium', color: { argb: '000000' } },
+        left: { style: 'thin', color: { argb: 'CBD5E1' } },
+        right: { style: 'thin', color: { argb: 'CBD5E1' } },
+      };
+    });
+    curRow++;
+
+    // Eksport qilinayotgan ma'lumotlardagi noyob tumanlarni olish
+    const districtSet = new Set<string>();
+    applications.forEach((app) => {
+      const d = app.district?.name || app.citizen?.district?.name;
+      if (d) districtSet.add(d);
+    });
+
+    const districtsList =
+      districtSet.size > 0
+        ? Array.from(districtSet)
+        : [
+            'Qarshi sh.',
+            'Qarshi t.',
+            'Kitob t.',
+            'Kasbi t.',
+            'Koson t.',
+            'Nishon t.',
+            'Chiroqchi t.',
+            'Shahrisabz sh.',
+            'Shahrisabz t.',
+            'Yakkabog’ t.',
+            'G’uzor t.',
+            'Dehqonobod t.',
+            'Qamashi t.',
+            'Muborak t.',
+            'Mirishkor t.',
+            'Ko’kdala t.',
+          ];
+
+    districtsList.forEach((districtName) => {
+      const r = ws.getRow(curRow);
+      r.getCell(2).value = districtName;
+      r.getCell(2).font = { name: 'Calibri', size: 10, color: { argb: '000000' } };
+
+      // Tuman bo'yicha COUNTIF
+      const valCell = r.getCell(3);
+      valCell.value = {
+        formula: `COUNTIF('Arizalar ro''yxati'!E2:E${maxAppRow}, "*${districtName.replace('*', '')}*")`,
+      };
+      valCell.font = { name: 'Calibri', size: 10, bold: true, color: { argb: '000000' } };
+      valCell.numFmt = '#,##0';
+      valCell.alignment = { horizontal: 'right', vertical: 'middle' };
+
+      r.getCell(4).value = 'ta';
+      r.getCell(4).font = { name: 'Calibri', size: 9, italic: true, color: { argb: '475569' } };
+      r.getCell(4).alignment = { horizontal: 'left', vertical: 'middle' };
+
+      // Tuman bo'yicha SUMIF (Zarar miqdori)
+      const distAmountCell = r.getCell(5);
+      distAmountCell.value = {
+        formula: `SUMIF('Arizalar ro''yxati'!E2:E${maxAppRow}, "*${districtName.replace('*', '')}*", 'Arizalar ro''yxati'!P2:P${maxAppRow})`,
+      };
+      distAmountCell.font = { name: 'Calibri', size: 10, bold: true, color: { argb: '000000' } };
+      distAmountCell.numFmt = '#,##0.00';
+      distAmountCell.alignment = { horizontal: 'right', vertical: 'middle' };
+
+      r.height = 22;
+      this.applyBorder(r, 2, 5);
+      curRow++;
+    });
   }
 
   // =========================================================================
-  // HELPER METHODS
+  // HELPER VA USLUB METODLARI (QAT'IY OQ-QORA VA AUDIT CHEGARALARI)
   // =========================================================================
 
-  private extractAllTransfers(app: Application): any[] {
-    const list: any[] = [];
+  private extractAllTransfers(app: Application): TransferItem[] {
+    const list: TransferItem[] = [];
     if (app.transfer) {
       list.push(app.transfer);
     }
@@ -462,11 +695,13 @@ export class ApplicationsExcelService {
     return list;
   }
 
-  private extractSuspectItems(nodes: any): Array<{ label: string; value: string; note: string }> {
+  private extractSuspectItems(
+    nodes: unknown,
+  ): Array<{ label: string; value: string; note: string }> {
     const result: Array<{ label: string; value: string; note: string }> = [];
     if (!Array.isArray(nodes)) return result;
 
-    for (const node of nodes) {
+    for (const node of nodes as SuspectNodeItem[]) {
       if (node && (node.value || node.label)) {
         result.push({
           label: node.label || 'Belgi',
@@ -481,29 +716,35 @@ export class ApplicationsExcelService {
     return result;
   }
 
-  private styleHeaderRow(row: ExcelJS.Row, hexColor: string): void {
+  /**
+   * Sarlavha qatori uslubi:
+   * Och kulrang (#F1F5F9) fon, qalin qora (#000000) Calibri matn, pastida qalinroq chegara.
+   */
+  private styleHeaderRow(row: ExcelJS.Row): void {
     row.height = 28;
     row.eachCell((cell) => {
-      cell.font = { name: 'Segoe UI', size: 10, bold: true, color: { argb: 'FFFFFF' } };
-      cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: hexColor } };
+      cell.font = { name: 'Calibri', size: 10, bold: true, color: { argb: '000000' } };
+      cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'F1F5F9' } };
       cell.alignment = { vertical: 'middle', horizontal: 'center', wrapText: true };
       cell.border = {
-        top: { style: 'thin', color: { argb: 'CBD5E1' } },
+        top: { style: 'thin', color: { argb: '94A3B8' } },
         left: { style: 'thin', color: { argb: 'CBD5E1' } },
-        bottom: { style: 'medium', color: { argb: '0F172A' } },
+        bottom: { style: 'medium', color: { argb: '000000' } },
         right: { style: 'thin', color: { argb: 'CBD5E1' } },
       };
     });
   }
 
-  private styleDataRow(row: ExcelJS.Row, index: number): void {
+  /**
+   * Ma'lumot qatori uslubi:
+   * 100% sof oq fon (#FFFFFF), hech qanday rangli zebra yo'q.
+   * Toza qora (#000000) Calibri 9.5pt matn, ingichka chegara.
+   */
+  private styleDataRow(row: ExcelJS.Row): void {
     row.height = 22;
-    const isOdd = index % 2 === 1;
-    const bgArgb = isOdd ? 'F8FAFC' : 'FFFFFF';
-
     row.eachCell({ includeEmpty: true }, (cell) => {
-      cell.font = { name: 'Segoe UI', size: 9.5 };
-      cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: bgArgb } };
+      cell.font = { name: 'Calibri', size: 9.5, color: { argb: '000000' } };
+      cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFFFFF' } };
       cell.alignment = { vertical: 'middle', horizontal: 'left' };
       cell.border = {
         top: { style: 'thin', color: { argb: 'E2E8F0' } },
@@ -514,14 +755,49 @@ export class ApplicationsExcelService {
     });
   }
 
+  /**
+   * Yakuniy JAMI qatori uslubi:
+   * Qalin qora matn, tepasi ingichka qora chiziq, pastki qismi esa rasmiy buxgalteriya qo'shaloq chizig'i (double border).
+   */
+  private styleTotalRow(row: ExcelJS.Row): void {
+    row.height = 25;
+    row.eachCell({ includeEmpty: true }, (cell) => {
+      cell.font = { name: 'Calibri', size: 10, bold: true, color: { argb: '000000' } };
+      cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'F8FAFC' } };
+      cell.border = {
+        top: { style: 'thin', color: { argb: '000000' } },
+        bottom: { style: 'double', color: { argb: '000000' } },
+        left: { style: 'thin', color: { argb: 'CBD5E1' } },
+        right: { style: 'thin', color: { argb: 'CBD5E1' } },
+      };
+    });
+  }
+
+  /**
+   * Oraliq orqali yakunlovchi (O'rtacha, soni) qator uslubi:
+   */
+  private styleSubTotalRow(row: ExcelJS.Row): void {
+    row.height = 23;
+    row.eachCell({ includeEmpty: true }, (cell) => {
+      cell.font = { name: 'Calibri', size: 9.5, bold: true, color: { argb: '000000' } };
+      cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFFFFF' } };
+      cell.border = {
+        top: { style: 'thin', color: { argb: 'E2E8F0' } },
+        bottom: { style: 'thin', color: { argb: 'E2E8F0' } },
+        left: { style: 'thin', color: { argb: 'E2E8F0' } },
+        right: { style: 'thin', color: { argb: 'E2E8F0' } },
+      };
+    });
+  }
+
   private applyBorder(row: ExcelJS.Row, startCol: number, endCol: number): void {
     for (let c = startCol; c <= endCol; c++) {
       const cell = row.getCell(c);
       cell.border = {
         top: { style: 'thin', color: { argb: 'E2E8F0' } },
-        left: { style: 'thin', color: { argb: 'E2E8F0' } },
+        left: { style: 'thin', color: { argb: 'CBD5E1' } },
         bottom: { style: 'thin', color: { argb: 'E2E8F0' } },
-        right: { style: 'thin', color: { argb: 'E2E8F0' } },
+        right: { style: 'thin', color: { argb: 'CBD5E1' } },
       };
     }
   }

@@ -1,11 +1,13 @@
 import { Injectable, NotFoundException } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
+import type { Response } from 'express';
 import { FindOptionsWhere, ILike, Repository } from 'typeorm';
 
 import type { PaginatedResult } from '../../../common/interfaces/pagination.interface';
 import { TransferCustomField } from './custom-fields/transfer-custom-field.entity';
 import type { CreateTransferDto } from './dto/create-transfer.dto';
 import type { UpdateTransferDto } from './dto/update-transfer.dto';
+import { TransfersExcelService } from './export/transfers-excel.service';
 import { Transfer } from './transfer.entity';
 
 @Injectable()
@@ -15,6 +17,7 @@ export class TransfersService {
     private readonly transferRepo: Repository<Transfer>,
     @InjectRepository(TransferCustomField)
     private readonly customFieldRepo: Repository<TransferCustomField>,
+    private readonly excelService: TransfersExcelService,
   ) {}
 
   async create(dto: CreateTransferDto): Promise<Transfer> {
@@ -136,5 +139,44 @@ export class TransfersService {
       success: true,
       message: "Pul o'tkazmasi muvaffaqiyatli o'chirildi",
     };
+  }
+
+  async exportToExcel(search?: string, applicationId?: string, res?: Response): Promise<void> {
+    const where: FindOptionsWhere<Transfer> = {};
+    if (applicationId) {
+      where.application_id = applicationId;
+    }
+
+    let whereCondition: FindOptionsWhere<Transfer> | FindOptionsWhere<Transfer>[] = where;
+    if (search) {
+      const q = `%${search}%`;
+      whereCondition = [{ ...where, transaction_id: ILike(q) }];
+    }
+
+    const items = await this.transferRepo.find({
+      where: whereCondition,
+      relations: {
+        payment_provider: true,
+        sender_card: { bank: true, citizen: true },
+        receiver_card: { bank: true, citizen: true },
+        application: true,
+      },
+      order: { created_at: 'DESC' },
+      take: 10000,
+    });
+
+    const workbook = await this.excelService.generateWorkbook(items);
+    const dateStr = new Date().toISOString().slice(0, 10);
+    const fileName = `Toluv_Otkazmalari_${dateStr}.xlsx`;
+
+    if (res) {
+      res.setHeader(
+        'Content-Type',
+        'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+      );
+      res.setHeader('Content-Disposition', `attachment; filename="${fileName}"`);
+      await workbook.xlsx.write(res);
+      res.end();
+    }
   }
 }

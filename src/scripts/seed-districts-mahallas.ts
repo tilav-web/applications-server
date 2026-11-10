@@ -1,4 +1,5 @@
 import { NestFactory } from '@nestjs/core';
+
 import { AppModule } from '../app.module';
 import { DistrictsService } from '../modules/applications/districts/districts.service';
 import { MahallasService } from '../modules/applications/mahallas/mahallas.service';

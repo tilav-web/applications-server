@@ -7,8 +7,10 @@ import {
   Patch,
   Post,
   Query,
+  Res,
   UseGuards,
 } from '@nestjs/common';
+import type { Response } from 'express';
 
 import { JwtAuthGuard } from '../../../common/guards/jwt-auth.guard';
 import { CreateTransferDto } from './dto/create-transfer.dto';
@@ -38,6 +40,15 @@ export class TransfersController {
       search,
       applicationId,
     );
+  }
+
+  @Get('export/excel')
+  async exportExcel(
+    @Res() res: Response,
+    @Query('search') search?: string,
+    @Query('application_id') applicationId?: string,
+  ) {
+    return this.transfersService.exportToExcel(search, applicationId, res);
   }
 
   @Get(':id')

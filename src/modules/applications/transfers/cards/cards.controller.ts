@@ -7,8 +7,10 @@ import {
   Patch,
   Post,
   Query,
+  Res,
   UseGuards,
 } from '@nestjs/common';
+import type { Response } from 'express';
 
 import { JwtAuthGuard } from '../../../../common/guards/jwt-auth.guard';
 import { CardsService } from './cards.service';
@@ -33,6 +35,15 @@ export class CardsController {
     @Query('citizen_id') citizenId?: string,
   ) {
     return this.cardsService.findAll(Number(page) || 1, Number(limit) || 10, search, citizenId);
+  }
+
+  @Get('export/excel')
+  async exportExcel(
+    @Res() res: Response,
+    @Query('search') search?: string,
+    @Query('citizen_id') citizenId?: string,
+  ) {
+    return this.cardsService.exportToExcel(search, citizenId, res);
   }
 
   @Get(':id')
