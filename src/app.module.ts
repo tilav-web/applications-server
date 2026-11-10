@@ -1,7 +1,10 @@
 import { Module } from '@nestjs/common';
 import { ConfigModule, ConfigService } from '@nestjs/config';
+import { APP_GUARD } from '@nestjs/core';
+import { ThrottlerModule } from '@nestjs/throttler';
 import { TypeOrmModule } from '@nestjs/typeorm';
 
+import { AppThrottlerGuard } from './common/guards/app-throttler.guard';
 import { Application } from './modules/applications/application.entity';
 import { ApplicationsModule } from './modules/applications/applications.module';
 import { Citizen } from './modules/applications/citizens/citizen.entity';
@@ -65,12 +68,29 @@ import { UsersModule } from './modules/users/users.module';
     }),
     RedisModule,
     MinioModule,
+    ThrottlerModule.forRoot([
+      {
+        name: 'short',
+        ttl: 1000,
+        limit: 15, // Sekundiga 15 ta so'rov (burst protection)
+      },
+      {
+        name: 'default',
+        ttl: 60000,
+        limit: 120, // Daqiqasiga 120 ta so'rov (umumiy API)
+      },
+    ]),
     AuthModule,
     UsersModule,
     ApplicationsModule,
     FinancialFlowModule,
   ],
   controllers: [],
-  providers: [],
+  providers: [
+    {
+      provide: APP_GUARD,
+      useClass: AppThrottlerGuard,
+    },
+  ],
 })
 export class AppModule {}
