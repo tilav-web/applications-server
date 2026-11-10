@@ -38,4 +38,3 @@ export class UpdateTemplateDto {
   @IsOptional()
   is_active?: boolean;
 }
-

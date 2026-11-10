@@ -4,59 +4,127 @@
  */
 
 const CYR_TO_LAT_MAP: Record<string, string> = {
-  А: 'A', а: 'a',
-  Б: 'B', б: 'b',
-  В: 'V', в: 'v',
-  Г: 'G', г: 'g',
-  Д: 'D', д: 'd',
-  Ж: 'J', ж: 'j',
-  З: 'Z', з: 'z',
-  И: 'I', и: 'i',
-  Й: 'Y', й: 'y',
-  К: 'K', к: 'k',
-  Л: 'L', л: 'l',
-  М: 'M', м: 'm',
-  Н: 'N', н: 'n',
-  О: 'O', о: 'o',
-  П: 'P', п: 'p',
-  Р: 'R', р: 'r',
-  С: 'S', с: 's',
-  Т: 'T', т: 't',
-  У: 'U', у: 'u',
-  Ф: 'F', ф: 'f',
-  Х: 'X', х: 'x',
-  Ҳ: 'H', ҳ: 'h',
-  Қ: 'Q', қ: 'q',
-  Э: 'E', э: 'e',
+  А: 'A',
+  а: 'a',
+  Б: 'B',
+  б: 'b',
+  В: 'V',
+  в: 'v',
+  Г: 'G',
+  г: 'g',
+  Д: 'D',
+  д: 'd',
+  Ж: 'J',
+  ж: 'j',
+  З: 'Z',
+  з: 'z',
+  И: 'I',
+  и: 'i',
+  Й: 'Y',
+  й: 'y',
+  К: 'K',
+  к: 'k',
+  Л: 'L',
+  л: 'l',
+  М: 'M',
+  м: 'm',
+  Н: 'N',
+  н: 'n',
+  О: 'O',
+  о: 'o',
+  П: 'P',
+  п: 'p',
+  Р: 'R',
+  р: 'r',
+  С: 'S',
+  с: 's',
+  Т: 'T',
+  т: 't',
+  У: 'U',
+  у: 'u',
+  Ф: 'F',
+  ф: 'f',
+  Х: 'X',
+  х: 'x',
+  Ҳ: 'H',
+  ҳ: 'h',
+  Қ: 'Q',
+  қ: 'q',
+  Э: 'E',
+  э: 'e',
 };
 
 const LAT_TO_CYR_MAP: Record<string, string> = {
-  A: 'А', a: 'а',
-  B: 'Б', b: 'б',
-  D: 'Д', d: 'д',
-  F: 'Ф', f: 'ф',
-  G: 'Г', g: 'г',
-  H: 'Ҳ', h: 'ҳ',
-  I: 'И', i: 'и',
-  J: 'Ж', j: 'ж',
-  K: 'К', k: 'к',
-  L: 'Л', l: 'л',
-  M: 'М', m: 'м',
-  N: 'Н', n: 'н',
-  O: 'О', o: 'о',
-  P: 'П', p: 'п',
-  Q: 'Қ', q: 'қ',
-  R: 'Р', r: 'р',
-  S: 'С', s: 'с',
-  T: 'Т', t: 'т',
-  U: 'У', u: 'у',
-  V: 'В', v: 'в',
-  X: 'Х', x: 'х',
-  Y: 'Й', y: 'й',
-  Z: 'З', z: 'з',
+  A: 'А',
+  a: 'а',
+  B: 'Б',
+  b: 'б',
+  D: 'Д',
+  d: 'д',
+  F: 'Ф',
+  f: 'ф',
+  G: 'Г',
+  g: 'г',
+  H: 'Ҳ',
+  h: 'ҳ',
+  I: 'И',
+  i: 'и',
+  J: 'Ж',
+  j: 'ж',
+  K: 'К',
+  k: 'к',
+  L: 'Л',
+  l: 'л',
+  M: 'М',
+  m: 'м',
+  N: 'Н',
+  n: 'н',
+  O: 'О',
+  o: 'о',
+  P: 'П',
+  p: 'п',
+  Q: 'Қ',
+  q: 'қ',
+  R: 'Р',
+  r: 'р',
+  S: 'С',
+  s: 'с',
+  T: 'Т',
+  t: 'т',
+  U: 'У',
+  u: 'у',
+  V: 'В',
+  v: 'в',
+  X: 'Х',
+  x: 'х',
+  Y: 'Й',
+  y: 'й',
+  Z: 'З',
+  z: 'з',
 };
 
-const VOWELS_CYR = new Set(['А', 'Е', 'Ё', 'И', 'О', 'У', 'Э', 'Ю', 'Я', 'Ў', 'а', 'е', 'ё', 'и', 'о', 'у', 'э', 'ю', 'я', 'ў']);
+const VOWELS_CYR = new Set([
+  'А',
+  'Е',
+  'Ё',
+  'И',
+  'О',
+  'У',
+  'Э',
+  'Ю',
+  'Я',
+  'Ў',
+  'а',
+  'е',
+  'ё',
+  'и',
+  'о',
+  'у',
+  'э',
+  'ю',
+  'я',
+  'ў',
+]);
 const VOWELS_LAT = new Set(['A', 'E', 'I', 'O', 'U', 'a', 'e', 'i', 'o', 'u']);
 
 export function cyrillicToLatin(text: string): string {
@@ -182,7 +250,10 @@ export function latinToCyrillic(text: string): string {
 /**
  * Matnni kerakli alifboga moslashtirish (targetScript: 'lotin' | 'krill')
  */
-export function adaptToScript(text: string | null | undefined, targetScript: 'lotin' | 'krill'): string {
+export function adaptToScript(
+  text: string | null | undefined,
+  targetScript: 'lotin' | 'krill',
+): string {
   if (!text) return '';
   const trimmed = text.trim();
   if (!trimmed) return '';
@@ -212,13 +283,33 @@ export function formatAmountNumber(amount: number | string | null | undefined): 
  * Sanani o'zbekcha formatlash
  */
 const MONTHS_LOTIN = [
-  'yanvar', 'fevral', 'mart', 'aprel', 'may', 'iyun',
-  'iyul', 'avgust', 'sentabr', 'oktabr', 'noyabr', 'dekabr',
+  'yanvar',
+  'fevral',
+  'mart',
+  'aprel',
+  'may',
+  'iyun',
+  'iyul',
+  'avgust',
+  'sentabr',
+  'oktabr',
+  'noyabr',
+  'dekabr',
 ];
 
 const MONTHS_KRILL = [
-  'январь', 'февраль', 'март', 'апрель', 'май', 'июнь',
-  'июль', 'август', 'сентябрь', 'октябрь', 'ноябрь', 'декабрь',
+  'январь',
+  'февраль',
+  'март',
+  'апрель',
+  'май',
+  'июнь',
+  'июль',
+  'август',
+  'сентябрь',
+  'октябрь',
+  'ноябрь',
+  'декабрь',
 ];
 
 export function formatDateUzbek(
@@ -250,10 +341,43 @@ export function numberToWordsUz(
   const num = typeof amount === 'string' ? parseFloat(amount) : amount;
   if (isNaN(num)) return '';
 
-  const unitsLotin = ['', 'bir', 'ikki', 'uch', "to'rt", 'besh', 'olti', 'yetti', 'sakkiz', "to'qqiz"];
+  const unitsLotin = [
+    '',
+    'bir',
+    'ikki',
+    'uch',
+    "to'rt",
+    'besh',
+    'olti',
+    'yetti',
+    'sakkiz',
+    "to'qqiz",
+  ];
   const unitsKrill = ['', 'бир', 'икки', 'уч', 'тўрт', 'беш', 'олти', 'етти', 'саккиз', 'тўққиз'];
-  const tensLotin = ['', "o'n", 'yigirma', "o'ttiz", 'qirq', 'ellik', 'oltmish', 'yetmish', 'sakson', "to'qson"];
-  const tensKrill = ['', 'ўн', 'йигирма', 'ўттиз', 'қирқ', 'эллик', 'олтмиш', 'етмиш', 'саксон', 'тўқсон'];
+  const tensLotin = [
+    '',
+    "o'n",
+    'yigirma',
+    "o'ttiz",
+    'qirq',
+    'ellik',
+    'oltmish',
+    'yetmish',
+    'sakson',
+    "to'qson",
+  ];
+  const tensKrill = [
+    '',
+    'ўн',
+    'йигирма',
+    'ўттиз',
+    'қирқ',
+    'эллик',
+    'олтмиш',
+    'етмиш',
+    'саксон',
+    'тўқсон',
+  ];
   const scalesLotin = ['', 'ming', 'million', 'milliard', 'trillion'];
   const scalesKrill = ['', 'минг', 'миллион', 'миллиард', 'триллион'];
 
@@ -302,5 +426,3 @@ export function numberToWordsUz(
   const currencySuffix = script === 'lotin' ? 'so‘m' : 'сўм';
   return `${result} ${currencySuffix}`;
 }
-
-

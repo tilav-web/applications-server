@@ -111,7 +111,8 @@ export class TemplatesManagementService implements OnApplicationBootstrap {
             rawKey: 'suspect.details',
             label: 'To‘liq ro‘yxat matni (details)',
             modelName: 'Suspect',
-            description: 'Barcha kiritilgan parametrlar matni (masalan: Telegram Username: @tilav_web; Telefon: +998...)',
+            description:
+              'Barcha kiritilgan parametrlar matni (masalan: Telegram Username: @tilav_web; Telefon: +998...)',
             sampleValue: 'Telegram Username: @tilav_web; Telegram ID: 12345678',
           },
           {
@@ -144,7 +145,9 @@ export class TemplatesManagementService implements OnApplicationBootstrap {
         }
       }
     } catch (e: any) {
-      this.logger.warn(`getVariablesDictionary suspect_field_configs olishda xatolik: ${e.message}`);
+      this.logger.warn(
+        `getVariablesDictionary suspect_field_configs olishda xatolik: ${e.message}`,
+      );
     }
 
     if (customSuspectItems.length > 0) {
@@ -165,10 +168,7 @@ export class TemplatesManagementService implements OnApplicationBootstrap {
   /**
    * Noldan bo'sh Word shablonini yaratish
    */
-  async createBlankTemplate(
-    dto: CreateTemplateDto,
-    user: any,
-  ): Promise<DocumentTemplate> {
+  async createBlankTemplate(dto: CreateTemplateDto, user: any): Promise<DocumentTemplate> {
     const doc = new Document({
       sections: [
         {
@@ -384,7 +384,9 @@ export class TemplatesManagementService implements OnApplicationBootstrap {
    * ONLYOFFICE dan shablon saqlanganda keladigan callback handler
    */
   async handleTemplateCallback(id: string, body: any): Promise<{ error: number }> {
-    this.logger.log(`ONLYOFFICE template callback keldi (Template ID: ${id}, Status: ${body?.status})`);
+    this.logger.log(
+      `ONLYOFFICE template callback keldi (Template ID: ${id}, Status: ${body?.status})`,
+    );
 
     // 2 = Document is ready for saving, 6 = Force-saved
     if (body?.status === 2 || body?.status === 6) {
@@ -433,7 +435,9 @@ export class TemplatesManagementService implements OnApplicationBootstrap {
         tpl.doc_key = `tpl_${randomUUID().slice(0, 8)}_${Date.now()}`;
         await this.templateRepo.save(tpl);
 
-        this.logger.log(`Shablon (ID: ${id}) saqlandi (v${tpl.version}, teglar soni: ${tags.length})`);
+        this.logger.log(
+          `Shablon (ID: ${id}) saqlandi (v${tpl.version}, teglar soni: ${tags.length})`,
+        );
       } catch (err) {
         this.logger.error(`ONLYOFFICE shablonini saqlashda xatolik:`, err);
         return { error: 1 };
@@ -512,7 +516,8 @@ export class TemplatesManagementService implements OnApplicationBootstrap {
     if (!application) {
       application = {
         application_number: '2026-TEST-001',
-        description: 'Namunaviy sinov arizasi matni. Telegram messenjeri orqali firibgarlik holati.',
+        description:
+          'Namunaviy sinov arizasi matni. Telegram messenjeri orqali firibgarlik holati.',
         date: new Date(),
         citizen: {
           first_name: 'Sanjar',
@@ -532,7 +537,8 @@ export class TemplatesManagementService implements OnApplicationBootstrap {
           part: '3-qismi',
           title: 'Firibgarlik',
           category: 'Mulkka qarshi jinoyatlar',
-          description: 'O‘zganing mulkini aldash yoki ishonchni suiiste’mol qilish yo‘li bilan talon-toroj qilish',
+          description:
+            'O‘zganing mulkini aldash yoki ishonchni suiiste’mol qilish yo‘li bilan talon-toroj qilish',
         } as any,
         application_status: {
           name: 'Jarayonda',
@@ -584,13 +590,7 @@ export class TemplatesManagementService implements OnApplicationBootstrap {
       ];
     }
 
-    const context = buildTemplateContext(
-      application,
-      transfers,
-      user,
-      script,
-      {},
-    );
+    const context = buildTemplateContext(application, transfers, user, script, {});
 
     return this.docxEngine.renderTemplate(templateBuffer, context);
   }
@@ -605,7 +605,9 @@ export class TemplatesManagementService implements OnApplicationBootstrap {
         return;
       }
 
-      this.logger.log('Shablonlar jadvali bo‘sh. Boshlang‘ich rasmiy shablonlar bazaga kiritilmoqda...');
+      this.logger.log(
+        'Shablonlar jadvali bo‘sh. Boshlang‘ich rasmiy shablonlar bazaga kiritilmoqda...',
+      );
 
       const possibleDirs = [
         path.resolve(process.cwd(), 'templates'),
@@ -634,7 +636,8 @@ export class TemplatesManagementService implements OnApplicationBootstrap {
           title: 'Tushuntirish xati (Telegram orqali firibgarlik)',
           title_krill: 'Тушунтириш хати (Телеграм орқали фирибгарлик)',
           category: 'Tushuntirish xati',
-          description: 'Fuqaroning Telegram akkaunti buzilishi yoki uning nomidan tanishlaridan pul so‘rash holati bo‘yicha 2 betlik tushuntirish xati',
+          description:
+            'Fuqaroning Telegram akkaunti buzilishi yoki uning nomidan tanishlaridan pul so‘rash holati bo‘yicha 2 betlik tushuntirish xati',
           lotinFileName: '1. TUSHUNTIRISH XATI NAMUNA LOTINDA.docx',
           krillFileName: '1. TUSHUNTIRISH XATI NAMUNA KRILLDA.docx',
         },
@@ -642,7 +645,8 @@ export class TemplatesManagementService implements OnApplicationBootstrap {
           title: 'Tushuntirish xati (Zararli APK ilova)',
           title_krill: 'Тушунтириш хати (Зарарли АПК илова)',
           category: 'Tushuntirish xati',
-          description: 'Soxta reklama yoki zararli APK ilova o‘rnatilgach bank kartasidan pul mablag‘lari yechilishi holati bo‘yicha 2 betlik tushuntirish xati',
+          description:
+            'Soxta reklama yoki zararli APK ilova o‘rnatilgach bank kartasidan pul mablag‘lari yechilishi holati bo‘yicha 2 betlik tushuntirish xati',
           lotinFileName: '2. TUSHUNTIRISH XATI NAMUNA LOTINDA.docx',
           krillFileName: '2. TUSHUNTIRISH XATI NAMUNA KRILLDA.docx',
         },
@@ -658,7 +662,8 @@ export class TemplatesManagementService implements OnApplicationBootstrap {
           title: 'Sanksiya iltimosnomasi (O‘g‘rilik)',
           title_krill: 'Санкция илтимосномаси (Ўғрилик)',
           category: 'Sanksiya',
-          description: 'Bank kartasidan o‘g‘irlangan mablag‘lar yuzasidan prokurorga sanksiya berish haqida iltimosnoma',
+          description:
+            'Bank kartasidan o‘g‘irlangan mablag‘lar yuzasidan prokurorga sanksiya berish haqida iltimosnoma',
           lotinFileName: 'Sanksiya O‘G‘RILIK NAMUNA LOTINDA.docx',
           krillFileName: 'Санкция ЎҒРИЛИК НАМУНА.docx',
         },

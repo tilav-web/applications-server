@@ -203,8 +203,7 @@ export class FinancialFlowService {
       if (!cleanNum) return null;
 
       if (!nodeMap.has(cleanNum)) {
-        const bankName =
-          cardObj?.bank?.name || this.identifyBank(cleanNum);
+        const bankName = cardObj?.bank?.name || this.identifyBank(cleanNum);
         const ownerName =
           cardObj?.full_name ||
           (cardObj?.citizen
@@ -379,7 +378,9 @@ export class FinancialFlowService {
           if (!nodeMap.has(citKey)) {
             nodeMap.set(citKey, {
               id: citKey,
-              cardNumber: `${app.citizen.last_name || ''} ${app.citizen.first_name || ''}`.trim() || 'Arizachi',
+              cardNumber:
+                `${app.citizen.last_name || ''} ${app.citizen.first_name || ''}`.trim() ||
+                'Arizachi',
               maskedCard: citizenName,
               bankName: `Ariza № ${appNumber}`,
               totalIn: 0,

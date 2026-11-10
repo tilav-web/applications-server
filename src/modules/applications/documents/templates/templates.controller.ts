@@ -163,14 +163,10 @@ export class TemplatesController {
         'Content-Type',
         'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
       );
-      res.setHeader(
-        'Content-Disposition',
-        `attachment; filename="test_output_${Date.now()}.docx"`,
-      );
+      res.setHeader('Content-Disposition', `attachment; filename="test_output_${Date.now()}.docx"`);
       res.send(buffer);
     } else {
       return buffer;
     }
   }
 }
-

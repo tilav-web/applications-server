@@ -1,17 +1,8 @@
-import {
-  BadRequestException,
-  Injectable,
-  Logger,
-  NotFoundException,
-} from '@nestjs/common';
+import { BadRequestException, Injectable, Logger, NotFoundException } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { InjectRepository } from '@nestjs/typeorm';
 import { randomUUID } from 'crypto';
-import {
-  Document,
-  Packer,
-  Paragraph,
-} from 'docx';
+import { Document, Packer, Paragraph } from 'docx';
 import * as fs from 'fs';
 import * as path from 'path';
 import JSZip from 'jszip';
@@ -27,11 +18,7 @@ import { DocxEngineService } from './templates/docx-engine.service';
 import { DocumentTemplate } from './templates/document-template.entity';
 import { buildTemplateContext } from './templates/template-data.builder';
 import { DocumentTemplateConfig, OFFICIAL_TEMPLATES } from './templates/templates.config';
-import {
-  adaptToScript,
-  formatAmountNumber,
-  formatDateUzbek,
-} from './utils/transliterate.util';
+import { adaptToScript, formatAmountNumber, formatDateUzbek } from './utils/transliterate.util';
 
 @Injectable()
 export class DocumentsService {
@@ -154,8 +141,7 @@ export class DocumentsService {
     const appNumber = application.application_number || 'AR-YANGI';
     const ext = file.originalname.split('.').pop()?.toLowerCase() || 'docx';
     const originalNameWithoutExt =
-      file.originalname.substring(0, file.originalname.lastIndexOf('.')) ||
-      file.originalname;
+      file.originalname.substring(0, file.originalname.lastIndexOf('.')) || file.originalname;
 
     const cleanDocTitle = title?.trim() || originalNameWithoutExt;
     const cleanFileName = `${appNumber}_${Date.now()}_${file.originalname}`.replace(
@@ -322,7 +308,9 @@ export class DocumentsService {
 
         let response = await fetch(targetUrl);
         if (!response.ok && targetUrl !== downloadUrl) {
-          this.logger.warn(`Ichki URL muvaffaqiyatsiz bo'ldi (${response.status}), original URL dan sinab ko'rilmoqda...`);
+          this.logger.warn(
+            `Ichki URL muvaffaqiyatsiz bo'ldi (${response.status}), original URL dan sinab ko'rilmoqda...`,
+          );
           response = await fetch(downloadUrl);
         }
 
@@ -349,7 +337,9 @@ export class DocumentsService {
         doc.doc_key = `doc_${randomUUID().slice(0, 8)}_${Date.now()}`;
         await this.documentsRepository.save(doc);
 
-        this.logger.log(`Hujjat (ID: ${id}) muvaffaqiyatli saqlandi va yangilandi (v${doc.version}, hajmi: ${doc.size} bayt)`);
+        this.logger.log(
+          `Hujjat (ID: ${id}) muvaffaqiyatli saqlandi va yangilandi (v${doc.version}, hajmi: ${doc.size} bayt)`,
+        );
       } catch (err) {
         this.logger.error(`ONLYOFFICE hujjatini saqlashda xatolik yuz berdi:`, err);
         return { error: 1 };
@@ -503,7 +493,8 @@ export class DocumentsService {
       return {
         template: {
           id: 'blank',
-          title: script === 'krill' ? 'Бўш Word ҳужжат (шаблонсиз)' : 'Bo‘sh Word hujjat (shablonsiz)',
+          title:
+            script === 'krill' ? 'Бўш Word ҳужжат (шаблонсиз)' : 'Bo‘sh Word hujjat (shablonsiz)',
           defaultDocTitle: script === 'krill' ? 'Янги ҳужжат' : 'Yangi hujjat',
           description:
             script === 'krill'
@@ -550,8 +541,14 @@ export class DocumentsService {
       return {
         template: {
           id: dbTemplate.id,
-          title: script === 'krill' && dbTemplate.title_krill ? dbTemplate.title_krill : dbTemplate.title,
-          defaultDocTitle: script === 'krill' && dbTemplate.title_krill ? dbTemplate.title_krill : dbTemplate.title,
+          title:
+            script === 'krill' && dbTemplate.title_krill
+              ? dbTemplate.title_krill
+              : dbTemplate.title,
+          defaultDocTitle:
+            script === 'krill' && dbTemplate.title_krill
+              ? dbTemplate.title_krill
+              : dbTemplate.title,
           description: dbTemplate.description || '',
           category: dbTemplate.category || 'Shablon',
           pageCount: 1,
@@ -560,7 +557,10 @@ export class DocumentsService {
           fields: [],
         },
         prefilledData: {
-          documentTitle: script === 'krill' && dbTemplate.title_krill ? dbTemplate.title_krill : dbTemplate.title,
+          documentTitle:
+            script === 'krill' && dbTemplate.title_krill
+              ? dbTemplate.title_krill
+              : dbTemplate.title,
           ...context,
         },
         script,
@@ -609,7 +609,10 @@ export class DocumentsService {
       card.full_name.trim().toLowerCase() === citizenFullNameRaw.trim().toLowerCase();
 
     const prefilledData: Record<string, string> = {
-      headTitle: adaptToScript('Qashqadaryo viloyati IIB boshlig‘i polkovnik A.S.Ismoilovga', script),
+      headTitle: adaptToScript(
+        'Qashqadaryo viloyati IIB boshlig‘i polkovnik A.S.Ismoilovga',
+        script,
+      ),
       citizenFullName: adaptToScript(citizenFullNameRaw, script),
       citizenShortName: adaptToScript(citizenShortNameRaw, script),
       citizenAddress: adaptToScript(citizenAddressRaw, script),
@@ -619,7 +622,10 @@ export class DocumentsService {
       education: adaptToScript('Oliy', script),
       criminalRecord: adaptToScript('sudlanmaganman', script),
       workplace: adaptToScript('vaqtincha ishsiz', script),
-      districtName: adaptToScript(application.district?.name || citizen?.district?.name || 'Qarshi tumani', script),
+      districtName: adaptToScript(
+        application.district?.name || citizen?.district?.name || 'Qarshi tumani',
+        script,
+      ),
       mahallaName: adaptToScript(citizen?.mahalla?.name || '', script),
       cardNumber: card?.card_number || '',
       cardHolder: adaptToScript(card?.full_name || citizenFullNameRaw, script),
@@ -636,7 +642,10 @@ export class DocumentsService {
       stolenAmount: amountFormatted,
       dateText: dateFormatted,
       officerName: adaptToScript(officerRawName, script),
-      officerPosition: adaptToScript('Kiberjinoyatlarga qarshi kurashish bo‘linmasi tezkor vakili', script),
+      officerPosition: adaptToScript(
+        'Kiberjinoyatlarga qarshi kurashish bo‘linmasi tezkor vakili',
+        script,
+      ),
       prosecutorInfo: adaptToScript(
         templateId === 'sanksiya-firibgarlik'
           ? 'Qarshi tumani prokurori adliya katta maslahatchisi T.J.Murodov'
@@ -653,8 +662,14 @@ export class DocumentsService {
       smsSources: adaptToScript('“sinbad”, “Korzinka”, “Mobiuz_App” va “MyTaxi”', script),
       startTime: '10:00',
       endTime: '10:45',
-      witness1: adaptToScript('Qarshi shahri, Mustaqillik MFY 12-uyda yashovchi fuqaro Aliyev Vali', script),
-      witness2: adaptToScript('Qarshi shahri, Nasaf MFY 5-uyda yashovchi fuqaro Karimov Salim', script),
+      witness1: adaptToScript(
+        'Qarshi shahri, Mustaqillik MFY 12-uyda yashovchi fuqaro Aliyev Vali',
+        script,
+      ),
+      witness2: adaptToScript(
+        'Qarshi shahri, Nasaf MFY 5-uyda yashovchi fuqaro Karimov Salim',
+        script,
+      ),
       inspectionDescription: adaptToScript(
         `Fuqaro ${citizenFullNameRaw || 'jabrlanuvchi'}ga tegishli bo‘lgan telefon apparati va bank kartasi xolislar ishtirokida ko‘zdan kechirildi hamda qonuniy tartibda olindi.`,
         script,
@@ -665,7 +680,8 @@ export class DocumentsService {
       template: {
         id: template.id,
         title: script === 'krill' ? template.titleKrill : template.title,
-        defaultDocTitle: script === 'krill' ? template.defaultDocTitleKrill : template.defaultDocTitle,
+        defaultDocTitle:
+          script === 'krill' ? template.defaultDocTitleKrill : template.defaultDocTitle,
         description: script === 'krill' ? template.descriptionKrill : template.description,
         category: template.category,
         pageCount: template.pageCount,
@@ -769,9 +785,7 @@ export class DocumentsService {
 
       const defaultDocTitle =
         dto.title?.trim() ||
-        (script === 'krill' && dbTemplate.title_krill
-          ? dbTemplate.title_krill
-          : dbTemplate.title);
+        (script === 'krill' && dbTemplate.title_krill ? dbTemplate.title_krill : dbTemplate.title);
 
       const appNumber = application.application_number || 'YANGI';
       const safeTitlePart = defaultDocTitle
@@ -875,7 +889,9 @@ export class DocumentsService {
     zip.file('word/document.xml', docXml);
 
     // Agar header yoki footer mavjud bo'lsa, ularni ham yangilaymiz
-    const headerFiles = Object.keys(zip.files).filter((k) => k.startsWith('word/header') && k.endsWith('.xml'));
+    const headerFiles = Object.keys(zip.files).filter(
+      (k) => k.startsWith('word/header') && k.endsWith('.xml'),
+    );
     for (const hf of headerFiles) {
       let hXml = await zip.file(hf)?.async('text');
       if (hXml) {
@@ -982,10 +998,7 @@ export class DocumentsService {
 
       while ((match = tTagRegex.exec(currentXml)) !== null) {
         const start = combined.length;
-        const text = match[2]
-          .replace(/&amp;/g, '&')
-          .replace(/&lt;/g, '<')
-          .replace(/&gt;/g, '>');
+        const text = match[2].replace(/&amp;/g, '&').replace(/&lt;/g, '<').replace(/&gt;/g, '>');
         combined += text;
         tNodes.push({
           fullMatch: match[0],
@@ -1041,7 +1054,8 @@ export class DocumentsService {
       for (let i = lastIdx; i >= firstIdx; i--) {
         const node = tNodes[i];
         const textVal = node.newText || '';
-        const xmlSpace = textVal.startsWith(' ') || textVal.endsWith(' ') ? ' xml:space="preserve"' : '';
+        const xmlSpace =
+          textVal.startsWith(' ') || textVal.endsWith(' ') ? ' xml:space="preserve"' : '';
         const replacementXml = `<w:t${xmlSpace}>${textVal
           .replace(/&/g, '&amp;')
           .replace(/</g, '&lt;')
@@ -1113,7 +1127,7 @@ export class DocumentsService {
     // 2. Namuna fayllaridagi original real ma'lumotlarni almashtirish
     const isDefaultHead = Boolean(
       data.headTitle &&
-      (data.headTitle.includes('Ismoilov') || data.headTitle.includes('Исмоилов'))
+      (data.headTitle.includes('Ismoilov') || data.headTitle.includes('Исмоилов')),
     );
 
     if (templateId === 'tushuntirish-telegram') {
@@ -1127,11 +1141,15 @@ export class DocumentsService {
           list.push({ search: 'Ergashev Sanjar Togaymurodovich', replace: data.citizenFullName });
         }
         if (data.citizenShortName || data.citizenFullName) {
-          list.push({ search: 'S.Ergashev', replace: data.citizenShortName || data.citizenFullName });
+          list.push({
+            search: 'S.Ergashev',
+            replace: data.citizenShortName || data.citizenFullName,
+          });
         }
         if (data.citizenAddress) {
           list.push({
-            search: 'Qashqadaryo viloyati, Qarshi tumani, Fayzobod MFY, O‘zbekiston mustaqilligi ko‘chasi 15-uy',
+            search:
+              'Qashqadaryo viloyati, Qarshi tumani, Fayzobod MFY, O‘zbekiston mustaqilligi ko‘chasi 15-uy',
             replace: data.citizenAddress,
           });
         }
@@ -1139,14 +1157,18 @@ export class DocumentsService {
           list.push({ search: '+99897 222 25 25', replace: data.citizenPhone });
         }
         if (data.citizenBirthDate) {
-          list.push({ search: '«09» iyun 1978 yil, Qarshi tumani', replace: data.citizenBirthDate });
+          list.push({
+            search: '«09» iyun 1978 yil, Qarshi tumani',
+            replace: data.citizenBirthDate,
+          });
         }
         if (data.maritalStatus) {
           list.push({ search: 'Oilaliman, 3 nafar farzandim bor', replace: data.maritalStatus });
         }
         if (data.education) {
           list.push({
-            search: 'Oliy, Qarshi muhandislik iqtisodiyot institui 2001 yilda bakalavriat, Janubiy Koreyada 2003 yilda magistraturani',
+            search:
+              'Oliy, Qarshi muhandislik iqtisodiyot institui 2001 yilda bakalavriat, Janubiy Koreyada 2003 yilda magistraturani',
             replace: data.education,
           });
         }
@@ -1167,8 +1189,14 @@ export class DocumentsService {
           list.push({ search: '01 iyul', replace: data.compromiseDate });
         }
         if (data.friendInfo) {
-          list.push({ search: 'Samarqand viloyatida yashovchi Lochin ismli tanishim', replace: data.friendInfo });
-          list.push({ search: 'tanishim Samarqand viloyatida yashovchi Lochin ismli fuqaro', replace: `tanishim ${data.friendInfo}` });
+          list.push({
+            search: 'Samarqand viloyatida yashovchi Lochin ismli tanishim',
+            replace: data.friendInfo,
+          });
+          list.push({
+            search: 'tanishim Samarqand viloyatida yashovchi Lochin ismli fuqaro',
+            replace: `tanishim ${data.friendInfo}`,
+          });
           list.push({ search: 'tanishim Lochinga', replace: `tanishim ${data.friendInfo}ga` });
         }
         if (data.stolenAmount) {
@@ -1193,11 +1221,15 @@ export class DocumentsService {
           list.push({ search: 'Эргашев Санжар Тогаймуродович', replace: data.citizenFullName });
         }
         if (data.citizenShortName || data.citizenFullName) {
-          list.push({ search: 'С.Эргашев', replace: data.citizenShortName || data.citizenFullName });
+          list.push({
+            search: 'С.Эргашев',
+            replace: data.citizenShortName || data.citizenFullName,
+          });
         }
         if (data.citizenAddress) {
           list.push({
-            search: 'Қашқадарё вилояти, Қарши тумани, Файзобод МФЙ, Ўзбекистон мустақиллиги кўчаси 15-уй',
+            search:
+              'Қашқадарё вилояти, Қарши тумани, Файзобод МФЙ, Ўзбекистон мустақиллиги кўчаси 15-уй',
             replace: data.citizenAddress,
           });
         }
@@ -1213,7 +1245,8 @@ export class DocumentsService {
         }
         if (data.education) {
           list.push({
-            search: 'Олий, Қарши муҳандислик иқтисодиёт институи 2001 йилда бакалавриат, Жанубий Кореяда 2003 йилда магистратурани',
+            search:
+              'Олий, Қарши муҳандислик иқтисодиёт институи 2001 йилда бакалавриат, Жанубий Кореяда 2003 йилда магистратурани',
             replace: data.education,
           });
         }
@@ -1235,8 +1268,14 @@ export class DocumentsService {
           list.push({ search: '01 июл', replace: data.compromiseDate });
         }
         if (data.friendInfo) {
-          list.push({ search: 'Самарқанд вилоятида яшовчи Лочин исмли танишим', replace: data.friendInfo });
-          list.push({ search: 'танишим Самарқанд вилоятида яшовчи Лочин исмли фуқаро', replace: data.friendInfo });
+          list.push({
+            search: 'Самарқанд вилоятида яшовчи Лочин исмли танишим',
+            replace: data.friendInfo,
+          });
+          list.push({
+            search: 'танишим Самарқанд вилоятида яшовчи Лочин исмли фуқаро',
+            replace: data.friendInfo,
+          });
           list.push({ search: 'танишим Лочинга', replace: `${data.friendInfo}га` });
           list.push({ search: 'Лочин', replace: data.friendInfo });
         }
@@ -1274,7 +1313,10 @@ export class DocumentsService {
           list.push({ search: '+99850-501-50-42', replace: data.citizenPhone });
         }
         if (data.citizenBirthDate) {
-          list.push({ search: '«20» iyun 2000 yil, Qarshi tumani', replace: data.citizenBirthDate });
+          list.push({
+            search: '«20» iyun 2000 yil, Qarshi tumani',
+            replace: data.citizenBirthDate,
+          });
         }
         if (data.maritalStatus) {
           list.push({ search: 'Oilaliman', replace: data.maritalStatus });
@@ -1292,10 +1334,16 @@ export class DocumentsService {
           list.push({ search: 'vaqtincha ishsiz', replace: data.workplace });
         }
         if (data.cardOwnerRelation) {
-          list.push({ search: 'onam Farmonova Gulshod Turdiqulovnaga tegishli bo‘lgan', replace: data.cardOwnerRelation });
+          list.push({
+            search: 'onam Farmonova Gulshod Turdiqulovnaga tegishli bo‘lgan',
+            replace: data.cardOwnerRelation,
+          });
         }
         if (data.cardHolder) {
-          list.push({ search: 'onam Farmonova Gulshod Turdiqulovnaga', replace: `${data.cardHolder}ga` });
+          list.push({
+            search: 'onam Farmonova Gulshod Turdiqulovnaga',
+            replace: `${data.cardHolder}ga`,
+          });
           list.push({ search: 'Farmonova Gulshod Turdiqulovna', replace: data.cardHolder });
         }
         if (data.cardNumber) {
@@ -1324,7 +1372,10 @@ export class DocumentsService {
           list.push({ search: '3 350 000', replace: data.stolenAmount });
         }
         if (data.smsSources) {
-          list.push({ search: '“sinbad”, “Korzinka”, “Mobiuz_App” va “MyTaxi”', replace: data.smsSources });
+          list.push({
+            search: '“sinbad”, “Korzinka”, “Mobiuz_App” va “MyTaxi”',
+            replace: data.smsSources,
+          });
         }
         if (data.officerName) {
           list.push({ search: 'D.Umarov', replace: data.officerName });
@@ -1368,10 +1419,16 @@ export class DocumentsService {
           list.push({ search: 'вақтинча ишсиз', replace: data.workplace });
         }
         if (data.cardOwnerRelation) {
-          list.push({ search: 'онам Фармонова Гулшод Турдиқуловнага тегишли бўлган', replace: data.cardOwnerRelation });
+          list.push({
+            search: 'онам Фармонова Гулшод Турдиқуловнага тегишли бўлган',
+            replace: data.cardOwnerRelation,
+          });
         }
         if (data.cardHolder) {
-          list.push({ search: 'онам Фармонова Гулшод Турдиқуловнага', replace: `${data.cardHolder}га` });
+          list.push({
+            search: 'онам Фармонова Гулшод Турдиқуловнага',
+            replace: `${data.cardHolder}га`,
+          });
           list.push({ search: 'Фармонова Гулшод Турдиқуловна', replace: data.cardHolder });
         }
         if (data.cardNumber) {
@@ -1400,7 +1457,10 @@ export class DocumentsService {
           list.push({ search: '3 350 000', replace: data.stolenAmount });
         }
         if (data.smsSources) {
-          list.push({ search: '“sinbad”, “Korzinka”, “Mobiuz_App” ва “MyTaxi”', replace: data.smsSources });
+          list.push({
+            search: '“sinbad”, “Korzinka”, “Mobiuz_App” ва “MyTaxi”',
+            replace: data.smsSources,
+          });
         }
         if (data.officerName) {
           list.push({ search: 'Д.Умаров', replace: data.officerName });
@@ -1409,7 +1469,10 @@ export class DocumentsService {
     } else if (templateId === 'bayonnoma-1-bet') {
       const isLotin = script === 'lotin';
       if (data.dateText) {
-        list.push({ search: isLotin ? '«___» _________ 2026 yil' : '«___» _________ 2026 йил', replace: data.dateText });
+        list.push({
+          search: isLotin ? '«___» _________ 2026 yil' : '«___» _________ 2026 йил',
+          replace: data.dateText,
+        });
       }
       if (data.districtName) {
         list.push({ search: '_____________', replace: data.districtName });
@@ -1417,39 +1480,55 @@ export class DocumentsService {
       if (data.startTime) {
         list.push({
           search: isLotin ? 'Boshlandi: soat          da' : 'Бошланди: соат          да',
-          replace: isLotin ? `Boshlandi: soat ${data.startTime} da` : `Бошланди: соат ${data.startTime} да`,
+          replace: isLotin
+            ? `Boshlandi: soat ${data.startTime} da`
+            : `Бошланди: соат ${data.startTime} да`,
         });
       }
       if (data.endTime) {
         list.push({
           search: isLotin ? 'Tugallandi: soat          da' : 'Тугалланди: соат          да',
-          replace: isLotin ? `Tugallandi: soat ${data.endTime} da` : `Тугалланди: соат ${data.endTime} да`,
+          replace: isLotin
+            ? `Tugallandi: soat ${data.endTime} da`
+            : `Тугалланди: соат ${data.endTime} да`,
         });
       }
       if (data.witness1) {
         list.push({
-          search: '1.___________________________________________________________________________________________________________________________________',
+          search:
+            '1.___________________________________________________________________________________________________________________________________',
           replace: `1. ${data.witness1}`,
         });
       }
       if (data.witness2) {
         list.push({
-          search: '2.___________________________________________________________________________________________________________________________________',
+          search:
+            '2.___________________________________________________________________________________________________________________________________',
           replace: `2. ${data.witness2}`,
         });
       }
       if (data.inspectionDescription) {
         list.push({
-          search: '_____________________________________________________________________________________________________________________________________________________________________________________________________________________________________________________________________________________________________________________________________________________________________________________________________________________________________________________________________________________________________________________________________________________________________________________________________________________________________________________________________________________________________________________________________________________________________________________________________________________________________________________________________________',
+          search:
+            '_____________________________________________________________________________________________________________________________________________________________________________________________________________________________________________________________________________________________________________________________________________________________________________________________________________________________________________________________________________________________________________________________________________________________________________________________________________________________________________________________________________________________________________________________________________________________________________________________________________________________________________________________________________',
           replace: data.inspectionDescription,
         });
       }
       if (data.citizenFullName) {
-        list.push({ search: '______         __________________', replace: `______         ${data.citizenFullName}` });
+        list.push({
+          search: '______         __________________',
+          replace: `______         ${data.citizenFullName}`,
+        });
       }
       if (data.officerName) {
-        list.push({ search: '_________  \t      __________________', replace: `_________  \t      ${data.officerName}` });
-        list.push({ search: '_________        __________________', replace: `_________        ${data.officerName}` });
+        list.push({
+          search: '_________  \t      __________________',
+          replace: `_________  \t      ${data.officerName}`,
+        });
+        list.push({
+          search: '_________        __________________',
+          replace: `_________        ${data.officerName}`,
+        });
       }
     } else if (templateId === 'sanksiya-ogrilik') {
       if (script === 'lotin') {
@@ -1463,10 +1542,16 @@ export class DocumentsService {
           list.push({ search: 'Haqberdiyev Sardor Azim o‘g‘li', replace: data.citizenFullName });
         }
         if (data.citizenShortName || data.citizenFullName) {
-          list.push({ search: 'S.Haqberdiyev', replace: data.citizenShortName || data.citizenFullName });
+          list.push({
+            search: 'S.Haqberdiyev',
+            replace: data.citizenShortName || data.citizenFullName,
+          });
         }
         if (data.citizenAddress) {
-          list.push({ search: 'Qashqadaryo viloyati, Qarshi tumani Chaman MFY', replace: data.citizenAddress });
+          list.push({
+            search: 'Qashqadaryo viloyati, Qarshi tumani Chaman MFY',
+            replace: data.citizenAddress,
+          });
         }
         if (data.cardNumber) {
           list.push({ search: '9860.1901.1022.9597', replace: data.cardNumber });
@@ -1504,10 +1589,16 @@ export class DocumentsService {
           list.push({ search: 'Ҳақбердиев Сардор Азим ўғли', replace: data.citizenFullName });
         }
         if (data.citizenShortName || data.citizenFullName) {
-          list.push({ search: 'С.Ҳақбердиев', replace: data.citizenShortName || data.citizenFullName });
+          list.push({
+            search: 'С.Ҳақбердиев',
+            replace: data.citizenShortName || data.citizenFullName,
+          });
         }
         if (data.citizenAddress) {
-          list.push({ search: 'Қашқадарё вилояти, Қарши тумани Чаман МФЙ', replace: data.citizenAddress });
+          list.push({
+            search: 'Қашқадарё вилояти, Қарши тумани Чаман МФЙ',
+            replace: data.citizenAddress,
+          });
         }
         if (data.cardNumber) {
           list.push({ search: '9860.1901.1022.9597', replace: data.cardNumber });
@@ -1548,7 +1639,10 @@ export class DocumentsService {
           list.push({ search: 'Xusinova Shoxista Ambiyaqulovna', replace: data.citizenFullName });
         }
         if (data.citizenShortName || data.citizenFullName) {
-          list.push({ search: 'Sh.Xusinova', replace: data.citizenShortName || data.citizenFullName });
+          list.push({
+            search: 'Sh.Xusinova',
+            replace: data.citizenShortName || data.citizenFullName,
+          });
         }
         if (data.citizenAddress) {
           list.push({
@@ -1589,7 +1683,10 @@ export class DocumentsService {
           list.push({ search: 'Хусинова Шохиста Амбияқуловна', replace: data.citizenFullName });
         }
         if (data.citizenShortName || data.citizenFullName) {
-          list.push({ search: 'Ш.Хусинова', replace: data.citizenShortName || data.citizenFullName });
+          list.push({
+            search: 'Ш.Хусинова',
+            replace: data.citizenShortName || data.citizenFullName,
+          });
         }
         if (data.citizenAddress) {
           list.push({

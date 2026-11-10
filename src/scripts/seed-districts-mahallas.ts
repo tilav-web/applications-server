@@ -11,18 +11,17 @@ async function bootstrap() {
   const districtsService = app.get(DistrictsService);
   const mahallasService = app.get(MahallasService);
 
-  console.log("Qashqadaryo tumanlarini bazaga kiritish boshlandi...");
+  console.log('Qashqadaryo tumanlarini bazaga kiritish boshlandi...');
   await districtsService.seedDefaultDistricts();
 
-  console.log("Qashqadaryo mahallalarini bazaga kiritish boshlandi...");
+  console.log('Qashqadaryo mahallalarini bazaga kiritish boshlandi...');
   await mahallasService.seedDefaultMahallas();
 
-  console.log("Barcha tumanlar va mahallalar muvaffaqiyatli bazaga kiritildi!");
+  console.log('Barcha tumanlar va mahallalar muvaffaqiyatli bazaga kiritildi!');
   await app.close();
 }
 
 bootstrap().catch((err) => {
-  console.error("Seed scriptida xatolik yuz berdi:", err);
+  console.error('Seed scriptida xatolik yuz berdi:', err);
   process.exit(1);
 });
-

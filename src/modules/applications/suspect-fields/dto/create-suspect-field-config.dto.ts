@@ -31,4 +31,3 @@ export class CreateSuspectFieldConfigDto {
   @IsBoolean()
   is_active?: boolean;
 }
-

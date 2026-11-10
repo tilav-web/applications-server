@@ -13,4 +13,3 @@ import { CrimeMethodsService } from './crime-methods.service';
   exports: [CrimeMethodsService],
 })
 export class CrimeMethodsModule {}
-

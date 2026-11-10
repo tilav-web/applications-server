@@ -33,15 +33,7 @@ import { TemplatesManagementService } from './templates/templates-management.ser
     AuthModule,
   ],
   controllers: [DocumentsController, TemplatesController],
-  providers: [
-    DocumentsService,
-    TemplatesManagementService,
-    DocxEngineService,
-  ],
-  exports: [
-    DocumentsService,
-    TemplatesManagementService,
-    DocxEngineService,
-  ],
+  providers: [DocumentsService, TemplatesManagementService, DocxEngineService],
+  exports: [DocumentsService, TemplatesManagementService, DocxEngineService],
 })
 export class DocumentsModule {}

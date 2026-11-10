@@ -160,4 +160,3 @@ export class DocumentsController {
     return this.documentsService.deleteDocument(id);
   }
 }
-

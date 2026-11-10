@@ -1,8 +1,8 @@
 export interface TemplateVariableItem {
-  tag: string;              // e.g. '{{citizen.first_name}}'
-  rawKey: string;           // e.g. 'citizen.first_name'
-  label: string;            // e.g. 'Ismi (first_name)'
-  modelName: string;        // 'Citizen' | 'Application' | 'Crime' | 'District' | 'Card' | 'Transfer' | 'Officer' | 'System'
+  tag: string; // e.g. '{{citizen.first_name}}'
+  rawKey: string; // e.g. 'citizen.first_name'
+  label: string; // e.g. 'Ismi (first_name)'
+  modelName: string; // 'Citizen' | 'Application' | 'Crime' | 'District' | 'Card' | 'Transfer' | 'Officer' | 'System'
   description?: string;
   sampleValue: string;
 }
@@ -137,7 +137,8 @@ export const TEMPLATE_VARIABLES_DICTIONARY: TemplateCategoryConfig[] = [
         label: 'Ariza bayoni / mazmuni (description)',
         modelName: 'Application',
         description: 'Fuqaro arizasining to‘liq mazmuni',
-        sampleValue: 'Telegram orqali noma’lum shaxs tomonidan bank kartasidan pul mablag‘lari yechib olinganligi haqida',
+        sampleValue:
+          'Telegram orqali noma’lum shaxs tomonidan bank kartasidan pul mablag‘lari yechib olinganligi haqida',
       },
       {
         tag: '{{application.officer_notes}}',
@@ -224,7 +225,8 @@ export const TEMPLATE_VARIABLES_DICTIONARY: TemplateCategoryConfig[] = [
         label: 'Jinoyat sodir etish usuli (method)',
         modelName: 'CrimeMethod',
         description: 'Masalan: Сохта ҳавола/зарарли дастур орқали...',
-        sampleValue: 'Сохта ҳавола/зарарли дастур орқали карта ёки қурилма бошқарувини қўлга киритиш орқали',
+        sampleValue:
+          'Сохта ҳавола/зарарли дастур орқали карта ёки қурилма бошқарувини қўлга киритиш орқали',
       },
       {
         tag: '{{crime.method_group}}',
@@ -240,7 +242,8 @@ export const TEMPLATE_VARIABLES_DICTIONARY: TemplateCategoryConfig[] = [
         label: 'Jinoyat tavsifi (description)',
         modelName: 'Crime',
         description: 'Moddaning to‘liq qonuniy ta’rifi',
-        sampleValue: 'O‘zganing mulkini aldash yoki ishonchni suiiste’mol qilish yo‘li bilan talon-toroj qilish',
+        sampleValue:
+          'O‘zganing mulkini aldash yoki ishonchni suiiste’mol qilish yo‘li bilan talon-toroj qilish',
       },
     ],
   },
@@ -395,7 +398,8 @@ export const TEMPLATE_VARIABLES_DICTIONARY: TemplateCategoryConfig[] = [
         rawKey: 'suspect.details',
         label: 'To‘liq daraxt zanjiri (details)',
         modelName: 'Suspect',
-        description: 'Barcha tarmoqlarning to‘liq zanjiri (masalan: telegram ➔ username ➔ tilav_web; telegram ➔ bio ➔ pul topish)',
+        description:
+          'Barcha tarmoqlarning to‘liq zanjiri (masalan: telegram ➔ username ➔ tilav_web; telegram ➔ bio ➔ pul topish)',
         sampleValue: 'telegram ➔ username ➔ @tilav_web; telegram ➔ bio ➔ pul topish',
       },
       {
@@ -403,7 +407,8 @@ export const TEMPLATE_VARIABLES_DICTIONARY: TemplateCategoryConfig[] = [
         rawKey: 'suspect.usernames',
         label: 'Foydalanuvchi nomlari / Niklar (usernames)',
         modelName: 'Suspect',
-        description: 'Daraxtdan aniqlangan barcha username va niki (@ bilan yoki username bandlari)',
+        description:
+          'Daraxtdan aniqlangan barcha username va niki (@ bilan yoki username bandlari)',
         sampleValue: '@tilav_web',
       },
       {
@@ -435,7 +440,8 @@ export const TEMPLATE_VARIABLES_DICTIONARY: TemplateCategoryConfig[] = [
         rawKey: 'suspect_tree',
         label: 'Daraxt ro‘yxati sikli (suspect_tree)',
         modelName: 'Suspect',
-        description: 'Daraxtning har bir tarmog‘ini alohida qatorda chiqarish uchun docx sikli (loop)',
+        description:
+          'Daraxtning har bir tarmog‘ini alohida qatorda chiqarish uchun docx sikli (loop)',
         sampleValue: '• telegram ➔ username ➔ @tilav_web\n• telegram ➔ bio ➔ pul topish',
       },
     ],
@@ -616,7 +622,8 @@ export const TEMPLATE_VARIABLES_DICTIONARY: TemplateCategoryConfig[] = [
         rawKey: 'custom.<maydon_kaliti>',
         label: 'Dinamik maydon qiymati',
         modelName: 'CustomField',
-        description: 'Arizaga qo‘shilgan har qanday maxsus dinamik maydon qiymatini kaliti bo‘yicha chiqarish',
+        description:
+          'Arizaga qo‘shilgan har qanday maxsus dinamik maydon qiymatini kaliti bo‘yicha chiqarish',
         sampleValue: '{{custom.dalil_tavsifi}}',
       },
       {

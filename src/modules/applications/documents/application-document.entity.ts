@@ -39,4 +39,3 @@ export class ApplicationDocument extends BaseEntity {
   @Column({ name: 'created_by_id', type: 'uuid', nullable: true })
   created_by_id: string | null;
 }
-

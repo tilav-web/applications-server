@@ -102,7 +102,7 @@ services:
   minio:
     image: cgr.dev/chainguard/minio:latest
     container_name: uvd_app_minio
-    user: "0:0"
+    user: '0:0'
     restart: unless-stopped
     entrypoint: minio
     command: server /data --console-address ":9001"

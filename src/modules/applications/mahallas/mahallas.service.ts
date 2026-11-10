@@ -41,7 +41,7 @@ export class MahallasService implements OnApplicationBootstrap {
       }
 
       if (districtMap.size === 0) {
-        this.logger.warn("Tumanlar topilmadi, mahallalarni kiritish keyinga qoldirildi");
+        this.logger.warn('Tumanlar topilmadi, mahallalarni kiritish keyinga qoldirildi');
         return;
       }
 
@@ -50,9 +50,7 @@ export class MahallasService implements OnApplicationBootstrap {
         select: { name: true, district_id: true },
       });
       const existingKeySet = new Set(
-        existingMahallas.map(
-          (m) => `${m.district_id}_${m.name.toLowerCase().trim()}`,
-        ),
+        existingMahallas.map((m) => `${m.district_id}_${m.name.toLowerCase().trim()}`),
       );
 
       const toInsert: Partial<Mahalla>[] = [];

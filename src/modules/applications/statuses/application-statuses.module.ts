@@ -14,4 +14,3 @@ import { ApplicationStatusesService } from './application-statuses.service';
   exports: [ApplicationStatusesService],
 })
 export class ApplicationStatusesModule {}
-

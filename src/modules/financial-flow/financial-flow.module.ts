@@ -10,13 +10,9 @@ import { FinancialFlowController } from './financial-flow.controller';
 import { FinancialFlowService } from './financial-flow.service';
 
 @Module({
-  imports: [
-    TypeOrmModule.forFeature([Card, Transfer, Application, Bank]),
-    AuthModule,
-  ],
+  imports: [TypeOrmModule.forFeature([Card, Transfer, Application, Bank]), AuthModule],
   controllers: [FinancialFlowController],
   providers: [FinancialFlowService],
   exports: [FinancialFlowService],
 })
 export class FinancialFlowModule {}
-

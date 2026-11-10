@@ -57,7 +57,9 @@ export function buildTemplateContext(
   const cFirst = formatUzbekName(citizen?.first_name);
   const cLast = formatUzbekName(citizen?.last_name);
   const cMiddle = formatUzbekName(citizen?.middle_name);
-  const cFullName = [cLast, cFirst, cMiddle].filter(Boolean).join(' ') || (citizen?.passport ? `Fuqaro (${citizen.passport})` : 'Fuqaro');
+  const cFullName =
+    [cLast, cFirst, cMiddle].filter(Boolean).join(' ') ||
+    (citizen?.passport ? `Fuqaro (${citizen.passport})` : 'Fuqaro');
   const cShortName = cLast ? `${cFirst ? cFirst[0] + '.' : ''}${cLast}` : cFullName;
 
   const citizenDistrictName = citizen?.district?.name || district?.name || '';
@@ -71,7 +73,8 @@ export function buildTemplateContext(
 
   // 3. Cards and Transfers
   const victimCard = application.card;
-  const primaryTransfer: Transfer | null = application.transfer || (transfers.length > 0 ? transfers[0] : null);
+  const primaryTransfer: Transfer | null =
+    application.transfer || (transfers.length > 0 ? transfers[0] : null);
   const fraudCard = primaryTransfer?.receiver_card || null;
 
   // Masked card number helper
@@ -105,14 +108,15 @@ export function buildTemplateContext(
   // 4. Officer / Investigator info
   const officerFirstName = officerUser?.first_name || '';
   const officerLastName = officerUser?.last_name || '';
-  const officerFullName = [officerLastName, officerFirstName].filter(Boolean).join(' ') || 'Tergovchi';
+  const officerFullName =
+    [officerLastName, officerFirstName].filter(Boolean).join(' ') || 'Tergovchi';
   const officerPosition =
-    customData.officerPosition ||
-    'Qashqadaryo viloyati IIB TXTB TB KTV katta tergovchisi';
+    customData.officerPosition || 'Qashqadaryo viloyati IIB TXTB TB KTV katta tergovchisi';
 
   const defaultHeadTitleLotin = 'Qashqadaryo viloyati IIB boshlig‘i polkovnik A.S.Ismoilovga';
   const defaultHeadTitleKrill = 'Қашқадарё вилояти ИИБ бошлиғи полковник А.С.Исмоиловга';
-  const headTitle = customData.headTitle || (script === 'krill' ? defaultHeadTitleKrill : defaultHeadTitleLotin);
+  const headTitle =
+    customData.headTitle || (script === 'krill' ? defaultHeadTitleKrill : defaultHeadTitleLotin);
 
   // 5. Dates
   const now = new Date();
@@ -235,10 +239,7 @@ export function buildTemplateContext(
     }
   }
 
-  const allDetails = [
-    ...suspectDetailsLines,
-    ...branchPaths,
-  ];
+  const allDetails = [...suspectDetailsLines, ...branchPaths];
   const suspectDetailsStr = allDetails.join('; ');
   const suspectUsernamesStr = Array.from(new Set(detectedUsernames)).join(', ');
   const suspectPhonesStr = Array.from(new Set(detectedPhones)).join(', ');
@@ -319,8 +320,12 @@ export function buildTemplateContext(
           code: primaryTransfer.payment_provider?.code || '',
         },
         sender_card: {
-          card_number: formatCardSpaced(primaryTransfer.sender_card?.card_number || victimCard?.card_number),
-          masked_number: maskCard(primaryTransfer.sender_card?.card_number || victimCard?.card_number),
+          card_number: formatCardSpaced(
+            primaryTransfer.sender_card?.card_number || victimCard?.card_number,
+          ),
+          masked_number: maskCard(
+            primaryTransfer.sender_card?.card_number || victimCard?.card_number,
+          ),
           full_name: adapt(primaryTransfer.sender_card?.full_name || victimCard?.full_name || ''),
         },
         receiver_card: {
@@ -536,9 +541,8 @@ export function buildTemplateContext(
     app: {
       number: application.application_number || 'YANGI',
       created_date: formatDateUzbek(application.date || application.created_at, script),
-      crime_article: crime?.article || crime?.title
-        ? `${crime.article || crime.title}`.trim()
-        : 'Firibgarlik',
+      crime_article:
+        crime?.article || crime?.title ? `${crime.article || crime.title}`.trim() : 'Firibgarlik',
       district: adapt(district?.name || ''),
       stolen_amount: formatAmountNumber(totalStolenAmountNumber),
       stolen_amount_words: numberToWordsUz(totalStolenAmountNumber, script),

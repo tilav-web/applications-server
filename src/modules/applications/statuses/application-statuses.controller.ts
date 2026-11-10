@@ -49,4 +49,3 @@ export class ApplicationStatusesController {
     return this.statusesService.remove(id);
   }
 }
-

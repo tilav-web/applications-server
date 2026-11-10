@@ -24,4 +24,3 @@ export class CreateCrimeMethodDto {
   @IsBoolean()
   is_active?: boolean;
 }
-

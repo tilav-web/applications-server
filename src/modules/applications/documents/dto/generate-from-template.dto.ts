@@ -16,4 +16,3 @@ export class GenerateFromTemplateDto {
   @IsOptional()
   customData?: Record<string, string>;
 }
-
