@@ -114,7 +114,13 @@ export class CitizensService {
 
     const [items, total] = await this.citizenRepo.findAndCount({
       where,
-      relations: { cards: true, district: true, mahalla: true },
+      relations: {
+        cards: true,
+        district: true,
+        mahalla: true,
+        occupation_category: true,
+        occupation: true,
+      },
       order: { created_at: 'DESC' },
       skip,
       take,
@@ -138,7 +144,14 @@ export class CitizensService {
   async findOne(id: string): Promise<Citizen> {
     const citizen = await this.citizenRepo.findOne({
       where: { id },
-      relations: { cards: true, applications: true, district: true, mahalla: true },
+      relations: {
+        cards: true,
+        applications: true,
+        district: true,
+        mahalla: true,
+        occupation_category: true,
+        occupation: true,
+      },
     });
 
     if (!citizen) {

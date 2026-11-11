@@ -182,7 +182,8 @@ export class ApplicationsReportsService {
       .leftJoinAndSelect('app.transfer', 'transfer')
       .leftJoinAndSelect('app.application_status', 'application_status')
       .leftJoinAndSelect('app.custom_fields', 'custom_fields')
-      .where('COALESCE(app.date, app.created_at) >= :yearStart', { yearStart })
+      .where('app.is_deleted = false')
+      .andWhere('COALESCE(app.date, app.created_at) >= :yearStart', { yearStart })
       .andWhere('COALESCE(app.date, app.created_at) <= :dayEnd', { dayEnd })
       .getMany();
 
@@ -493,7 +494,8 @@ export class ApplicationsReportsService {
       .createQueryBuilder('app')
       .leftJoinAndSelect('app.district', 'district')
       .leftJoinAndSelect('app.crime', 'crime')
-      .where('COALESCE(app.date, app.created_at) >= :periodStart', { periodStart })
+      .where('app.is_deleted = false')
+      .andWhere('COALESCE(app.date, app.created_at) >= :periodStart', { periodStart })
       .andWhere('COALESCE(app.date, app.created_at) <= :periodEnd', { periodEnd })
       .getMany();
 
@@ -639,6 +641,7 @@ export class ApplicationsReportsService {
       .leftJoinAndSelect('app.district', 'district')
       .leftJoinAndSelect('app.crime', 'crime')
       .leftJoinAndSelect('app.crime_method', 'crime_method')
+      .leftJoinAndSelect('app.source', 'source')
       .leftJoinAndSelect('app.card', 'card')
       .leftJoinAndSelect('card.bank', 'card_bank')
       .leftJoinAndSelect('app.transfer', 'transfer')
@@ -648,7 +651,8 @@ export class ApplicationsReportsService {
       .leftJoinAndSelect('app.custom_fields', 'custom_fields')
       .leftJoinAndSelect('custom_fields.citizen', 'cf_citizen')
       .leftJoinAndSelect('custom_fields.card', 'cf_card')
-      .leftJoinAndSelect('custom_fields.transfer', 'cf_transfer');
+      .leftJoinAndSelect('custom_fields.transfer', 'cf_transfer')
+      .where('app.is_deleted = false');
 
     if (dto.search) {
       const s = `%${dto.search.trim()}%`;
@@ -727,7 +731,7 @@ export class ApplicationsReportsService {
       return {
         index: skip + idx + 1,
         id: app.id,
-        source: '102 тизими',
+        source: app.source?.name || '102 тизими',
         officer: app.officer_notes ? app.officer_notes.substring(0, 40) : 'Масъул ходим',
         date: dateStr,
         district: app.district?.name || '—',

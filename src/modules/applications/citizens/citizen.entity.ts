@@ -12,6 +12,8 @@ import { BaseEntity } from '../../../common/database/base.entity';
 import type { Application } from '../application.entity';
 import { District } from '../districts/district.entity';
 import { Mahalla } from '../mahallas/mahalla.entity';
+import { Occupation } from '../occupations/occupation.entity';
+import { OccupationCategory } from '../occupations/occupation-category.entity';
 import type { Card } from '../transfers/cards/card.entity';
 
 @Entity('citizens')
@@ -114,6 +116,34 @@ export class Citizen extends BaseEntity {
   })
   @JoinColumn({ name: 'mahalla_id' })
   mahalla: Mahalla | null;
+
+  @Column({
+    name: 'occupation_category_id',
+    type: 'uuid',
+    nullable: true,
+  })
+  occupation_category_id: string | null;
+
+  @ManyToOne(() => OccupationCategory, {
+    nullable: true,
+    onDelete: 'SET NULL',
+  })
+  @JoinColumn({ name: 'occupation_category_id' })
+  occupation_category: OccupationCategory | null;
+
+  @Column({
+    name: 'occupation_id',
+    type: 'uuid',
+    nullable: true,
+  })
+  occupation_id: string | null;
+
+  @ManyToOne(() => Occupation, {
+    nullable: true,
+    onDelete: 'SET NULL',
+  })
+  @JoinColumn({ name: 'occupation_id' })
+  occupation: Occupation | null;
 
   @OneToMany('Application', 'citizen')
   applications: Application[];

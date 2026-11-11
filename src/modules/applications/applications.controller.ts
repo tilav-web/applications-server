@@ -12,7 +12,9 @@ import {
 } from '@nestjs/common';
 import type { Response } from 'express';
 
+import { CurrentUser } from '../../common/decorators/current-user.decorator';
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
+import type { JwtAccessPayload } from '../../common/types/jwt-payload.interface';
 import { ApplicationsService } from './applications.service';
 import { CreateApplicationDto } from './dto/create-application.dto';
 import { UpdateApplicationDto } from './dto/update-application.dto';
@@ -24,8 +26,8 @@ export class ApplicationsController {
   constructor(private readonly applicationsService: ApplicationsService) {}
 
   @Post()
-  create(@Body() dto: CreateApplicationDto) {
-    return this.applicationsService.create(dto);
+  create(@Body() dto: CreateApplicationDto, @CurrentUser() currentUser?: JwtAccessPayload) {
+    return this.applicationsService.create(dto, currentUser);
   }
 
   @Get()
@@ -45,24 +47,31 @@ export class ApplicationsController {
     @Query('date_from') date_from?: string,
     @Query('date_to') date_to?: string,
     @Query('relations_filter') relations_filter?: string,
+    @CurrentUser() currentUser?: JwtAccessPayload,
   ) {
-    return this.applicationsService.findAll({
-      page: Number(page) || 1,
-      limit: Number(limit) || 10,
-      search,
-      status,
-      status_id,
-      district_id,
-      crime_id,
-      crime_method_id,
-      application_number,
-      citizen_name,
-      description,
-      date,
-      date_from,
-      date_to,
-      relations_filter,
-    });
+    return this.applicationsService.findAll(
+      {
+        page: Number(page) || 1,
+        limit: Number(limit) || 10,
+        search,
+        status,
+        status_id,
+        district_id,
+        crime_id,
+        crime_method_id,
+        application_number,
+        citizen_name,
+        description,
+        date,
+        date_from,
+        date_to,
+        relations_filter,
+      },
+      10,
+      undefined,
+      undefined,
+      currentUser,
+    );
   }
 
   /**
@@ -131,12 +140,16 @@ export class ApplicationsController {
   }
 
   @Patch(':id')
-  update(@Param('id') id: string, @Body() dto: UpdateApplicationDto) {
-    return this.applicationsService.update(id, dto);
+  update(
+    @Param('id') id: string,
+    @Body() dto: UpdateApplicationDto,
+    @CurrentUser() currentUser?: JwtAccessPayload,
+  ) {
+    return this.applicationsService.update(id, dto, currentUser);
   }
 
   @Delete(':id')
-  remove(@Param('id') id: string) {
-    return this.applicationsService.remove(id);
+  remove(@Param('id') id: string, @CurrentUser() currentUser?: JwtAccessPayload) {
+    return this.applicationsService.remove(id, currentUser);
   }
 }

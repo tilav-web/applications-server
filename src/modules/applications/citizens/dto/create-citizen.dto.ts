@@ -70,4 +70,12 @@ export class CreateCitizenDto {
   @IsOptional()
   @IsString()
   mahalla_id?: string | null;
+
+  @IsOptional()
+  @IsString()
+  occupation_category_id?: string | null;
+
+  @IsOptional()
+  @IsString()
+  occupation_id?: string | null;
 }

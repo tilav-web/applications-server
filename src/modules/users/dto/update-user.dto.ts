@@ -27,4 +27,7 @@ export class UpdateUserDto {
   @IsOptional()
   @IsString()
   phone_number?: string;
+
+  @IsOptional()
+  assigned_district_ids?: string[];
 }

@@ -2,6 +2,7 @@ import { Module } from '@nestjs/common';
 import { TypeOrmModule } from '@nestjs/typeorm';
 
 import { AuthModule } from '../auth/auth.module';
+import { User } from '../users/user.entity';
 import { Application } from './application.entity';
 import { ApplicationsController } from './applications.controller';
 import { ApplicationsService } from './applications.service';
@@ -12,6 +13,10 @@ import { CrimesModule } from './crimes/crimes.module';
 import { CrimeMethod } from './crimes/methods/crime-method.entity';
 import { CrimeMethodsModule } from './crimes/methods/crime-methods.module';
 import { ApplicationCustomField } from './custom-fields/application-custom-field.entity';
+import { DecisionType } from './decision-types/decision-type.entity';
+import { DecisionTypesModule } from './decision-types/decision-types.module';
+import { DepartmentService } from './department-services/department-service.entity';
+import { DepartmentServicesModule } from './department-services/department-services.module';
 import { District } from './districts/district.entity';
 import { DistrictsModule } from './districts/districts.module';
 import { ApplicationDocument } from './documents/application-document.entity';
@@ -19,8 +24,15 @@ import { DocumentsModule } from './documents/documents.module';
 import { ApplicationsExcelService } from './export/applications-excel.service';
 import { Mahalla } from './mahallas/mahalla.entity';
 import { MahallasModule } from './mahallas/mahallas.module';
+import { Occupation } from './occupations/occupation.entity';
+import { OccupationCategory } from './occupations/occupation-category.entity';
+import { OccupationsModule } from './occupations/occupations.module';
+import { RejectionReason } from './rejection-reasons/rejection-reason.entity';
+import { RejectionReasonsModule } from './rejection-reasons/rejection-reasons.module';
 import { ApplicationsReportsController } from './reports/applications-reports.controller';
 import { ApplicationsReportsService } from './reports/applications-reports.service';
+import { ApplicationSource } from './sources/application-source.entity';
+import { ApplicationSourcesModule } from './sources/sources.module';
 import { ApplicationStatus } from './statuses/application-status.entity';
 import { ApplicationStatusesModule } from './statuses/application-statuses.module';
 import { SuspectFieldConfig } from './suspect-fields/suspect-field-config.entity';
@@ -53,6 +65,13 @@ import { TransfersModule } from './transfers/transfers.module';
       ApplicationStatus,
       ApplicationDocument,
       SuspectFieldConfig,
+      User,
+      OccupationCategory,
+      Occupation,
+      ApplicationSource,
+      DepartmentService,
+      RejectionReason,
+      DecisionType,
     ]),
     AuthModule,
     CitizensModule,
@@ -67,6 +86,11 @@ import { TransfersModule } from './transfers/transfers.module';
     CardsModule,
     TransfersModule,
     DocumentsModule,
+    OccupationsModule,
+    ApplicationSourcesModule,
+    DepartmentServicesModule,
+    RejectionReasonsModule,
+    DecisionTypesModule,
   ],
   controllers: [ApplicationsController, ApplicationsReportsController],
   providers: [ApplicationsService, ApplicationsExcelService, ApplicationsReportsService],
@@ -76,6 +100,11 @@ import { TransfersModule } from './transfers/transfers.module';
     ApplicationsReportsService,
     SuspectFieldConfigsModule,
     CrimeMethodsModule,
+    OccupationsModule,
+    ApplicationSourcesModule,
+    DepartmentServicesModule,
+    RejectionReasonsModule,
+    DecisionTypesModule,
   ],
 })
 export class ApplicationsModule {}

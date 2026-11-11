@@ -11,10 +11,16 @@ import { Citizen } from './modules/applications/citizens/citizen.entity';
 import { Crime } from './modules/applications/crimes/crime.entity';
 import { CrimeMethod } from './modules/applications/crimes/methods/crime-method.entity';
 import { ApplicationCustomField } from './modules/applications/custom-fields/application-custom-field.entity';
+import { DecisionType } from './modules/applications/decision-types/decision-type.entity';
+import { DepartmentService } from './modules/applications/department-services/department-service.entity';
 import { District } from './modules/applications/districts/district.entity';
 import { ApplicationDocument } from './modules/applications/documents/application-document.entity';
 import { DocumentTemplate } from './modules/applications/documents/templates/document-template.entity';
 import { Mahalla } from './modules/applications/mahallas/mahalla.entity';
+import { Occupation } from './modules/applications/occupations/occupation.entity';
+import { OccupationCategory } from './modules/applications/occupations/occupation-category.entity';
+import { RejectionReason } from './modules/applications/rejection-reasons/rejection-reason.entity';
+import { ApplicationSource } from './modules/applications/sources/application-source.entity';
 import { Bank } from './modules/applications/transfers/banks/bank.entity';
 import { Card } from './modules/applications/transfers/cards/card.entity';
 import { TransferCustomField } from './modules/applications/transfers/custom-fields/transfer-custom-field.entity';
@@ -61,6 +67,12 @@ import { UsersModule } from './modules/users/users.module';
           Bank,
           ApplicationDocument,
           DocumentTemplate,
+          OccupationCategory,
+          Occupation,
+          ApplicationSource,
+          DepartmentService,
+          RejectionReason,
+          DecisionType,
         ],
         synchronize: config.get<string>('DB_SYNCHRONIZE', 'true') === 'true',
         autoLoadEntities: true,

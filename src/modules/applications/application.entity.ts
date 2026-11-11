@@ -9,11 +9,17 @@ import {
 } from 'typeorm';
 
 import { BaseEntity } from '../../common/database/base.entity';
+import { User } from '../users/user.entity';
 import { Citizen } from './citizens/citizen.entity';
 import { Crime } from './crimes/crime.entity';
 import { CrimeMethod } from './crimes/methods/crime-method.entity';
 import { ApplicationCustomField } from './custom-fields/application-custom-field.entity';
+import { DecisionType } from './decision-types/decision-type.entity';
+import { DepartmentService } from './department-services/department-service.entity';
 import { District } from './districts/district.entity';
+import { ApplicationDocument } from './documents/application-document.entity';
+import { RejectionReason } from './rejection-reasons/rejection-reason.entity';
+import { ApplicationSource } from './sources/application-source.entity';
 import { ApplicationStatus as ApplicationStatusEntity } from './statuses/application-status.entity';
 import { Card } from './transfers/cards/card.entity';
 import { Transfer } from './transfers/transfer.entity';
@@ -157,9 +163,68 @@ export class Application extends BaseEntity {
   @JoinColumn({ name: 'transfer_id' })
   transfer: Transfer | null;
 
-  // 6. Arizaga biriktirilgan va yaratilgan Word hujjatlar
-  @OneToMany('ApplicationDocument', 'application')
-  documents: any[];
+  // 6. Murojaat manbasi (102, 112, Ishonch telefoni va h.k.)
+  @Column({ name: 'source_id', type: 'uuid', nullable: true })
+  source_id: string | null;
+
+  @ManyToOne(() => ApplicationSource, {
+    nullable: true,
+    onDelete: 'SET NULL',
+  })
+  @JoinColumn({ name: 'source_id' })
+  source: ApplicationSource | null;
+
+  // 7. Sohaviy xizmat (UYOKK, JQK, Terrorizm, HQPX, YHX, JTSX, Probatsiya, MMIX)
+  @Column({ name: 'department_service_id', type: 'uuid', nullable: true })
+  department_service_id: string | null;
+
+  @ManyToOne(() => DepartmentService, {
+    nullable: true,
+    onDelete: 'SET NULL',
+  })
+  @JoinColumn({ name: 'department_service_id' })
+  department_service: DepartmentService | null;
+
+  // 8. Rad etish sababi (agar ariza rad etilgan bo'lsa)
+  @Column({ name: 'rejection_reason_id', type: 'uuid', nullable: true })
+  rejection_reason_id: string | null;
+
+  @ManyToOne(() => RejectionReason, {
+    nullable: true,
+    onDelete: 'SET NULL',
+  })
+  @JoinColumn({ name: 'rejection_reason_id' })
+  rejection_reason: RejectionReason | null;
+
+  // 9. Yakuniy qaror turi (JI qo'zg'atilgan, boshqa ishga qo'shilgan, va h.k.)
+  @Column({ name: 'decision_type_id', type: 'uuid', nullable: true })
+  decision_type_id: string | null;
+
+  @ManyToOne(() => DecisionType, {
+    nullable: true,
+    onDelete: 'SET NULL',
+  })
+  @JoinColumn({ name: 'decision_type_id' })
+  decision_type: DecisionType | null;
+
+  // 10. Arizani yaratgan xodim (Audit & RBAC)
+  @Column({ name: 'created_by_id', type: 'uuid', nullable: true })
+  created_by_id: string | null;
+
+  @ManyToOne(() => User, {
+    nullable: true,
+    onDelete: 'SET NULL',
+  })
+  @JoinColumn({ name: 'created_by_id' })
+  created_by: User | null;
+
+  // 11. Soft Delete (O'chirilganlik holati)
+  @Column({ name: 'is_deleted', type: 'boolean', default: false })
+  is_deleted: boolean;
+
+  // 12. Arizaga biriktirilgan va yaratilgan Word hujjatlar
+  @OneToMany(() => ApplicationDocument, (doc: ApplicationDocument) => doc.application)
+  documents: ApplicationDocument[];
 
   /**
    * Tahliliy bog'liqliklar hisoboti (Virtual/Hisoblangan maydon)

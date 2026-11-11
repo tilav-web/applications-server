@@ -1,6 +1,7 @@
-import { Column, Entity, JoinColumn, OneToOne } from 'typeorm';
+import { Column, Entity, JoinColumn, JoinTable, ManyToMany, OneToOne } from 'typeorm';
 
 import { BaseEntity } from '../../common/database/base.entity';
+import { District } from '../applications/districts/district.entity';
 import { Auth } from '../auth/auth.entity';
 
 @Entity('users')
@@ -20,4 +21,12 @@ export class User extends BaseEntity {
   @OneToOne(() => Auth, (auth: Auth) => auth.user, { onDelete: 'CASCADE' })
   @JoinColumn({ name: 'auth_id' })
   auth: Auth;
+
+  @ManyToMany(() => District, { cascade: false })
+  @JoinTable({
+    name: 'user_assigned_districts',
+    joinColumn: { name: 'user_id', referencedColumnName: 'id' },
+    inverseJoinColumn: { name: 'district_id', referencedColumnName: 'id' },
+  })
+  assigned_districts: District[];
 }

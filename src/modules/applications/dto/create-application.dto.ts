@@ -154,6 +154,22 @@ export class CreateApplicationDto {
   @IsObject()
   transfer_data?: Record<string, unknown>;
 
+  @IsOptional()
+  @IsUUID('4')
+  source_id?: string | null;
+
+  @IsOptional()
+  @IsUUID('4')
+  department_service_id?: string | null;
+
+  @IsOptional()
+  @IsUUID('4')
+  rejection_reason_id?: string | null;
+
+  @IsOptional()
+  @IsUUID('4')
+  decision_type_id?: string | null;
+
   // Yagona massiv: Dinamik Custom Fields
   @IsOptional()
   @IsArray()

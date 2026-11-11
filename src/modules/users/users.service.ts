@@ -1,10 +1,11 @@
 import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import * as bcrypt from 'bcrypt';
-import { Repository } from 'typeorm';
+import { In, Repository } from 'typeorm';
 
 import { Role } from '../../common/enums/role.enum';
 import type { PaginatedResult } from '../../common/interfaces/pagination.interface';
+import { District } from '../applications/districts/district.entity';
 import { Auth } from '../auth/auth.entity';
 import type { CreateUserDto } from './dto/create-user.dto';
 import type { UpdateUserDto } from './dto/update-user.dto';
@@ -17,6 +18,7 @@ export interface UserView {
   first_name: string | null;
   last_name: string | null;
   phone_number: string | null;
+  assigned_districts?: { id: string; name: string | null }[];
   created_at: Date;
   updated_at: Date;
 }
@@ -28,10 +30,15 @@ export class UsersService {
     private readonly userRepository: Repository<User>,
     @InjectRepository(Auth)
     private readonly authRepository: Repository<Auth>,
+    @InjectRepository(District)
+    private readonly districtRepository: Repository<District>,
   ) {}
 
   async findByAuthId(authId: string): Promise<User | null> {
-    return this.userRepository.findOne({ where: { auth_id: authId } });
+    return this.userRepository.findOne({
+      where: { auth_id: authId },
+      relations: { assigned_districts: true },
+    });
   }
 
   async createProfile(authId: string, profileData: Partial<User>): Promise<User> {
@@ -49,6 +56,7 @@ export class UsersService {
     const query = this.authRepository
       .createQueryBuilder('auth')
       .leftJoinAndSelect('auth.user', 'user')
+      .leftJoinAndSelect('user.assigned_districts', 'districts')
       .orderBy('auth.created_at', 'DESC')
       .skip(skip)
       .take(take);
@@ -70,6 +78,8 @@ export class UsersService {
       first_name: auth.user?.first_name || null,
       last_name: auth.user?.last_name || null,
       phone_number: auth.user?.phone_number || null,
+      assigned_districts:
+        auth.user?.assigned_districts?.map((d) => ({ id: d.id, name: d.name })) || [],
       created_at: auth.created_at,
       updated_at: auth.updated_at,
     }));
@@ -92,7 +102,7 @@ export class UsersService {
   async findOne(id: string): Promise<UserView> {
     const auth = await this.authRepository.findOne({
       where: { id },
-      relations: { user: true },
+      relations: { user: { assigned_districts: true } },
     });
     if (!auth) {
       throw new NotFoundException('Foydalanuvchi topilmadi');
@@ -104,6 +114,8 @@ export class UsersService {
       first_name: auth.user?.first_name || null,
       last_name: auth.user?.last_name || null,
       phone_number: auth.user?.phone_number || null,
+      assigned_districts:
+        auth.user?.assigned_districts?.map((d) => ({ id: d.id, name: d.name })) || [],
       created_at: auth.created_at,
       updated_at: auth.updated_at,
     };
@@ -119,15 +131,23 @@ export class UsersService {
     const auth = this.authRepository.create({
       username: dto.username,
       password: hashedPassword,
-      role: dto.role || Role.INSPECTOR,
+      role: dto.role || Role.STAFF,
     });
     const savedAuth = await this.authRepository.save(auth);
+
+    let assignedDistricts: District[] = [];
+    if (dto.assigned_district_ids && dto.assigned_district_ids.length > 0) {
+      assignedDistricts = await this.districtRepository.findBy({
+        id: In(dto.assigned_district_ids),
+      });
+    }
 
     const user = this.userRepository.create({
       auth_id: savedAuth.id,
       first_name: dto.first_name || null,
       last_name: dto.last_name || null,
       phone_number: dto.phone_number || null,
+      assigned_districts: assignedDistricts,
     });
     await this.userRepository.save(user);
 
@@ -135,7 +155,10 @@ export class UsersService {
   }
 
   async update(id: string, dto: UpdateUserDto): Promise<UserView> {
-    const auth = await this.authRepository.findOne({ where: { id }, relations: { user: true } });
+    const auth = await this.authRepository.findOne({
+      where: { id },
+      relations: { user: { assigned_districts: true } },
+    });
     if (!auth) {
       throw new NotFoundException('Foydalanuvchi topilmadi');
     }
@@ -158,20 +181,28 @@ export class UsersService {
 
     await this.authRepository.save(auth);
 
-    if (auth.user) {
-      if (dto.first_name !== undefined) auth.user.first_name = dto.first_name;
-      if (dto.last_name !== undefined) auth.user.last_name = dto.last_name;
-      if (dto.phone_number !== undefined) auth.user.phone_number = dto.phone_number;
-      await this.userRepository.save(auth.user);
-    } else if (dto.first_name || dto.last_name || dto.phone_number) {
-      const newUser = this.userRepository.create({
+    let user = auth.user;
+    if (!user) {
+      user = this.userRepository.create({
         auth_id: auth.id,
-        first_name: dto.first_name || null,
-        last_name: dto.last_name || null,
-        phone_number: dto.phone_number || null,
       });
-      await this.userRepository.save(newUser);
     }
+
+    if (dto.first_name !== undefined) user.first_name = dto.first_name;
+    if (dto.last_name !== undefined) user.last_name = dto.last_name;
+    if (dto.phone_number !== undefined) user.phone_number = dto.phone_number;
+
+    if (dto.assigned_district_ids !== undefined) {
+      if (dto.assigned_district_ids.length > 0) {
+        user.assigned_districts = await this.districtRepository.findBy({
+          id: In(dto.assigned_district_ids),
+        });
+      } else {
+        user.assigned_districts = [];
+      }
+    }
+
+    await this.userRepository.save(user);
 
     return this.findOne(auth.id);
   }

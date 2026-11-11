@@ -1,12 +1,15 @@
-import { Injectable, NotFoundException } from '@nestjs/common';
+import { ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import type { Response } from 'express';
-import { FindOptionsWhere, ILike, In, Not, Repository } from 'typeorm';
+import { ILike, In, Not, Repository } from 'typeorm';
 
 import { ApplicationStatus } from '../../common/enums/application-status.enum';
+import { Role } from '../../common/enums/role.enum';
 import { TransferCustomFieldType } from '../../common/enums/transfer-custom-field-type.enum';
 import type { PaginatedResult } from '../../common/interfaces/pagination.interface';
+import type { JwtAccessPayload } from '../../common/types/jwt-payload.interface';
 import { formatTitleCase, formatUzbekName } from '../../common/utils/name-formatter.util';
+import { User } from '../users/user.entity';
 import { Application, SuspectTreeNode } from './application.entity';
 import { Citizen } from './citizens/citizen.entity';
 import { Crime } from './crimes/crime.entity';
@@ -50,6 +53,8 @@ export class ApplicationsService {
     private readonly transferCustomFieldRepo: Repository<TransferCustomField>,
     @InjectRepository(ApplicationStatusEntity)
     private readonly statusRepo: Repository<ApplicationStatusEntity>,
+    @InjectRepository(User)
+    private readonly userRepo: Repository<User>,
     private readonly excelService: ApplicationsExcelService,
   ) {}
 
@@ -383,6 +388,10 @@ export class ApplicationsService {
     transfer_id?: string | null;
     status_id?: string | null;
     status?: string | null;
+    source_id?: string | null;
+    department_service_id?: string | null;
+    rejection_reason_id?: string | null;
+    decision_type_id?: string | null;
   }> {
     let citizenId = dto.citizen_id || null;
     let districtId = dto.district_id || null;
@@ -390,6 +399,11 @@ export class ApplicationsService {
     let crimeMethodId = dto.crime_method_id !== undefined ? dto.crime_method_id : null;
     let cardId = dto.card_id || null;
     let transferId = dto.transfer_id || null;
+    let sourceId = dto.source_id !== undefined ? dto.source_id : null;
+    let departmentServiceId =
+      dto.department_service_id !== undefined ? dto.department_service_id : null;
+    let rejectionReasonId = dto.rejection_reason_id !== undefined ? dto.rejection_reason_id : null;
+    let decisionTypeId = dto.decision_type_id !== undefined ? dto.decision_type_id : null;
 
     // 0. Agar bu mavjud arizani tahrirlash bo'lsa (applicationId bor), lekin dto da ID lar kelmagan bo'lsa,
     // arizaning mavjud bog'langan ID larini bazadan olamiz (fuqaroni yo'qotib qo'ymaslik uchun):
@@ -404,6 +418,10 @@ export class ApplicationsService {
           crime_method_id: true,
           card_id: true,
           transfer_id: true,
+          source_id: true,
+          department_service_id: true,
+          rejection_reason_id: true,
+          decision_type_id: true,
         },
       });
       if (existingApp) {
@@ -428,6 +446,26 @@ export class ApplicationsService {
         }
         if (!transferId && existingApp.transfer_id) {
           transferId = existingApp.transfer_id;
+        }
+        if (!sourceId && existingApp.source_id && dto.source_id === undefined) {
+          sourceId = existingApp.source_id;
+        }
+        if (
+          !departmentServiceId &&
+          existingApp.department_service_id &&
+          dto.department_service_id === undefined
+        ) {
+          departmentServiceId = existingApp.department_service_id;
+        }
+        if (
+          !rejectionReasonId &&
+          existingApp.rejection_reason_id &&
+          dto.rejection_reason_id === undefined
+        ) {
+          rejectionReasonId = existingApp.rejection_reason_id;
+        }
+        if (!decisionTypeId && existingApp.decision_type_id && dto.decision_type_id === undefined) {
+          decisionTypeId = existingApp.decision_type_id;
         }
       }
     }
@@ -484,6 +522,9 @@ export class ApplicationsService {
         if (data.pinfl !== undefined) existing.pinfl = data.pinfl ? data.pinfl.trim() : null;
         if (data.phone_number !== undefined)
           existing.phone_number = data.phone_number ? data.phone_number.replace(/\D/g, '') : null;
+        if (data.occupation_category_id !== undefined)
+          existing.occupation_category_id = data.occupation_category_id || null;
+        if (data.occupation_id !== undefined) existing.occupation_id = data.occupation_id || null;
         await this.citizenRepo.save(existing);
       }
     } else if (!citizenId && dto.citizen_data && Object.keys(dto.citizen_data).length > 0) {
@@ -576,6 +617,10 @@ export class ApplicationsService {
             existingCitizen.phone_number = data.phone_number
               ? data.phone_number.replace(/\D/g, '')
               : null;
+          if (data.occupation_category_id !== undefined)
+            existingCitizen.occupation_category_id = data.occupation_category_id || null;
+          if (data.occupation_id !== undefined)
+            existingCitizen.occupation_id = data.occupation_id || null;
           await this.citizenRepo.save(existingCitizen);
           citizenId = existingCitizen.id;
         } else {
@@ -591,6 +636,8 @@ export class ApplicationsService {
             gender: (data.gender as 'male' | 'female') || null,
             district_id: citDistrictId,
             mahalla_id: citMahallaId,
+            occupation_category_id: data.occupation_category_id || null,
+            occupation_id: data.occupation_id || null,
           });
           const saved = await this.citizenRepo.save(newCitizen);
           citizenId = saved.id;
@@ -849,10 +896,22 @@ export class ApplicationsService {
       transfer_id: transferId,
       status_id: statusId,
       status: statusCode,
+      source_id: sourceId,
+      department_service_id: departmentServiceId,
+      rejection_reason_id: rejectionReasonId,
+      decision_type_id: decisionTypeId,
     };
   }
 
-  async create(dto: CreateApplicationDto): Promise<Application> {
+  async create(dto: CreateApplicationDto, currentUser?: JwtAccessPayload): Promise<Application> {
+    if (currentUser) {
+      if (currentUser.role === Role.BOSS) {
+        throw new ForbiddenException(
+          "Rahbar (Boss) hisobi faqat ma'lumotlarni ko'rish (read-only) rejimida ishlaydi",
+        );
+      }
+    }
+
     const {
       custom_fields,
       date,
@@ -869,9 +928,31 @@ export class ApplicationsService {
 
     const resolved = await this.resolvePrimaryModels(dto);
 
+    // Hududiy xodim (DISTRICT_OFFICER) o'ziga biriktirilgan tuman bo'yicha tekshirish
+    let creatorUserId: string | null = null;
+    if (currentUser) {
+      const user = await this.userRepo.findOne({
+        where: { auth_id: currentUser.sub },
+        relations: { assigned_districts: true },
+      });
+      creatorUserId = user?.id || null;
+
+      if (currentUser.role === Role.DISTRICT_OFFICER) {
+        const assignedDistrictIds = user?.assigned_districts?.map((d) => d.id) || [];
+        const targetDistrictId = resolved.district_id || dto.district_id;
+        if (targetDistrictId && !assignedDistrictIds.includes(targetDistrictId)) {
+          throw new ForbiddenException(
+            "Siz faqat o'zingizga biriktirilgan tuman(lar) uchun ariza yarata olasiz",
+          );
+        }
+      }
+    }
+
     const application = this.applicationRepo.create({
       ...applicationData,
       ...resolved,
+      created_by_id: creatorUserId,
+      is_deleted: false,
       application_number: appNumber,
       date: date ? new Date(date) : new Date(),
     });
@@ -910,6 +991,7 @@ export class ApplicationsService {
     limitParam = 10,
     searchParam?: string,
     statusParam?: string,
+    currentUser?: JwtAccessPayload,
   ): Promise<PaginatedResult<Application>> {
     let page = 1;
     let limit = 10;
@@ -955,7 +1037,23 @@ export class ApplicationsService {
       .leftJoin('app.application_status', 'application_status')
       .leftJoin('app.citizen', 'citizen')
       .leftJoin('app.district', 'district')
-      .leftJoin('app.crime', 'crime');
+      .leftJoin('app.crime', 'crime')
+      .where('app.is_deleted = false');
+
+    if (currentUser && currentUser.role === Role.DISTRICT_OFFICER) {
+      const user = await this.userRepo.findOne({
+        where: { auth_id: currentUser.sub },
+        relations: { assigned_districts: true },
+      });
+      const assignedDistrictIds = user?.assigned_districts?.map((d) => d.id) || [];
+      if (assignedDistrictIds.length > 0) {
+        qb.andWhere('app.district_id IN (:...userDistricts)', {
+          userDistricts: assignedDistrictIds,
+        });
+      } else {
+        qb.andWhere('1 = 0');
+      }
+    }
 
     if (search && search.trim()) {
       const q = `%${search.trim()}%`;
@@ -1031,7 +1129,17 @@ export class ApplicationsService {
     const relations = {
       application_status: true,
       documents: true,
-      citizen: { district: true, mahalla: true },
+      source: true,
+      department_service: true,
+      rejection_reason: true,
+      decision_type: true,
+      created_by: true,
+      citizen: {
+        district: true,
+        mahalla: true,
+        occupation_category: true,
+        occupation: true,
+      },
       district: true,
       crime: true,
       crime_method: true,
@@ -1047,7 +1155,12 @@ export class ApplicationsService {
         },
       },
       custom_fields: {
-        citizen: { district: true, mahalla: true },
+        citizen: {
+          district: true,
+          mahalla: true,
+          occupation_category: true,
+          occupation: true,
+        },
         card: { bank: true, citizen: true },
         crime: true,
         district: true,
@@ -2190,7 +2303,17 @@ export class ApplicationsService {
       relations: {
         application_status: true,
         documents: true,
-        citizen: { district: true, mahalla: true },
+        source: true,
+        department_service: true,
+        rejection_reason: true,
+        decision_type: true,
+        created_by: true,
+        citizen: {
+          district: true,
+          mahalla: true,
+          occupation_category: true,
+          occupation: true,
+        },
         district: true,
         crime: true,
         crime_method: true,
@@ -2206,7 +2329,12 @@ export class ApplicationsService {
           },
         },
         custom_fields: {
-          citizen: { district: true, mahalla: true },
+          citizen: {
+            district: true,
+            mahalla: true,
+            occupation_category: true,
+            occupation: true,
+          },
           card: { bank: true, citizen: true },
           crime: true,
           district: true,
@@ -2226,8 +2354,33 @@ export class ApplicationsService {
     return application;
   }
 
-  async update(id: string, dto: UpdateApplicationDto): Promise<Application> {
+  async update(
+    id: string,
+    dto: UpdateApplicationDto,
+    currentUser?: JwtAccessPayload,
+  ): Promise<Application> {
     const application = await this.findOne(id);
+
+    if (currentUser) {
+      if (currentUser.role === Role.BOSS) {
+        throw new ForbiddenException(
+          "Rahbar (Boss) hisobi faqat ma'lumotlarni ko'rish (read-only) rejimida ishlaydi",
+        );
+      }
+      if (currentUser.role === Role.DISTRICT_OFFICER) {
+        const user = await this.userRepo.findOne({
+          where: { auth_id: currentUser.sub },
+          relations: { assigned_districts: true },
+        });
+        const assignedDistrictIds = user?.assigned_districts?.map((d) => d.id) || [];
+        if (application.district_id && !assignedDistrictIds.includes(application.district_id)) {
+          throw new ForbiddenException(
+            "Siz faqat o'zingizga biriktirilgan tuman(lar) arizalarini tahrirlashingiz mumkin",
+          );
+        }
+      }
+    }
+
     const {
       custom_fields,
       date,
@@ -2249,6 +2402,10 @@ export class ApplicationsService {
     delete (application as unknown as Record<string, unknown>).card;
     delete (application as unknown as Record<string, unknown>).transfer;
     delete (application as unknown as Record<string, unknown>).application_status;
+    delete (application as unknown as Record<string, unknown>).source;
+    delete (application as unknown as Record<string, unknown>).department_service;
+    delete (application as unknown as Record<string, unknown>).rejection_reason;
+    delete (application as unknown as Record<string, unknown>).decision_type;
 
     Object.assign(application, applicationData, resolved);
     if (applicationData.application_number !== undefined) {
@@ -2273,9 +2430,33 @@ export class ApplicationsService {
     return this.findOne(id);
   }
 
-  async remove(id: string): Promise<{ success: boolean; message: string }> {
+  async remove(
+    id: string,
+    currentUser?: JwtAccessPayload,
+  ): Promise<{ success: boolean; message: string }> {
     const application = await this.findOne(id);
-    await this.applicationRepo.remove(application);
+
+    if (currentUser) {
+      if (currentUser.role === Role.BOSS) {
+        throw new ForbiddenException(
+          "Rahbar (Boss) hisobi faqat ma'lumotlarni ko'rish (read-only) rejimida ishlaydi",
+        );
+      }
+
+      if (currentUser.role !== Role.SUPER_ADMIN && currentUser.role !== Role.ADMIN) {
+        const user = await this.userRepo.findOne({ where: { auth_id: currentUser.sub } });
+        const currentUserId = user?.id;
+        if (application.created_by_id && application.created_by_id !== currentUserId) {
+          throw new ForbiddenException("Faqat o'zingiz yaratgan arizani o'chira olasiz");
+        }
+        application.is_deleted = true;
+        await this.applicationRepo.save(application);
+        return { success: true, message: "Ariza arxivlandi (o'chirildi)" };
+      }
+    }
+
+    application.is_deleted = true;
+    await this.applicationRepo.save(application);
     return { success: true, message: "Ariza muvaffaqiyatli o'chirildi" };
   }
 
