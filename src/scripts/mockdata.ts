@@ -494,7 +494,7 @@ async function cleanMockData(
       await manager.query(
         `DELETE FROM phones p
          WHERE p.id = ANY($1::uuid[])
-           AND NOT EXISTS (SELECT 1 FROM entity_application_links l WHERE l.entity_type = 'PHONE' AND l.entity_id = p.id)`,
+           AND NOT EXISTS (SELECT 1 FROM entity_application_links l WHERE l.phone_id = p.id)`,
         [phoneIds],
       );
     }
@@ -502,7 +502,7 @@ async function cleanMockData(
       await manager.query(
         `DELETE FROM digital_identifiers d
          WHERE d.id = ANY($1::uuid[])
-           AND NOT EXISTS (SELECT 1 FROM entity_application_links l WHERE l.entity_type = 'IDENTIFIER' AND l.entity_id = d.id)`,
+           AND NOT EXISTS (SELECT 1 FROM entity_application_links l WHERE l.identifier_id = d.id)`,
         [identIds],
       );
     }
