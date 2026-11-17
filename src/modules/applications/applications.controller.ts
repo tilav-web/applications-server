@@ -17,6 +17,7 @@ import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
 import type { JwtAccessPayload } from '../../common/types/jwt-payload.interface';
 import { ApplicationsService } from './applications.service';
 import { CreateApplicationDto } from './dto/create-application.dto';
+import { ExportCyberControlDto } from './dto/export-cybercontrol.dto';
 import { UpdateApplicationDto } from './dto/update-application.dto';
 import { APPLICATION_MASTER_TEMPLATE } from './schemas/default-application-template.schema';
 
@@ -101,6 +102,15 @@ export class ApplicationsController {
     return this.applicationsService.getRelations(id, currentUser);
   }
 
+  @Post('export/cybercontrol-template')
+  async exportCyberControlTemplate(
+    @Body() dto: ExportCyberControlDto,
+    @Res() res: Response,
+    @CurrentUser() currentUser?: JwtAccessPayload,
+  ) {
+    return this.applicationsService.exportCyberControlTemplate(dto.ids, res, currentUser);
+  }
+
   @Get('export/excel')
   async exportExcel(
     @Res() res: Response,
@@ -119,6 +129,7 @@ export class ApplicationsController {
     @Query('date_from') date_from?: string,
     @Query('date_to') date_to?: string,
     @Query('relations_filter') relations_filter?: string,
+    @CurrentUser() currentUser?: JwtAccessPayload,
   ) {
     return this.applicationsService.exportToExcel(
       {
@@ -139,6 +150,7 @@ export class ApplicationsController {
         relations_filter,
       },
       res,
+      currentUser,
     );
   }
 

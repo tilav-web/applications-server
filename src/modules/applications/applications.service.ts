@@ -20,6 +20,7 @@ import { District } from './districts/district.entity';
 import type { CreateApplicationDto } from './dto/create-application.dto';
 import type { UpdateApplicationDto } from './dto/update-application.dto';
 import { ApplicationsExcelService } from './export/applications-excel.service';
+import { CyberControlShablonExcelService } from './export/cybercontrol-shablon-excel.service';
 import { Mahalla } from './mahallas/mahalla.entity';
 import { ApplicationStatus as ApplicationStatusEntity } from './statuses/application-status.entity';
 import { Bank } from './transfers/banks/bank.entity';
@@ -58,6 +59,7 @@ export class ApplicationsService {
     @InjectRepository(User)
     private readonly userRepo: Repository<User>,
     private readonly excelService: ApplicationsExcelService,
+    private readonly cyberControlExcelService: CyberControlShablonExcelService,
     private readonly intelligenceSync: IntelligenceSyncService,
     private readonly intelligenceService: IntelligenceService,
   ) {}
@@ -1335,18 +1337,120 @@ export class ApplicationsService {
       relations_filter?: string;
     },
     res: Response,
+    currentUser?: JwtAccessPayload,
   ): Promise<void> {
-    const result = await this.findAll({
-      ...params,
-      page: 1,
-      limit: 10000,
-    });
+    const result = await this.findAll(
+      {
+        ...params,
+        page: 1,
+        limit: 10000,
+      },
+      10000,
+      undefined,
+      undefined,
+      currentUser,
+    );
 
     const workbook = await this.excelService.generateWorkbook(result.items);
 
     const now = new Date();
     const dateStr = now.toISOString().slice(0, 10);
     const fileName = `Arizalar_Hisoboti_${dateStr}.xlsx`;
+
+    res.setHeader(
+      'Content-Type',
+      'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+    );
+    res.setHeader('Content-Disposition', `attachment; filename="${fileName}"`);
+
+    await workbook.xlsx.write(res);
+    res.end();
+  }
+
+  /**
+   * Tanlangan murojaatlarni CyberControl tizimi import shablonida (murojaat_shablon.xlsx) yuklab olish
+   */
+  async exportCyberControlTemplate(
+    ids: string[],
+    res: Response,
+    currentUser?: JwtAccessPayload,
+  ): Promise<void> {
+    const uniqueIds = Array.from(new Set(ids.filter((id) => Boolean(id && id.trim()))));
+    if (uniqueIds.length === 0) {
+      throw new NotFoundException('Eksport uchun kamida bitta murojaat tanlanishi shart');
+    }
+
+    let allowedDistrictIds: string[] | null = null;
+    if (currentUser && currentUser.role === Role.DISTRICT_OFFICER) {
+      const user = await this.userRepo.findOne({
+        where: { auth_id: currentUser.sub },
+        relations: { assigned_districts: true },
+      });
+      allowedDistrictIds = user?.assigned_districts?.map((d) => d.id) || [];
+    }
+
+    const apps = await this.applicationRepo.find({
+      where: {
+        id: In(uniqueIds),
+        is_deleted: false,
+      },
+      relations: {
+        citizen: {
+          district: true,
+          mahalla: true,
+          occupation_category: true,
+          occupation: true,
+        },
+        district: true,
+        crime: true,
+        crime_method: true,
+        transfer: true,
+        custom_fields: {
+          citizen: {
+            district: true,
+            mahalla: true,
+            occupation_category: true,
+            occupation: true,
+          },
+          transfer: true,
+        },
+      },
+    });
+
+    const filteredApps =
+      allowedDistrictIds !== null
+        ? apps.filter((a) => a.district_id && allowedDistrictIds.includes(a.district_id))
+        : apps;
+
+    if (filteredApps.length === 0) {
+      throw new ForbiddenException(
+        'Tanlangan murojaatlarni eksport qilish uchun ruxsat mavjud emas',
+      );
+    }
+
+    // Foydalanuvchi tanlagan tartibni saqlaymiz
+    filteredApps.sort((a, b) => uniqueIds.indexOf(a.id) - uniqueIds.indexOf(b.id));
+
+    // Qo'shimcha application_id orqali bog'langan transferlarni ham yig'amiz
+    const appIds = filteredApps.map((a) => a.id);
+    const linkedTransfers = await this.transferRepo.find({
+      where: { application_id: In(appIds) },
+    });
+    const extraTransfersMap = new Map<string, Transfer[]>();
+    for (const tr of linkedTransfers) {
+      if (!tr.application_id) continue;
+      const list = extraTransfersMap.get(tr.application_id) ?? [];
+      list.push(tr);
+      extraTransfersMap.set(tr.application_id, list);
+    }
+
+    const workbook = await this.cyberControlExcelService.generateWorkbook(
+      filteredApps,
+      extraTransfersMap,
+    );
+
+    const dateStr = new Date().toISOString().slice(0, 10);
+    const fileName = `murojaat_shablon_${dateStr}.xlsx`;
 
     res.setHeader(
       'Content-Type',

@@ -22,6 +22,7 @@ import { DistrictsModule } from './districts/districts.module';
 import { ApplicationDocument } from './documents/application-document.entity';
 import { DocumentsModule } from './documents/documents.module';
 import { ApplicationsExcelService } from './export/applications-excel.service';
+import { CyberControlShablonExcelService } from './export/cybercontrol-shablon-excel.service';
 import { Mahalla } from './mahallas/mahalla.entity';
 import { MahallasModule } from './mahallas/mahallas.module';
 import { Occupation } from './occupations/occupation.entity';
@@ -93,10 +94,16 @@ import { TransfersModule } from './transfers/transfers.module';
     DecisionTypesModule,
   ],
   controllers: [ApplicationsController, ApplicationsReportsController],
-  providers: [ApplicationsService, ApplicationsExcelService, ApplicationsReportsService],
+  providers: [
+    ApplicationsService,
+    ApplicationsExcelService,
+    CyberControlShablonExcelService,
+    ApplicationsReportsService,
+  ],
   exports: [
     ApplicationsService,
     ApplicationsExcelService,
+    CyberControlShablonExcelService,
     ApplicationsReportsService,
     SuspectFieldConfigsModule,
     CrimeMethodsModule,
