@@ -13,87 +13,211 @@ import { CrimeMethod } from './crime-method.entity';
 import type { CreateCrimeMethodDto } from './dto/create-crime-method.dto';
 import type { UpdateCrimeMethodDto } from './dto/update-crime-method.dto';
 
-export const DEFAULT_CRIME_METHODS = [
+/**
+ * CyberControl (murojaat_shablon.xlsx -> Royxatlar D1:D28 va ID-lar) bilan 1-ga-1 mos 28 ta usul
+ */
+export const DEFAULT_CRIME_METHODS: Array<{
+  code: string;
+  name: string;
+  group_name: string;
+  sort_order: number;
+}> = [
   {
-    name: 'Сохта ҳавола/зарарли дастур орқали карта ёки қурилма бошқарувини қўлга киритиш орқали',
-    group_name: 'Фишинг ва қурилма/карта бошқаруви',
+    code: '1',
+    name: "Soxta havola/zararli dastur orqali karta yoki qurilma boshqaruvini qo'lga kiritish",
+    group_name: 'Fishing va karta/qurilma boshqaruvi',
     sort_order: 1,
   },
   {
-    name: 'Сохта қўнғироқлар орқали алдаб, карта бошқарувини қўлга киритиш орқали',
-    group_name: 'Фишинг ва қурилма/карта бошқаруви',
+    code: '2',
+    name: "Soxta qo'ng'iroqlar orqali aldab, karta boshqaruvini qo'lga kiritish",
+    group_name: 'Fishing va karta/qurilma boshqaruvi',
     sort_order: 2,
   },
   {
-    name: 'Ижтимоий тармоқларда ёки онлайн савдо платформаларида “сотувчи” ёки “харидор” сифатида алдаш орқали',
-    group_name: 'Онлайн савдо, хизмат ва бандлик',
+    code: '14',
+    name: "Plastik kartasini yo'qotib qo'yishi oqibatida",
+    group_name: 'Fishing va karta/qurilma boshqaruvi',
     sort_order: 3,
   },
   {
-    name: 'Ишга, ўқишга киритиш, юбориш алдовлари орқали',
-    group_name: 'Онлайн савдо, хизмат ва бандлик',
+    code: '20',
+    name: "Plastik kartasini yo'qotib qo'yishi oqibatida (bankomat)",
+    group_name: 'Fishing va karta/qurilma boshqaruvi',
     sort_order: 4,
   },
   {
-    name: 'Сохта трейдинг ёки онлайн биржада пул кўпайтириш учун ўтказиш',
-    group_name: 'Трейдинг ва инвестиция алдовлари',
+    code: '3',
+    name: 'Ijtimoiy tarmoqlarda yoki onlayn savdo platformalarida sotuvchi yoki xaridor sifatida aldash',
+    group_name: "Onlayn savdo, e'lonlar va akkauntlar",
     sort_order: 5,
   },
   {
-    name: 'Турли соҳаларга инвестиция киритиш орқали, пулини кўпайтириб бериш алдовлари орқали',
-    group_name: 'Трейдинг ва инвестиция алдовлари',
+    code: '12',
+    name: 'PUBG va boshqa internet akkauntlari orqali',
+    group_name: "Onlayn savdo, e'lonlar va akkauntlar",
     sort_order: 6,
   },
   {
-    name: 'Онлайн микро қарз ва кредит расмийлаштириш орқали',
-    group_name: 'Кредит, лимит ва банк тизимлари',
+    code: '17',
+    name: "Ijtimoiy tarmoqlar (telegram, instagram) va o'yin akkauntini sotib olish uchun",
+    group_name: "Onlayn savdo, e'lonlar va akkauntlar",
     sort_order: 7,
   },
   {
-    name: 'Банклар ва савдо платформалари (Узум ва б) лимит учун ажратилган пулларини алдаб, ўзлаштириш',
-    group_name: 'Кредит, лимит ва банк тизимлари',
+    code: '10',
+    name: 'Telegram akkauntlari orqali',
+    group_name: "Onlayn savdo, e'lonlar va akkauntlar",
     sort_order: 8,
   },
   {
-    name: 'Банклар ва тўлов ташкилотлари техник заифликлари ёки уларга боғлиқ бошқа сабаблар бн',
-    group_name: 'Кредит, лимит ва банк тизимлари',
+    code: '15',
+    name: 'Telefon savdosi orqali',
+    group_name: "Onlayn savdo, e'lonlar va akkauntlar",
     sort_order: 9,
   },
   {
-    name: 'Банклар ва тўлов ташкилот ходимлари тизимга кириб, ўз мижозлари пулини ўзлаштриши',
-    group_name: 'Кредит, лимит ва банк тизимлари',
+    code: '13',
+    name: "Ijaraga berish e'lonlari orqali",
+    group_name: "Onlayn savdo, e'lonlar va akkauntlar",
     sort_order: 10,
   },
   {
-    name: 'КРОСПАЙ',
-    group_name: 'Кредит, лимит ва банк тизимлари',
+    code: '22',
+    name: "Ijaraga xonadon topib berishni va'da qilib",
+    group_name: "Onlayn savdo, e'lonlar va akkauntlar",
     sort_order: 11,
   },
   {
-    name: 'Танишлари номидан соҳта аккаунт ёрдамида пўл сўраш орқали',
-    group_name: 'Ижтимоий инжиниринг ва алдов',
+    code: '18',
+    name: "Chet elga ishga yoki o'qishga kiritishni va'da qilib",
+    group_name: "Onlayn savdo, e'lonlar va akkauntlar",
     sort_order: 12,
   },
   {
-    name: 'Мерос ёки пул, ютуқ юборишни ваъда қилиш ва хайрияларга пул сўраш шаклида',
-    group_name: 'Ижтимоий инжиниринг ва алдов',
+    code: '23',
+    name: 'Haydovchilik guvohnomasi olib beraman deb',
+    group_name: "Onlayn savdo, e'lonlar va akkauntlar",
     sort_order: 13,
   },
   {
-    name: 'КОМПЕНСАЦИЯ ОЛИШ УЧУН ПУЛ СЎРАШ',
-    group_name: 'Ижтимоий инжиниринг ва алдов',
+    code: '4',
+    name: "Soxta treiding yoki onlayn birjada pul ko'paytirish uchun o'tkazish",
+    group_name: 'Treyding, investitsiya va yutuq aldovlari',
     sort_order: 14,
   },
   {
-    name: 'Сунъий интеллект оркали расм, тасвир еки овозни сохталаштириб, фирибгарлик',
-    group_name: 'Ижтимоий инжиниринг ва алдов',
+    code: '5',
+    name: "Turli sohalarga investitsiya kiritish orqali pul ko'paytirib berish aldovlari",
+    group_name: 'Treyding, investitsiya va yutuq aldovlari',
     sort_order: 15,
   },
   {
-    name: 'Бошқа',
-    group_name: 'Бошқа',
+    code: '19',
+    name: 'Aksiya yoki yutuq chiqqanligi bilan ishontirib',
+    group_name: 'Treyding, investitsiya va yutuq aldovlari',
     sort_order: 16,
   },
+  {
+    code: '6',
+    name: 'Onlayn mikro qarz va kredit rasmiylashtirish orqali',
+    group_name: "Kredit, to'lov va bank tizimlari",
+    sort_order: 17,
+  },
+  {
+    code: '25',
+    name: "Kredit, Kompensatsiya, moddiy yordam va boshqa to'lovlar chiqarib beraman deb aldash",
+    group_name: "Kredit, to'lov va bank tizimlari",
+    sort_order: 18,
+  },
+  {
+    code: '26',
+    name: "Kafil bo'lganligi yoki o'zining krediti uchun echib olgan",
+    group_name: "Kredit, to'lov va bank tizimlari",
+    sort_order: 19,
+  },
+  {
+    code: '7',
+    name: "Banklar va to'lov tashkilot xodimlari tizimga kirib, o'z mijozlari pulini o'zlashtirishi",
+    group_name: "Kredit, to'lov va bank tizimlari",
+    sort_order: 20,
+  },
+  {
+    code: '8',
+    name: "Banklar va to'lov tashkilotlari texnik zaifliklar yoki ularga bog'liq boshqa sabablar",
+    group_name: "Kredit, to'lov va bank tizimlari",
+    sort_order: 21,
+  },
+  {
+    code: '24',
+    name: "Telegram akkauntini boshqaruvini qo'lga kiritib tanishlaridan qarz so'rash",
+    group_name: 'Ijtimoiy injiniring va soxta murojaatlar',
+    sort_order: 22,
+  },
+  {
+    code: '16',
+    name: "O'zini korxona/tashkilot rahbari nomidan xodimlarga (feyk akk) topshiriq berish",
+    group_name: 'Ijtimoiy injiniring va soxta murojaatlar',
+    sort_order: 23,
+  },
+  {
+    code: '11',
+    name: "HMQO xodimlari nomidan yozish yoki qo'ng'iroq qilish",
+    group_name: 'Ijtimoiy injiniring va soxta murojaatlar',
+    sort_order: 24,
+  },
+  {
+    code: '9',
+    name: "Meros yoki pul yuborishni va'da qilish va xayriyalarga pul so'rash",
+    group_name: 'Ijtimoiy injiniring va soxta murojaatlar',
+    sort_order: 25,
+  },
+  {
+    code: '21',
+    name: 'Ijtimoiy tarmoqlardagi haqorat va tuhmat qilish holatlari (139/140...)',
+    group_name: 'Boshqa holatlar',
+    sort_order: 26,
+  },
+  {
+    code: '27',
+    name: "Noma'lum sharoit (aniqlanmoqda)",
+    group_name: 'Boshqa holatlar',
+    sort_order: 27,
+  },
+  {
+    code: '28',
+    name: "Boshqa yo'llar orqali",
+    group_name: 'Boshqa holatlar',
+    sort_order: 28,
+  },
+];
+
+/**
+ * Eski kirilldagi 16 ta standart usulni yangi 1-ga-1 usul kodiga ko'chirish xaritasi (dublikat qolmasligi uchun)
+ */
+const LEGACY_CYRILLIC_TO_CODE: Array<[string, string]> = [
+  ['Сохта ҳавола/зарарли дастур орқали карта ёки қурилма бошқарувини қўлга киритиш орқали', '1'],
+  ['Сохта қўнғироқлар орқали алдаб, карта бошқарувини қўлга киритиш орқали', '2'],
+  [
+    'Ижтимоий тармоқларда ёки онлайн савдо платформаларида “сотувчи” ёки “харидор” сифатида алдаш орқали',
+    '3',
+  ],
+  ['Ишга, ўқишга киритиш, юбориш алдовлари орқали', '18'],
+  ['Сохта трейдинг ёки онлайн биржада пул кўпайтириш учун ўтказиш', '4'],
+  ['Турли соҳаларга инвестиция киритиш орқали, пулини кўпайтириб бериш алдовлари орқали', '5'],
+  ['Онлайн микро қарз ва кредит расмийлаштириш орқали', '6'],
+  [
+    'Банклар ва савдо платформалари (Узум ва б) лимит учун ажратилган пулларини алдаб, ўзлаштириш',
+    '3',
+  ],
+  ['Банклар ва тўлов ташкилотлари техник заифликлари ёки уларга боғлиқ бошқа сабаблар бн', '8'],
+  ['Банклар ва тўлов ташкилот ходимлари тизимга кириб, ўз мижозлари пулини ўзлаштриши', '7'],
+  ['КРОСПАЙ', '28'],
+  ['Танишлари номидан соҳта аккаунт ёрдамида пўл сўраш орқали', '24'],
+  ['Мерос ёки пул, ютуқ юборишни ваъда қилиш ва хайрияларга пул сўраш шаклида', '9'],
+  ['КОМПЕНСАЦИЯ ОЛИШ УЧУН ПУЛ СЎРАШ', '25'],
+  ['Сунъий интеллект оркали расм, тасвир еки овозни сохталаштириб, фирибгарлик', '28'],
+  ['Бошқа', '28'],
 ];
 
 @Injectable()
@@ -107,24 +231,64 @@ export class CrimeMethodsService implements OnApplicationBootstrap {
 
   async onApplicationBootstrap(): Promise<void> {
     try {
-      const count = await this.repo.count();
-      if (count === 0) {
-        this.logger.log('crime_methods bo‘sh, standart 16 ta jinoyat usuli kiritilmoqda...');
-        for (const item of DEFAULT_CRIME_METHODS) {
-          await this.repo.save(this.repo.create(item));
-        }
-        this.logger.log('Standart 16 ta jinoyat sodir etish usuli muvaffaqiyatli kiritildi.');
-      } else {
-        // Agar biror standart usul bo'lmasa, uni qo'shib qo'yamiz
-        for (const item of DEFAULT_CRIME_METHODS) {
-          const exists = await this.repo.findOne({ where: { name: item.name } });
-          if (!exists) {
-            await this.repo.save(this.repo.create(item));
+      const codeToEntity = new Map<string, CrimeMethod>();
+
+      for (const item of DEFAULT_CRIME_METHODS) {
+        let entity = await this.repo.findOne({ where: { name: ILike(item.name) } });
+        if (!entity) {
+          entity = await this.repo.save(
+            this.repo.create({
+              code: item.code,
+              name: item.name,
+              group_name: item.group_name,
+              sort_order: item.sort_order,
+              is_active: true,
+            }),
+          );
+        } else {
+          let changed = false;
+          if (entity.name !== item.name) {
+            entity.name = item.name;
+            changed = true;
+          }
+          if (entity.group_name !== item.group_name) {
+            entity.group_name = item.group_name;
+            changed = true;
+          }
+          if (entity.code !== item.code) {
+            entity.code = item.code;
+            changed = true;
+          }
+          if (entity.sort_order !== item.sort_order) {
+            entity.sort_order = item.sort_order;
+            changed = true;
+          }
+          if (changed) {
+            entity = await this.repo.save(entity);
           }
         }
+        codeToEntity.set(item.code, entity);
       }
-    } catch (e: any) {
-      this.logger.warn(`crime_methods bootstrap xatosi: ${e.message}`);
+
+      // Eski kirilldagi standart yozuvlarni yangi 1-ga-1 yozuvlarga biriktirib tozalaymiz
+      for (const [legacyName, targetCode] of LEGACY_CYRILLIC_TO_CODE) {
+        const legacy = await this.repo.findOne({ where: { name: legacyName } });
+        const target = codeToEntity.get(targetCode);
+        if (legacy && target && legacy.id !== target.id) {
+          await this.repo.manager.query(
+            'UPDATE applications SET crime_method_id = $1 WHERE crime_method_id = $2',
+            [target.id, legacy.id],
+          );
+          await this.repo.remove(legacy);
+        }
+      }
+
+      this.logger.log(
+        `Jinoyat sodir etish usullari CyberControl shabloni (${DEFAULT_CRIME_METHODS.length} ta) bilan sinxronlandi.`,
+      );
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : String(err);
+      this.logger.warn(`crime_methods bootstrap xatosi: ${msg}`);
     }
   }
 
@@ -178,7 +342,7 @@ export class CrimeMethodsService implements OnApplicationBootstrap {
 
   async create(dto: CreateCrimeMethodDto): Promise<CrimeMethod> {
     const cleanName = dto.name.trim();
-    const existing = await this.repo.findOne({ where: { name: cleanName } });
+    const existing = await this.repo.findOne({ where: { name: ILike(cleanName) } });
     if (existing) {
       throw new BadRequestException(`"${cleanName}" usuli allaqachon mavjud`);
     }
@@ -186,7 +350,7 @@ export class CrimeMethodsService implements OnApplicationBootstrap {
     const entity = this.repo.create({
       ...dto,
       name: cleanName,
-      group_name: (dto.group_name || 'Бошқа').trim(),
+      group_name: (dto.group_name || 'Boshqa holatlar').trim(),
       sort_order: dto.sort_order ?? 0,
       is_active: dto.is_active ?? true,
     });
@@ -200,7 +364,7 @@ export class CrimeMethodsService implements OnApplicationBootstrap {
     if (dto.name) {
       const cleanName = dto.name.trim();
       if (cleanName !== item.name) {
-        const existing = await this.repo.findOne({ where: { name: cleanName } });
+        const existing = await this.repo.findOne({ where: { name: ILike(cleanName) } });
         if (existing && existing.id !== id) {
           throw new BadRequestException(`"${cleanName}" usuli allaqachon mavjud`);
         }

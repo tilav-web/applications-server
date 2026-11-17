@@ -205,12 +205,9 @@ export class OccupationsService implements OnModuleInit {
   }
 
   // ==========================================================================
-  // SEED DEFAULT OCCUPATIONS (from User Images)
+  // SEED DEFAULT OCCUPATIONS (CyberControl murojaat_shablon.xlsx Royxatlar E1:E25 bilan 1-ga-1 sinxron)
   // ==========================================================================
   async seedDefaults(): Promise<void> {
-    const count = await this.categoryRepo.count();
-    if (count > 0) return;
-
     const initialData: { category: string; items: string[] }[] = [
       {
         category: 'Xususiy sektor tadbirkorlar',
@@ -224,27 +221,35 @@ export class OccupationsService implements OnModuleInit {
       {
         category: "To'lov tashkilotlari",
         items: [
-          'Bank xodimlari',
-          'To‘lov tizimi (Click/Payme/Uzum) mutaxassislari',
-          'Moliya va kredit tashkilotlari xodimlari',
+          'Banklar (Ipoteka, Asaka, Kapital va boshqalar)',
+          "To'lov tashkilotlari (Payme, Click, Uzim, Upay va boshqalar)",
         ],
       },
       {
         category: "Ta'lim tashkilotlari",
         items: [
-          'Maktab o‘qituvchilari',
-          'Oliy ta’lim muassasalari professor-o‘qituvchilari',
-          'Maktabgacha ta’lim muassasasi xodimlari',
-          'Talabalar va o‘quvchilar',
+          "Oliy ta'lim muassasalari (Universitet, Institut)",
+          "O'rta-maxsus muassasalari (Akademik litsey, Texnikum)",
+          "O'rta ta'lim muassasalari (maktab, ixtisoslashtirilgan maktablar)",
+          "Maktabgacha ta'lim muassasalari (davlat va nodavlat bog'cha)",
+          "O'qituvchi (ta'lim sohasidagi hodimlar)",
+          'Talabalar',
+          "Maktab o'quvchilari",
         ],
       },
       {
         category: 'Tibbiyot sohasidagi hodimlar',
-        items: ['Shifokorlar', 'Hamshira va kichik tibbiy xodimlar', 'Farmatsevtlar'],
+        items: [
+          'Tibbiyot sohasidagi hodimlar',
+          'Shifokorlar',
+          'Hamshira va kichik tibbiy xodimlar',
+          'Farmatsevtlar',
+        ],
       },
       {
         category: 'Davlat korxona va tashkilotlar ishchilari',
         items: [
+          'Davlat korxona va tashkilotlar ishchilari',
           'Hokimiyat va davlat boshqaruvi xodimlari',
           'Kommunal soha xodimlari',
           'Sanoat va ishlab chiqarish davlat korxonalari xodimlari',
@@ -253,7 +258,7 @@ export class OccupationsService implements OnModuleInit {
       {
         category: 'HMQO organlari hodimlar',
         items: [
-          'IIB xodimlari',
+          'HMQO organlari hodimlar',
           'Harbiylar (Mudofaa)',
           'Favqulodda vaziyatlar xodimlari',
           'Boshqa huquq-tartibot organlari',
@@ -262,6 +267,7 @@ export class OccupationsService implements OnModuleInit {
       {
         category: "Nafaqaxo'rlar",
         items: [
+          "Nafaqaxo'rlar",
           'Yoshga doir nafaqaxo‘rlar',
           'Nogironligi bo‘lgan shaxslar',
           'Boquvchisini yo‘qotganlar',
@@ -269,17 +275,28 @@ export class OccupationsService implements OnModuleInit {
       },
       {
         category: 'Vaqtincha ishsizlar',
-        items: ['Uy bekasi', 'Vaqtincha ishsiz fuqarolar', 'Mavsumiy ishchilar'],
+        items: ['Vaqtincha ishsizlar', 'Uy bekasi', 'Mavsumiy ishchilar'],
       },
       {
         category: 'Chet el fuqarolari',
         items: [
+          'Chet el fuqarolari',
           'Sayyohlar / Chet el mehmonlari',
           'Xorijiy kompaniya vakillari',
           'Xorijiy talabalar',
         ],
       },
     ];
+
+    // Eski "IIB xodimlari" yozuvi mavjud bo'lsa, uni umumiy nomga yangilaymiz
+    const legacyIibOcc = await this.occupationRepo
+      .createQueryBuilder('o')
+      .where('LOWER(o.name) = LOWER(:name)', { name: 'IIB xodimlari' })
+      .getOne();
+    if (legacyIibOcc) {
+      legacyIibOcc.name = 'Huquq-tartibot organlari xodimlari';
+      await this.occupationRepo.save(legacyIibOcc);
+    }
 
     let order = 1;
     for (const group of initialData) {

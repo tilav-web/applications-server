@@ -183,7 +183,9 @@ export class CyberControlShablonExcelService {
       citizen?.occupation?.name || '',
       refs.kasblar,
     );
-    const kasbIzohi = citizen?.occupation?.name?.trim() || '';
+    const rawOccName = citizen?.occupation?.name?.trim() || '';
+    const kasbIzohi =
+      rawOccName && this.toAscii(rawOccName) !== this.toAscii(kasbVal) ? rawOccName : '';
 
     // 12. O'quv muassasasi & 13. Kurs
     const oquvMuassasasi = '';
@@ -515,19 +517,23 @@ export class CyberControlShablonExcelService {
   private matchOccupation(categoryName: string, occupationName: string, options: string[]): string {
     if (options.length === 0) return occupationName || categoryName || '';
 
-    const combined = this.toAscii(`${categoryName} ${occupationName}`).trim();
-    if (combined) {
-      for (const opt of options) {
-        const optAscii = this.toAscii(opt);
-        if (
-          optAscii === this.toAscii(categoryName) ||
-          optAscii === this.toAscii(occupationName) ||
-          (categoryName && optAscii.includes(this.toAscii(categoryName)))
-        ) {
-          return opt;
-        }
-      }
+    const occAscii = this.toAscii(occupationName);
+    const catAscii = this.toAscii(categoryName);
 
+    // 1. Avvalo aniq kasb turi (mutaxassisligi) Royxatlar ichida 1-ga-1 bo'lsa, aynan shuni olamiz
+    if (occAscii) {
+      const exactOcc = options.find((o) => this.toAscii(o) === occAscii);
+      if (exactOcc) return exactOcc;
+    }
+
+    // 2. Keyin kasb toifasi Royxatlar ichida 1-ga-1 bo'lsa (9 ta asosiy toifaning barchasi Royxatlar'da mavjud!)
+    if (catAscii) {
+      const exactCat = options.find((o) => this.toAscii(o) === catAscii);
+      if (exactCat) return exactCat;
+    }
+
+    const combined = `${occAscii} ${catAscii}`.trim();
+    if (combined) {
       const findOpt = (substr: string): string | undefined =>
         options.find((o) => this.toAscii(o).includes(substr));
 
