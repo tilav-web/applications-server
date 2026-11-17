@@ -965,6 +965,10 @@ export class ApplicationsService {
 
     const saved = await this.applicationRepo.save(application);
 
+    if (resolved.transfer_id) {
+      await this.transferRepo.update(resolved.transfer_id, { application_id: saved.id });
+    }
+
     // 2. Dinamik maydonlar (Custom Fields) ni saqlaymiz
     if (custom_fields && custom_fields.length > 0) {
       const fieldEntities = await this.processCustomFields(custom_fields, saved.id);
