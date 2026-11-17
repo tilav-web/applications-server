@@ -32,6 +32,26 @@ export class RegistryReportQueryDto {
 
   @IsOptional()
   @IsString()
+  applicationNumber?: string;
+
+  @IsOptional()
+  @IsString()
+  citizenName?: string;
+
+  @IsOptional()
+  @IsString()
+  cardNumber?: string;
+
+  @IsOptional()
+  @IsString()
+  phoneNumber?: string;
+
+  @IsOptional()
+  @IsString()
+  description?: string;
+
+  @IsOptional()
+  @IsString()
   districtId?: string;
 
   @IsOptional()

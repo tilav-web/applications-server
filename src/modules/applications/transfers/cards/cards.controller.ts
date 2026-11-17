@@ -33,8 +33,21 @@ export class CardsController {
     @Query('limit') limit?: number,
     @Query('search') search?: string,
     @Query('citizen_id') citizenId?: string,
+    @Query('bank_id') bankId?: string,
+    @Query('owner_state') ownerState?: string,
+    @Query('card_number') cardNumber?: string,
+    @Query('owner_name') ownerName?: string,
+    @Query('phone_number') phoneNumber?: string,
+    @Query('expire_date') expireDate?: string,
   ) {
-    return this.cardsService.findAll(Number(page) || 1, Number(limit) || 10, search, citizenId);
+    return this.cardsService.findAll(Number(page) || 1, Number(limit) || 10, search, citizenId, {
+      bankId,
+      ownerState,
+      cardNumber,
+      ownerName,
+      phoneNumber,
+      expireDate,
+    });
   }
 
   @Get('export/excel')
@@ -42,8 +55,21 @@ export class CardsController {
     @Res() res: Response,
     @Query('search') search?: string,
     @Query('citizen_id') citizenId?: string,
+    @Query('bank_id') bankId?: string,
+    @Query('owner_state') ownerState?: string,
+    @Query('card_number') cardNumber?: string,
+    @Query('owner_name') ownerName?: string,
+    @Query('phone_number') phoneNumber?: string,
+    @Query('expire_date') expireDate?: string,
   ) {
-    return this.cardsService.exportToExcel(search, citizenId, res);
+    return this.cardsService.exportToExcel(search, citizenId, res, {
+      bankId,
+      ownerState,
+      cardNumber,
+      ownerName,
+      phoneNumber,
+      expireDate,
+    });
   }
 
   @Get(':id')

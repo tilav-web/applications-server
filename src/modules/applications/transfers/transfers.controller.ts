@@ -33,13 +33,22 @@ export class TransfersController {
     @Query('limit') limit?: number,
     @Query('search') search?: string,
     @Query('application_id') applicationId?: string,
+    @Query('status') status?: string,
+    @Query('payment_provider_id') providerId?: string,
+    @Query('transaction_id') transactionId?: string,
+    @Query('sender_card_number') senderCardNumber?: string,
+    @Query('receiver_card_number') receiverCardNumber?: string,
+    @Query('transfer_date') transferDate?: string,
   ) {
-    return this.transfersService.findAll(
-      Number(page) || 1,
-      Number(limit) || 10,
-      search,
+    return this.transfersService.findAll(Number(page) || 1, Number(limit) || 10, search, {
       applicationId,
-    );
+      status,
+      providerId,
+      transactionId,
+      senderCardNumber,
+      receiverCardNumber,
+      transferDate,
+    });
   }
 
   @Get('export/excel')
@@ -47,8 +56,22 @@ export class TransfersController {
     @Res() res: Response,
     @Query('search') search?: string,
     @Query('application_id') applicationId?: string,
+    @Query('status') status?: string,
+    @Query('payment_provider_id') providerId?: string,
+    @Query('transaction_id') transactionId?: string,
+    @Query('sender_card_number') senderCardNumber?: string,
+    @Query('receiver_card_number') receiverCardNumber?: string,
+    @Query('transfer_date') transferDate?: string,
   ) {
-    return this.transfersService.exportToExcel(search, applicationId, res);
+    return this.transfersService.exportToExcel(search, res, {
+      applicationId,
+      status,
+      providerId,
+      transactionId,
+      senderCardNumber,
+      receiverCardNumber,
+      transferDate,
+    });
   }
 
   @Get(':id')

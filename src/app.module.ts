@@ -29,6 +29,10 @@ import { Transfer } from './modules/applications/transfers/transfer.entity';
 import { Auth } from './modules/auth/auth.entity';
 import { AuthModule } from './modules/auth/auth.module';
 import { FinancialFlowModule } from './modules/financial-flow/financial-flow.module';
+import { DigitalIdentifierEntity } from './modules/intelligence/entities/digital-identifier.entity';
+import { EntityApplicationLink } from './modules/intelligence/entities/entity-application-link.entity';
+import { PhoneEntity } from './modules/intelligence/entities/phone.entity';
+import { IntelligenceModule } from './modules/intelligence/intelligence.module';
 import { MinioModule } from './modules/minio/minio.module';
 import { RedisModule } from './modules/redis/redis.module';
 import { User } from './modules/users/user.entity';
@@ -73,6 +77,9 @@ import { UsersModule } from './modules/users/users.module';
           DepartmentService,
           RejectionReason,
           DecisionType,
+          PhoneEntity,
+          DigitalIdentifierEntity,
+          EntityApplicationLink,
         ],
         synchronize: config.get<string>('DB_SYNCHRONIZE', 'true') === 'true',
         autoLoadEntities: true,
@@ -96,6 +103,7 @@ import { UsersModule } from './modules/users/users.module';
     UsersModule,
     ApplicationsModule,
     FinancialFlowModule,
+    IntelligenceModule,
   ],
   controllers: [],
   providers: [

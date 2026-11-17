@@ -9,6 +9,8 @@ import {
 } from 'typeorm';
 
 import { BaseEntity } from '../../../common/database/base.entity';
+import type { DigitalIdentifierEntity } from '../../intelligence/entities/digital-identifier.entity';
+import type { PhoneEntity } from '../../intelligence/entities/phone.entity';
 import type { Application } from '../application.entity';
 import { District } from '../districts/district.entity';
 import { Mahalla } from '../mahallas/mahalla.entity';
@@ -150,6 +152,12 @@ export class Citizen extends BaseEntity {
 
   @OneToMany('Card', 'citizen')
   cards: Card[];
+
+  @OneToMany('PhoneEntity', 'citizen')
+  phones: PhoneEntity[];
+
+  @OneToMany('DigitalIdentifierEntity', 'citizen')
+  digital_identifiers: DigitalIdentifierEntity[];
 
   @BeforeInsert()
   @BeforeUpdate()

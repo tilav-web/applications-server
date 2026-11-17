@@ -662,6 +662,55 @@ export class ApplicationsReportsService {
       );
     }
 
+    if (dto.applicationNumber?.trim()) {
+      qb.andWhere('app.application_number ILIKE :regAppNum', {
+        regAppNum: `%${dto.applicationNumber.trim()}%`,
+      });
+    }
+
+    if (dto.citizenName?.trim()) {
+      qb.andWhere(
+        "CONCAT_WS(' ', citizen.last_name, citizen.first_name, citizen.middle_name) ILIKE :regCitName",
+        { regCitName: `%${dto.citizenName.trim()}%` },
+      );
+    }
+
+    if (dto.cardNumber?.trim()) {
+      const cardDigits = dto.cardNumber.replace(/\D/g, '') || dto.cardNumber.trim();
+      const regCardQ = `%${cardDigits}%`;
+      qb.andWhere(
+        `(
+          card.card_number ILIKE :regCardQ OR card.masked_number ILIKE :regCardQ
+          OR sender_card.card_number ILIKE :regCardQ OR sender_card.masked_number ILIKE :regCardQ
+          OR EXISTS (
+            SELECT 1 FROM transfers t
+            LEFT JOIN cards rc ON rc.id = t.receiver_card_id
+            WHERE (t.id = app.transfer_id OR t.application_id = app.id)
+              AND (rc.card_number ILIKE :regCardQ OR rc.masked_number ILIKE :regCardQ)
+          )
+        )`,
+        { regCardQ },
+      );
+    }
+
+    if (dto.phoneNumber?.trim()) {
+      const phoneDigits = dto.phoneNumber.replace(/\D/g, '') || dto.phoneNumber.trim();
+      const regPhoneQ = `%${phoneDigits}%`;
+      qb.andWhere(
+        `(
+          citizen.phone_number ILIKE :regPhoneQ
+          OR CAST(app.suspect_tree AS text) ILIKE :regPhoneQ
+        )`,
+        { regPhoneQ },
+      );
+    }
+
+    if (dto.description?.trim()) {
+      qb.andWhere('(app.description ILIKE :regDesc OR app.officer_notes ILIKE :regDesc)', {
+        regDesc: `%${dto.description.trim()}%`,
+      });
+    }
+
     if (dto.districtId) {
       qb.andWhere('app.district_id = :dId', { dId: dto.districtId });
     }
@@ -767,7 +816,7 @@ export class ApplicationsReportsService {
   async exportOperationalMatrixExcel(dto?: OperationalMatrixQueryDto): Promise<ExcelJS.Workbook> {
     const data = await this.getOperationalMatrix(dto);
     const workbook = new ExcelJS.Workbook();
-    workbook.creator = 'Qashqadaryo viloyati IIB';
+    workbook.creator = 'Arizalar bazasi';
     workbook.created = new Date();
 
     const sheet = workbook.addWorksheet('Тезкор_кўрсаткичлар', {
@@ -777,7 +826,7 @@ export class ApplicationsReportsService {
     // Sarlavha (Title)
     sheet.mergeCells('A1:AI1');
     const titleCell = sheet.getCell('A1');
-    titleCell.value = `ҚАШҚАДАРЁ ВИЛОЯТИ ИИБ: ${data.date} КУНИДАГИ КЕЛИБ ТУШГАН МУРОЖААТЛАР БЎЙИЧА ТЕЗКОР ҲИСОБОТИ`;
+    titleCell.value = `${data.date} КУНИДАГИ КЕЛИБ ТУШГАН МУРОЖААТЛАР БЎЙИЧА ТЕЗКОР ҲИСОБОТ`;
     titleCell.font = { name: 'Calibri', size: 13, bold: true, color: { argb: 'FF0F172A' } };
     titleCell.alignment = { horizontal: 'center', vertical: 'middle' };
     sheet.getRow(1).height = 28;
@@ -1063,7 +1112,7 @@ export class ApplicationsReportsService {
   async exportDepartmentServicesExcel(dto?: DepartmentServicesQueryDto): Promise<ExcelJS.Workbook> {
     const data = await this.getDepartmentServices(dto);
     const workbook = new ExcelJS.Workbook();
-    workbook.creator = 'Qashqadaryo viloyati IIB';
+    workbook.creator = 'Arizalar bazasi';
     workbook.created = new Date();
 
     const sheet = workbook.addWorksheet('Соҳавий_хизматлар', {
@@ -1072,7 +1121,7 @@ export class ApplicationsReportsService {
 
     sheet.mergeCells('A1:R1');
     const titleCell = sheet.getCell('A1');
-    titleCell.value = `ИИО СОҲАВИЙ ХИЗМАТЛАРИ КЎРСАТКИЧЛАРИ ҲИСОБОТИ (${data.date})`;
+    titleCell.value = `СОҲАВИЙ ХИЗМАТЛАР КЎРСАТКИЧЛАРИ ҲИСОБОТИ (${data.date})`;
     titleCell.font = { name: 'Calibri', size: 13, bold: true };
     titleCell.alignment = { horizontal: 'center', vertical: 'middle' };
     sheet.getRow(1).height = 26;
@@ -1202,7 +1251,7 @@ export class ApplicationsReportsService {
   async exportRegistryExcel(dto: RegistryReportQueryDto): Promise<ExcelJS.Workbook> {
     const data = await this.getRegistryReport({ ...dto, page: 1, limit: 10000 });
     const workbook = new ExcelJS.Workbook();
-    workbook.creator = 'Qashqadaryo viloyati IIB';
+    workbook.creator = 'Arizalar bazasi';
     workbook.created = new Date();
 
     const sheet = workbook.addWorksheet('Мурожаатлар_реестри', {

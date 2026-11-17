@@ -49,7 +49,18 @@ export class UsersService {
     return this.userRepository.save(user);
   }
 
-  async findAll(page = 1, limit = 10, search?: string): Promise<PaginatedResult<UserView>> {
+  async findAll(
+    page = 1,
+    limit = 10,
+    search?: string,
+    filters?: {
+      role?: string;
+      fullName?: string;
+      username?: string;
+      phoneNumber?: string;
+      districtId?: string;
+    },
+  ): Promise<PaginatedResult<UserView>> {
     const take = limit;
     const skip = (page - 1) * limit;
 
@@ -60,6 +71,28 @@ export class UsersService {
       .orderBy('auth.created_at', 'DESC')
       .skip(skip)
       .take(take);
+
+    if (filters?.role?.trim()) {
+      query.andWhere('auth.role = :role', { role: filters.role.trim() });
+    }
+    if (filters?.fullName?.trim()) {
+      query.andWhere("CONCAT_WS(' ', user.last_name, user.first_name) ILIKE :fullName", {
+        fullName: `%${filters.fullName.trim()}%`,
+      });
+    }
+    if (filters?.username?.trim()) {
+      const cleanU = filters.username.trim().replace(/^@/, '');
+      query.andWhere('auth.username ILIKE :uName', { uName: `%${cleanU}%` });
+    }
+    if (filters?.phoneNumber?.trim()) {
+      const cleanP = filters.phoneNumber.replace(/\D/g, '') || filters.phoneNumber.trim();
+      query.andWhere('user.phone_number ILIKE :uPhone', { uPhone: `%${cleanP}%` });
+    }
+    if (filters?.districtId?.trim()) {
+      query.andWhere('districts.id = :uDistrictId', {
+        uDistrictId: filters.districtId.trim(),
+      });
+    }
 
     if (search && search.trim()) {
       const q = `%${search.trim()}%`;

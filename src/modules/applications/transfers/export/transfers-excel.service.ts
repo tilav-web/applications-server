@@ -7,7 +7,7 @@ import { Transfer } from '../transfer.entity';
 export class TransfersExcelService {
   generateWorkbook(transfers: Transfer[]): Promise<ExcelJS.Workbook> {
     const workbook = new ExcelJS.Workbook();
-    workbook.creator = 'IIV Xavfsiz Shaxar / Qashqadaryo viloyati IIB';
+    workbook.creator = 'Arizalar bazasi';
     workbook.created = new Date();
     workbook.modified = new Date();
 

@@ -32,24 +32,30 @@ export class CitizensController {
     @Query('page') page?: number,
     @Query('limit') limit?: number,
     @Query('search') search?: string,
+    @Query('full_name') fullName?: string,
     @Query('first_name') firstName?: string,
     @Query('last_name') lastName?: string,
     @Query('middle_name') middleName?: string,
     @Query('passport') passport?: string,
     @Query('phone_number') phoneNumber?: string,
+    @Query('card_number') cardNumber?: string,
     @Query('pinfl') pinfl?: string,
     @Query('gender') gender?: string,
     @Query('birth_date') birthDate?: string,
+    @Query('district_id') districtId?: string,
   ) {
     return this.citizensService.findAll(Number(page) || 1, Number(limit) || 10, search, {
+      fullName,
       firstName,
       lastName,
       middleName,
       passport,
       phoneNumber,
+      cardNumber,
       pinfl,
       gender,
       birthDate,
+      districtId,
     });
   }
 
@@ -57,26 +63,32 @@ export class CitizensController {
   async exportExcel(
     @Res() res: Response,
     @Query('search') search?: string,
+    @Query('full_name') fullName?: string,
     @Query('first_name') firstName?: string,
     @Query('last_name') lastName?: string,
     @Query('middle_name') middleName?: string,
     @Query('passport') passport?: string,
     @Query('phone_number') phoneNumber?: string,
+    @Query('card_number') cardNumber?: string,
     @Query('pinfl') pinfl?: string,
     @Query('gender') gender?: string,
     @Query('birth_date') birthDate?: string,
+    @Query('district_id') districtId?: string,
   ) {
     return this.citizensService.exportToExcel(
       search,
       {
+        fullName,
         firstName,
         lastName,
         middleName,
         passport,
         phoneNumber,
+        cardNumber,
         pinfl,
         gender,
         birthDate,
+        districtId,
       },
       res,
     );

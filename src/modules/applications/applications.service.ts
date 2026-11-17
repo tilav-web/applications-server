@@ -9,6 +9,8 @@ import { TransferCustomFieldType } from '../../common/enums/transfer-custom-fiel
 import type { PaginatedResult } from '../../common/interfaces/pagination.interface';
 import type { JwtAccessPayload } from '../../common/types/jwt-payload.interface';
 import { formatTitleCase, formatUzbekName } from '../../common/utils/name-formatter.util';
+import { IntelligenceService } from '../intelligence/intelligence.service';
+import { IntelligenceSyncService } from '../intelligence/intelligence-sync.service';
 import { User } from '../users/user.entity';
 import { Application, SuspectTreeNode } from './application.entity';
 import { Citizen } from './citizens/citizen.entity';
@@ -56,6 +58,8 @@ export class ApplicationsService {
     @InjectRepository(User)
     private readonly userRepo: Repository<User>,
     private readonly excelService: ApplicationsExcelService,
+    private readonly intelligenceSync: IntelligenceSyncService,
+    private readonly intelligenceService: IntelligenceService,
   ) {}
 
   private async processCustomFields(
@@ -965,6 +969,7 @@ export class ApplicationsService {
       await this.customFieldRepo.save(fieldEntities);
     }
 
+    await this.intelligenceSync.syncApplicationById(saved.id);
     return this.findOne(saved.id);
   }
 
@@ -982,6 +987,8 @@ export class ApplicationsService {
           crime_method_id?: string;
           application_number?: string;
           citizen_name?: string;
+          card_number?: string;
+          phone_number?: string;
           description?: string;
           date?: string;
           date_from?: string;
@@ -1003,6 +1010,8 @@ export class ApplicationsService {
     let crime_method_id: string | undefined;
     let application_number: string | undefined;
     let citizen_name: string | undefined;
+    let card_number: string | undefined;
+    let phone_number: string | undefined;
     let description: string | undefined;
     let date: string | undefined;
     let date_from: string | undefined;
@@ -1020,6 +1029,8 @@ export class ApplicationsService {
       crime_method_id = pageOrParams.crime_method_id;
       application_number = pageOrParams.application_number;
       citizen_name = pageOrParams.citizen_name;
+      card_number = pageOrParams.card_number;
+      phone_number = pageOrParams.phone_number;
       description = pageOrParams.description;
       date = pageOrParams.date;
       date_from = pageOrParams.date_from;
@@ -1095,8 +1106,52 @@ export class ApplicationsService {
     if (citizen_name && citizen_name.trim()) {
       const cName = `%${citizen_name.trim()}%`;
       qb.andWhere(
-        "(citizen.first_name ILIKE :cName OR citizen.last_name ILIKE :cName OR citizen.middle_name ILIKE :cName OR CONCAT(COALESCE(citizen.last_name,''), ' ', COALESCE(citizen.first_name,'')) ILIKE :cName OR citizen.phone_number ILIKE :cName OR citizen.passport ILIKE :cName)",
+        "(citizen.first_name ILIKE :cName OR citizen.last_name ILIKE :cName OR citizen.middle_name ILIKE :cName OR CONCAT_WS(' ', citizen.last_name, citizen.first_name, citizen.middle_name) ILIKE :cName)",
         { cName },
+      );
+    }
+
+    if (card_number && card_number.trim()) {
+      const cleanedCard = card_number.replace(/\D/g, '') || card_number.trim();
+      const cardQ = `%${cleanedCard}%`;
+      qb.andWhere(
+        `(
+          EXISTS (
+            SELECT 1 FROM cards c
+            WHERE c.id = app.card_id AND (c.card_number ILIKE :cardQ OR c.masked_number ILIKE :cardQ)
+          )
+          OR EXISTS (
+            SELECT 1 FROM transfers t
+            LEFT JOIN cards sc ON sc.id = t.sender_card_id
+            LEFT JOIN cards rc ON rc.id = t.receiver_card_id
+            WHERE (t.id = app.transfer_id OR t.application_id = app.id)
+              AND (sc.card_number ILIKE :cardQ OR sc.masked_number ILIKE :cardQ OR rc.card_number ILIKE :cardQ OR rc.masked_number ILIKE :cardQ)
+          )
+          OR EXISTS (
+            SELECT 1 FROM entity_application_links eal
+            INNER JOIN cards ec ON ec.id = eal.entity_id AND eal.entity_type = 'CARD'
+            WHERE eal.application_id = app.id AND (ec.card_number ILIKE :cardQ OR ec.masked_number ILIKE :cardQ)
+          )
+          OR CAST(app.suspect_tree AS text) ILIKE :cardQ
+        )`,
+        { cardQ },
+      );
+    }
+
+    if (phone_number && phone_number.trim()) {
+      const cleanedPhone = phone_number.replace(/\D/g, '') || phone_number.trim();
+      const phoneQ = `%${cleanedPhone}%`;
+      qb.andWhere(
+        `(
+          citizen.phone_number ILIKE :phoneQ
+          OR EXISTS (
+            SELECT 1 FROM entity_application_links eal
+            INNER JOIN phones ph ON ph.id = eal.entity_id AND eal.entity_type = 'PHONE'
+            WHERE eal.application_id = app.id AND ph.phone_number ILIKE :phoneQ
+          )
+          OR CAST(app.suspect_tree AS text) ILIKE :phoneQ
+        )`,
+        { phoneQ },
       );
     }
 
@@ -1271,6 +1326,8 @@ export class ApplicationsService {
       crime_method_id?: string;
       application_number?: string;
       citizen_name?: string;
+      card_number?: string;
+      phone_number?: string;
       description?: string;
       date?: string;
       date_from?: string;
@@ -1669,7 +1726,7 @@ export class ApplicationsService {
   /**
    * Tanlangan arizaning barcha boshqa arizalar bilan bog'liqliklari (Karta va Fuqaro bo'yicha)
    */
-  async getRelations(id: string) {
+  async getRelations(id: string, currentUser?: JwtAccessPayload) {
     const currentApp = await this.findOne(id);
 
     // Agar arizada transfer_id bo'lmasa, transfer jadvalidan application_id orqali tekshirish
@@ -2246,6 +2303,11 @@ export class ApplicationsService {
       blacklistedCount: 0,
     };
 
+    const enhanced = await this.intelligenceService.getEnhancedApplicationIntelligence(
+      currentApp.id,
+      currentUser,
+    );
+
     return {
       application: {
         id: currentApp.id,
@@ -2258,18 +2320,22 @@ export class ApplicationsService {
         transfer: currentApp.transfer,
       },
       stats: {
-        total_linked_applications: linkedApplicationIds.size,
+        total_linked_applications: linkedApplicationIds.size + enhanced.multi_hop_chains.length,
         total_linked_loss: totalLinkedLoss,
         current_app_loss: currentAppLoss,
         grand_total_loss: currentAppLoss + totalLinkedLoss,
         total_cards_count: cardRelations.length,
         total_citizens_count: citizenRelations.length,
-        total_suspects_count: suspectRelationsMap.size,
+        total_suspects_count: Math.max(suspectRelationsMap.size, enhanced.clue_relations.length),
+        total_multi_hop_count: enhanced.multi_hop_chains.length,
         has_fraud_card_link: hasFraudCardLink,
       },
       card_relations: cardRelations,
       citizen_relations: citizenRelations,
       suspect_relations: Array.from(suspectRelationsMap.values()),
+      clue_relations: enhanced.clue_relations,
+      multi_hop_chains: enhanced.multi_hop_chains,
+      network_graph: enhanced.network_graph,
       graph: {
         nodes: graphNodes,
         edges: graphEdges,
@@ -2427,6 +2493,7 @@ export class ApplicationsService {
       }
     }
 
+    await this.intelligenceSync.syncApplicationById(id);
     return this.findOne(id);
   }
 
@@ -2451,12 +2518,14 @@ export class ApplicationsService {
         }
         application.is_deleted = true;
         await this.applicationRepo.save(application);
+        await this.intelligenceSync.syncApplicationById(id);
         return { success: true, message: "Ariza arxivlandi (o'chirildi)" };
       }
     }
 
     application.is_deleted = true;
     await this.applicationRepo.save(application);
+    await this.intelligenceSync.syncApplicationById(id);
     return { success: true, message: "Ariza muvaffaqiyatli o'chirildi" };
   }
 

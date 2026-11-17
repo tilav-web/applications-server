@@ -25,8 +25,19 @@ export class UsersController {
     @Query('page') page?: number,
     @Query('limit') limit?: number,
     @Query('search') search?: string,
+    @Query('role') role?: string,
+    @Query('full_name') fullName?: string,
+    @Query('username') username?: string,
+    @Query('phone_number') phoneNumber?: string,
+    @Query('district_id') districtId?: string,
   ) {
-    return this.usersService.findAll(Number(page) || 1, Number(limit) || 10, search);
+    return this.usersService.findAll(Number(page) || 1, Number(limit) || 10, search, {
+      role,
+      fullName,
+      username,
+      phoneNumber,
+      districtId,
+    });
   }
 
   @Get(':id')

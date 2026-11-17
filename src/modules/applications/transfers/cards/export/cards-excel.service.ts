@@ -7,7 +7,7 @@ import { Card } from '../card.entity';
 export class CardsExcelService {
   generateWorkbook(cards: Card[]): Promise<ExcelJS.Workbook> {
     const workbook = new ExcelJS.Workbook();
-    workbook.creator = 'IIV Xavfsiz Shaxar / Qashqadaryo viloyati IIB';
+    workbook.creator = 'Arizalar bazasi';
     workbook.created = new Date();
     workbook.modified = new Date();
 

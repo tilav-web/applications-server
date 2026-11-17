@@ -42,6 +42,8 @@ export class ApplicationsController {
     @Query('crime_method_id') crime_method_id?: string,
     @Query('application_number') application_number?: string,
     @Query('citizen_name') citizen_name?: string,
+    @Query('card_number') card_number?: string,
+    @Query('phone_number') phone_number?: string,
     @Query('description') description?: string,
     @Query('date') date?: string,
     @Query('date_from') date_from?: string,
@@ -61,6 +63,8 @@ export class ApplicationsController {
         crime_method_id,
         application_number,
         citizen_name,
+        card_number,
+        phone_number,
         description,
         date,
         date_from,
@@ -93,8 +97,8 @@ export class ApplicationsController {
   }
 
   @Get(':id/relations')
-  getRelations(@Param('id') id: string) {
-    return this.applicationsService.getRelations(id);
+  getRelations(@Param('id') id: string, @CurrentUser() currentUser?: JwtAccessPayload) {
+    return this.applicationsService.getRelations(id, currentUser);
   }
 
   @Get('export/excel')
@@ -108,6 +112,8 @@ export class ApplicationsController {
     @Query('crime_method_id') crime_method_id?: string,
     @Query('application_number') application_number?: string,
     @Query('citizen_name') citizen_name?: string,
+    @Query('card_number') card_number?: string,
+    @Query('phone_number') phone_number?: string,
     @Query('description') description?: string,
     @Query('date') date?: string,
     @Query('date_from') date_from?: string,
@@ -124,6 +130,8 @@ export class ApplicationsController {
         crime_method_id,
         application_number,
         citizen_name,
+        card_number,
+        phone_number,
         description,
         date,
         date_from,

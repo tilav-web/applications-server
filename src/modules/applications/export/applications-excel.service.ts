@@ -39,7 +39,7 @@ interface SuspectNodeItem {
 export class ApplicationsExcelService {
   generateWorkbook(applications: Application[]): Promise<ExcelJS.Workbook> {
     const workbook = new ExcelJS.Workbook();
-    workbook.creator = 'IIV Xavfsiz Shaxar / Qashqadaryo viloyati IIB';
+    workbook.creator = 'Arizalar bazasi';
     workbook.created = new Date();
     workbook.modified = new Date();
 
