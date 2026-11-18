@@ -2677,6 +2677,7 @@ export class ApplicationsService {
       .leftJoinAndSelect('app.application_status', 'application_status')
       .leftJoinAndSelect('app.transfer', 'transfer')
       .leftJoinAndSelect('app.citizen', 'citizen')
+      .leftJoinAndSelect('citizen.mahalla', 'citizen_mahalla')
       .leftJoinAndSelect('app.district', 'district')
       .leftJoinAndSelect('app.crime', 'crime')
       .leftJoinAndSelect('transfer.payment_provider', 'payment_provider')
@@ -2713,6 +2714,17 @@ export class ApplicationsService {
       string,
       { id: string; name: string; count: number; totalLoss: number }
     >();
+    const mahallaMap = new Map<
+      string,
+      {
+        id: string;
+        name: string;
+        district_id: string;
+        district_name: string | null;
+        count: number;
+        totalLoss: number;
+      }
+    >();
     const crimeMap = new Map<
       string,
       { id: string; article: string; title: string | null; gravity: string | null; count: number }
@@ -2744,6 +2756,21 @@ export class ApplicationsService {
         d.count++;
         d.totalLoss += amount;
         districtMap.set(app.district.id, d);
+      }
+
+      if (app.citizen?.mahalla) {
+        const mKey = app.citizen.mahalla.id;
+        const m = mahallaMap.get(mKey) || {
+          id: app.citizen.mahalla.id,
+          name: app.citizen.mahalla.name,
+          district_id: app.citizen.mahalla.district_id,
+          district_name: app.district?.name || null,
+          count: 0,
+          totalLoss: 0,
+        };
+        m.count++;
+        m.totalLoss += amount;
+        mahallaMap.set(mKey, m);
       }
 
       if (app.crime) {
@@ -2957,13 +2984,32 @@ export class ApplicationsService {
       },
     ];
 
-    // 6. byDistrict
+    // 6. byDistrict (barcha 16 ta tuman kiritilgan holda)
+    const allDbDistricts = await this.districtRepo.find({ order: { name: 'ASC' } });
+    for (const d of allDbDistricts) {
+      if (!districtMap.has(d.id)) {
+        districtMap.set(d.id, {
+          id: d.id,
+          name: d.name || 'Noma‘lum tuman',
+          count: 0,
+          totalLoss: 0,
+        });
+      }
+    }
+
     const byDistrict = Array.from(districtMap.values())
       .sort((a, b) => b.count - a.count)
-      .slice(0, 8)
       .map((d) => ({
         ...d,
         percent: totalApplications > 0 ? Math.round((d.count / totalApplications) * 100) : 0,
+      }));
+
+    // byMahalla
+    const byMahalla = Array.from(mahallaMap.values())
+      .sort((a, b) => b.count - a.count)
+      .map((m) => ({
+        ...m,
+        percent: totalApplications > 0 ? Math.round((m.count / totalApplications) * 100) : 0,
       }));
 
     // 7. byCrime
@@ -3030,6 +3076,7 @@ export class ApplicationsService {
       timeline,
       byStatus,
       byDistrict,
+      byMahalla,
       byCrime,
       byPaymentProvider,
       recentApplications,
