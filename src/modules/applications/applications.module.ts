@@ -42,6 +42,7 @@ import { Bank } from './transfers/banks/bank.entity';
 import { BanksModule } from './transfers/banks/banks.module';
 import { Card } from './transfers/cards/card.entity';
 import { CardsModule } from './transfers/cards/cards.module';
+import { TransferChannelsModule } from './transfers/channels/transfer-channels.module';
 import { TransferCustomField } from './transfers/custom-fields/transfer-custom-field.entity';
 import { PaymentProvider } from './transfers/payment_providers/payment_provider.entity';
 import { PaymentProvidersModule } from './transfers/payment_providers/payment-providers.module';
@@ -84,6 +85,7 @@ import { TransfersModule } from './transfers/transfers.module';
     SuspectFieldConfigsModule,
     BanksModule,
     PaymentProvidersModule,
+    TransferChannelsModule,
     CardsModule,
     TransfersModule,
     DocumentsModule,
