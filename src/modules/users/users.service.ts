@@ -1,10 +1,16 @@
-import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
+import {
+  BadRequestException,
+  ForbiddenException,
+  Injectable,
+  NotFoundException,
+} from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import * as bcrypt from 'bcrypt';
 import { In, Repository } from 'typeorm';
 
 import { Role } from '../../common/enums/role.enum';
 import type { PaginatedResult } from '../../common/interfaces/pagination.interface';
+import type { JwtAccessPayload } from '../../common/types/jwt-payload.interface';
 import { District } from '../applications/districts/district.entity';
 import { Auth } from '../auth/auth.entity';
 import type { CreateUserDto } from './dto/create-user.dto';
@@ -154,7 +160,11 @@ export class UsersService {
     };
   }
 
-  async create(dto: CreateUserDto): Promise<UserView> {
+  async create(dto: CreateUserDto, currentUser?: JwtAccessPayload): Promise<UserView> {
+    if (dto.role === Role.SUPER_ADMIN && currentUser?.role !== Role.SUPER_ADMIN) {
+      throw new ForbiddenException('Faqat SUPER_ADMIN yangi SUPER_ADMIN yarata oladi');
+    }
+
     const existing = await this.authRepository.findOne({ where: { username: dto.username } });
     if (existing) {
       throw new BadRequestException('Bunday loginli (username) foydalanuvchi allaqachon mavjud');
@@ -187,13 +197,22 @@ export class UsersService {
     return this.findOne(savedAuth.id);
   }
 
-  async update(id: string, dto: UpdateUserDto): Promise<UserView> {
+  async update(id: string, dto: UpdateUserDto, currentUser?: JwtAccessPayload): Promise<UserView> {
     const auth = await this.authRepository.findOne({
       where: { id },
       relations: { user: { assigned_districts: true } },
     });
     if (!auth) {
       throw new NotFoundException('Foydalanuvchi topilmadi');
+    }
+
+    if (
+      (auth.role === Role.SUPER_ADMIN || dto.role === Role.SUPER_ADMIN) &&
+      currentUser?.role !== Role.SUPER_ADMIN
+    ) {
+      throw new ForbiddenException(
+        'SUPER_ADMIN hisobini tahrirlash yoki ushbu rolni berish faqat SUPER_ADMIN ga ruxsat etiladi',
+      );
     }
 
     if (dto.username && dto.username !== auth.username) {
@@ -206,6 +225,7 @@ export class UsersService {
 
     if (dto.password) {
       auth.password = await bcrypt.hash(dto.password, 10);
+      auth.hashed_refresh_token = null;
     }
 
     if (dto.role) {
@@ -240,10 +260,19 @@ export class UsersService {
     return this.findOne(auth.id);
   }
 
-  async remove(id: string): Promise<{ success: boolean; message: string }> {
+  async remove(
+    id: string,
+    currentUser?: JwtAccessPayload,
+  ): Promise<{ success: boolean; message: string }> {
     const auth = await this.authRepository.findOne({ where: { id } });
     if (!auth) {
       throw new NotFoundException('Foydalanuvchi topilmadi');
+    }
+    if (currentUser?.sub === auth.id) {
+      throw new ForbiddenException("O'zingizning hisobingizni o'chira olmaysiz");
+    }
+    if (auth.role === Role.SUPER_ADMIN && currentUser?.role !== Role.SUPER_ADMIN) {
+      throw new ForbiddenException("Faqat SUPER_ADMIN boshqa SUPER_ADMIN ni o'chira oladi");
     }
     await this.authRepository.remove(auth);
     return { success: true, message: "Foydalanuvchi o'chirildi" };

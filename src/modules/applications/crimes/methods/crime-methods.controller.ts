@@ -10,17 +10,22 @@ import {
   UseGuards,
 } from '@nestjs/common';
 
+import { Roles } from '../../../../common/decorators/roles.decorator';
+import { Role } from '../../../../common/enums/role.enum';
 import { JwtAuthGuard } from '../../../../common/guards/jwt-auth.guard';
+import { RolesGuard } from '../../../../common/guards/roles.guard';
+import { normalizePagination } from '../../../../common/utils/pagination.util';
 import { CrimeMethodsService } from './crime-methods.service';
 import { CreateCrimeMethodDto } from './dto/create-crime-method.dto';
 import { UpdateCrimeMethodDto } from './dto/update-crime-method.dto';
 
 @Controller('crime-methods')
-@UseGuards(JwtAuthGuard)
+@UseGuards(JwtAuthGuard, RolesGuard)
 export class CrimeMethodsController {
   constructor(private readonly service: CrimeMethodsService) {}
 
   @Post()
+  @Roles(Role.SUPER_ADMIN, Role.ADMIN, Role.INSPECTOR)
   create(@Body() dto: CreateCrimeMethodDto) {
     return this.service.create(dto);
   }
@@ -31,7 +36,8 @@ export class CrimeMethodsController {
     @Query('limit') limit?: number,
     @Query('search') search?: string,
   ) {
-    return this.service.findAll(Number(page) || 1, Number(limit) || 100, search);
+    const pagination = normalizePagination(page, limit, 100);
+    return this.service.findAll(pagination.page, pagination.limit, search);
   }
 
   @Get('active')
@@ -45,11 +51,13 @@ export class CrimeMethodsController {
   }
 
   @Patch(':id')
+  @Roles(Role.SUPER_ADMIN, Role.ADMIN, Role.INSPECTOR)
   update(@Param('id') id: string, @Body() dto: UpdateCrimeMethodDto) {
     return this.service.update(id, dto);
   }
 
   @Delete(':id')
+  @Roles(Role.SUPER_ADMIN, Role.ADMIN)
   remove(@Param('id') id: string) {
     return this.service.remove(id);
   }

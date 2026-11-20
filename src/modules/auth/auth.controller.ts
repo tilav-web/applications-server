@@ -85,7 +85,7 @@ export class AuthController {
     @Req() req: Request & { user?: JwtAccessPayload },
     @Res({ passthrough: true }) res: Response,
   ) {
-    const authId = req.user?.sub ?? null;
+    const authId = await this.authService.resolveAuthIdFromRequest(req);
     return this.authService.logout(authId, res);
   }
 }

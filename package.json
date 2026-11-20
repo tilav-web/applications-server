@@ -41,6 +41,7 @@
     "docx": "^9.15.2",
     "docxtemplater": "^3.71.1",
     "exceljs": "^4.4.0",
+    "helmet": "^8.3.0",
     "ioredis": "^5.11.1",
     "jszip": "^3.10.2",
     "minio": "^8.0.7",

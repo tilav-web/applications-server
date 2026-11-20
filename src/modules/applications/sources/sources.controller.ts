@@ -1,9 +1,12 @@
 import { Body, Controller, Delete, Get, Param, Post, Put, Query, UseGuards } from '@nestjs/common';
 
+import { Roles } from '../../../common/decorators/roles.decorator';
+import { Role } from '../../../common/enums/role.enum';
 import { JwtAuthGuard } from '../../../common/guards/jwt-auth.guard';
+import { RolesGuard } from '../../../common/guards/roles.guard';
 import { ApplicationSourcesService } from './sources.service';
 
-@UseGuards(JwtAuthGuard)
+@UseGuards(JwtAuthGuard, RolesGuard)
 @Controller('application-sources')
 export class ApplicationSourcesController {
   constructor(private readonly sourcesService: ApplicationSourcesService) {}
@@ -14,11 +17,13 @@ export class ApplicationSourcesController {
   }
 
   @Post()
+  @Roles(Role.SUPER_ADMIN, Role.ADMIN, Role.INSPECTOR)
   async create(@Body() body: { name: string; code?: string; is_active?: boolean }) {
     return this.sourcesService.create(body);
   }
 
   @Put(':id')
+  @Roles(Role.SUPER_ADMIN, Role.ADMIN, Role.INSPECTOR)
   async update(
     @Param('id') id: string,
     @Body() body: { name?: string; code?: string; is_active?: boolean },
@@ -27,11 +32,13 @@ export class ApplicationSourcesController {
   }
 
   @Delete(':id')
+  @Roles(Role.SUPER_ADMIN, Role.ADMIN)
   async remove(@Param('id') id: string) {
     return this.sourcesService.remove(id);
   }
 
   @Post('seed')
+  @Roles(Role.SUPER_ADMIN, Role.ADMIN)
   async seed() {
     await this.sourcesService.seedDefaults();
     return { success: true, message: 'Boshlang‘ich murojaat manbalari saqlandi' };

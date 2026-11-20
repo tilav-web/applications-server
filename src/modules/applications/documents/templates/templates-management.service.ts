@@ -18,6 +18,14 @@ import { MinioService } from '../../../minio/minio.service';
 import { Application } from '../../application.entity';
 import { SuspectFieldConfig } from '../../suspect-fields/suspect-field-config.entity';
 import { Transfer } from '../../transfers/transfer.entity';
+import {
+  buildSafeOnlyOfficeInternalUrl,
+  createSignedFileAccessQuery,
+  getOnlyOfficeJwtSecret,
+  signOnlyOfficeJwt,
+  verifyOnlyOfficeCallbackRequest,
+  verifySignedFileAccessQuery,
+} from '../utils/onlyoffice-security.util';
 import { DocumentTemplate } from './document-template.entity';
 import { DocxEngineService } from './docx-engine.service';
 import { CreateTemplateDto, UpdateTemplateDto } from './dto/template.dto';
@@ -317,8 +325,10 @@ export class TemplatesManagementService implements OnApplicationBootstrap {
 
     const internalServerHost =
       this.configService.get<string>('ONLYOFFICE_SERVER_INTERNAL_HOST') || 'uvd_app_server:3000';
+    const onlyOfficeSecret = getOnlyOfficeJwtSecret(this.configService);
+    const signedQuery = createSignedFileAccessQuery('tpl', tpl.id, onlyOfficeSecret, 3600);
 
-    const fileUrl = `http://${internalServerHost}/templates/${tpl.id}/file`;
+    const fileUrl = `http://${internalServerHost}/templates/${tpl.id}/file?${signedQuery}`;
     const callbackUrl = `http://${internalServerHost}/templates/${tpl.id}/callback`;
 
     const userName = user
@@ -327,7 +337,7 @@ export class TemplatesManagementService implements OnApplicationBootstrap {
 
     const docKey = tpl.doc_key || `tpl_${tpl.id}_${new Date(tpl.updated_at).getTime()}`;
 
-    return {
+    const editorPayload = {
       documentType: 'word',
       document: {
         fileType: 'docx',
@@ -363,9 +373,21 @@ export class TemplatesManagementService implements OnApplicationBootstrap {
           zoom: 100,
         },
       },
+    };
+
+    const token = signOnlyOfficeJwt(editorPayload, onlyOfficeSecret);
+
+    return {
+      ...editorPayload,
+      token,
       templateId: tpl.id,
       title: tpl.title,
     };
+  }
+
+  verifySignedTemplateFileAccess(id: string, exp?: string, sig?: string): boolean {
+    const onlyOfficeSecret = getOnlyOfficeJwtSecret(this.configService);
+    return verifySignedFileAccessQuery('tpl', id, exp, sig, onlyOfficeSecret);
   }
 
   /**
@@ -383,32 +405,29 @@ export class TemplatesManagementService implements OnApplicationBootstrap {
   /**
    * ONLYOFFICE dan shablon saqlanganda keladigan callback handler
    */
-  async handleTemplateCallback(id: string, body: any): Promise<{ error: number }> {
-    this.logger.log(
-      `ONLYOFFICE template callback keldi (Template ID: ${id}, Status: ${body?.status})`,
-    );
+  async handleTemplateCallback(id: string, body: any, req?: any): Promise<{ error: number }> {
+    const onlyOfficeSecret = getOnlyOfficeJwtSecret(this.configService);
+    const verifiedPayload = req
+      ? verifyOnlyOfficeCallbackRequest(req, body, onlyOfficeSecret)
+      : body;
+
+    const status = verifiedPayload?.status ?? body?.status;
+    this.logger.log(`ONLYOFFICE template callback keldi (Template ID: ${id}, Status: ${status})`);
 
     // 2 = Document is ready for saving, 6 = Force-saved
-    if (body?.status === 2 || body?.status === 6) {
-      const downloadUrl: string = body.url;
+    if (status === 2 || status === 6) {
+      const downloadUrl: string = (verifiedPayload?.url as string) || body?.url;
       if (!downloadUrl) {
         return { error: 0 };
       }
 
       try {
-        let targetUrl = downloadUrl;
-        try {
-          const parsed = new URL(downloadUrl);
-          targetUrl = `http://uvd_app_onlyoffice${parsed.pathname}${parsed.search}`;
-        } catch (e) {
-          this.logger.warn(`URL parse qilishda ogohlantirish: ${e}`);
-        }
+        // SSRF himoyasi: faqat ichki ishonchli ONLYOFFICE konteyneridan yuklab olamiz
+        const internalBaseUrl =
+          this.configService.get<string>('ONLYOFFICE_INTERNAL_URL') || 'http://uvd_app_onlyoffice';
+        const targetUrl = buildSafeOnlyOfficeInternalUrl(downloadUrl, internalBaseUrl);
 
-        let response = await fetch(targetUrl);
-        if (!response.ok && targetUrl !== downloadUrl) {
-          response = await fetch(downloadUrl);
-        }
-
+        const response = await fetch(targetUrl);
         if (!response.ok) {
           throw new Error(`Shablon faylini yuklab olishda xatolik: HTTP ${response.status}`);
         }

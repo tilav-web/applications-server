@@ -10,17 +10,22 @@ import {
   UseGuards,
 } from '@nestjs/common';
 
+import { Roles } from '../../../../common/decorators/roles.decorator';
+import { Role } from '../../../../common/enums/role.enum';
 import { JwtAuthGuard } from '../../../../common/guards/jwt-auth.guard';
+import { RolesGuard } from '../../../../common/guards/roles.guard';
+import { normalizePagination } from '../../../../common/utils/pagination.util';
 import { CreatePaymentProviderDto } from './dto/create-payment-provider.dto';
 import { UpdatePaymentProviderDto } from './dto/update-payment-provider.dto';
 import { PaymentProvidersService } from './payment-providers.service';
 
 @Controller('payment-providers')
-@UseGuards(JwtAuthGuard)
+@UseGuards(JwtAuthGuard, RolesGuard)
 export class PaymentProvidersController {
   constructor(private readonly paymentProvidersService: PaymentProvidersService) {}
 
   @Post()
+  @Roles(Role.SUPER_ADMIN, Role.ADMIN, Role.INSPECTOR)
   create(@Body() dto: CreatePaymentProviderDto) {
     return this.paymentProvidersService.create(dto);
   }
@@ -31,7 +36,8 @@ export class PaymentProvidersController {
     @Query('limit') limit?: number,
     @Query('search') search?: string,
   ) {
-    return this.paymentProvidersService.findAll(Number(page) || 1, Number(limit) || 50, search);
+    const pagination = normalizePagination(page, limit, 50);
+    return this.paymentProvidersService.findAll(pagination.page, pagination.limit, search);
   }
 
   @Get(':id')
@@ -40,11 +46,13 @@ export class PaymentProvidersController {
   }
 
   @Patch(':id')
+  @Roles(Role.SUPER_ADMIN, Role.ADMIN, Role.INSPECTOR)
   update(@Param('id') id: string, @Body() dto: UpdatePaymentProviderDto) {
     return this.paymentProvidersService.update(id, dto);
   }
 
   @Delete(':id')
+  @Roles(Role.SUPER_ADMIN, Role.ADMIN)
   remove(@Param('id') id: string) {
     return this.paymentProvidersService.remove(id);
   }

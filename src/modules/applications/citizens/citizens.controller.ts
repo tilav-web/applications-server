@@ -12,17 +12,31 @@ import {
 } from '@nestjs/common';
 import type { Response } from 'express';
 
+import { Roles } from '../../../common/decorators/roles.decorator';
+import { Role } from '../../../common/enums/role.enum';
 import { JwtAuthGuard } from '../../../common/guards/jwt-auth.guard';
+import { RolesGuard } from '../../../common/guards/roles.guard';
+import { normalizePagination } from '../../../common/utils/pagination.util';
 import { CitizensService } from './citizens.service';
 import { CreateCitizenDto } from './dto/create-citizen.dto';
 import { UpdateCitizenDto } from './dto/update-citizen.dto';
 
+const WRITE_ROLES = [
+  Role.SUPER_ADMIN,
+  Role.ADMIN,
+  Role.STAFF,
+  Role.DISTRICT_OFFICER,
+  Role.INSPECTOR,
+  Role.OPERATOR,
+];
+
 @Controller('citizens')
-@UseGuards(JwtAuthGuard)
+@UseGuards(JwtAuthGuard, RolesGuard)
 export class CitizensController {
   constructor(private readonly citizensService: CitizensService) {}
 
   @Post()
+  @Roles(...WRITE_ROLES)
   create(@Body() dto: CreateCitizenDto) {
     return this.citizensService.create(dto);
   }
@@ -44,7 +58,8 @@ export class CitizensController {
     @Query('birth_date') birthDate?: string,
     @Query('district_id') districtId?: string,
   ) {
-    return this.citizensService.findAll(Number(page) || 1, Number(limit) || 10, search, {
+    const pagination = normalizePagination(page, limit, 10);
+    return this.citizensService.findAll(pagination.page, pagination.limit, search, {
       fullName,
       firstName,
       lastName,
@@ -100,11 +115,13 @@ export class CitizensController {
   }
 
   @Patch(':id')
+  @Roles(...WRITE_ROLES)
   update(@Param('id') id: string, @Body() dto: UpdateCitizenDto) {
     return this.citizensService.update(id, dto);
   }
 
   @Delete(':id')
+  @Roles(Role.SUPER_ADMIN, Role.ADMIN)
   remove(@Param('id') id: string) {
     return this.citizensService.remove(id);
   }

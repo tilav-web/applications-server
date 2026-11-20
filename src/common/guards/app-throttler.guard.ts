@@ -14,27 +14,15 @@ export class AppThrottlerGuard extends ThrottlerGuard {
   protected override async getTracker(req: Record<string, unknown>): Promise<string> {
     const request = req as unknown as RequestWithUser;
 
-    // Agar foydalanuvchi tizimga kirgan bo'lsa, har bir xodim alohida kvotaga ega bo'ladi
+    // Agar foydalanuvchi autentifikatsiyadan o'tgan bo'lsa, alohida kvota
     if (request.user?.sub || request.user?.id) {
       return Promise.resolve(`user_${request.user.sub || request.user.id}`);
     }
 
-    // Nginx proksi orqali kelayotgan haqiqiy client IP ni aniqlaymiz
-    const forwarded = request.headers['x-forwarded-for'];
-    if (forwarded) {
-      const raw = Array.isArray(forwarded) ? forwarded[0] : forwarded;
-      const clientIp = typeof raw === 'string' ? raw.split(',')[0].trim() : '';
-      if (clientIp) {
-        return Promise.resolve(clientIp);
-      }
-    }
-
-    const realIp = request.headers['x-real-ip'];
-    if (typeof realIp === 'string') {
-      return Promise.resolve(realIp);
-    }
-
-    return Promise.resolve(request.ip || '127.0.0.1');
+    // Express 'trust proxy' (1 hop - Nginx) orqali hisoblangan ishonchli client IP.
+    // X-Forwarded-For / X-Real-IP sarlavhalariga to'g'ridan-to'g'ri ishonilmaydi (IP spoofing oldini olish).
+    const ip = request.ip || request.socket?.remoteAddress || '127.0.0.1';
+    return Promise.resolve(ip);
   }
 
   protected override async getErrorMessage(

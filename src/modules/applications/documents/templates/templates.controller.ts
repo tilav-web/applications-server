@@ -12,20 +12,47 @@ import {
   Query,
   Req,
   Res,
+  UnauthorizedException,
   UploadedFile,
   UseGuards,
   UseInterceptors,
 } from '@nestjs/common';
 import { FileInterceptor } from '@nestjs/platform-express';
-import type { Response } from 'express';
+import type { Request, Response } from 'express';
+import { extname } from 'path';
 
+import { Roles } from '../../../../common/decorators/roles.decorator';
+import { Role } from '../../../../common/enums/role.enum';
 import { JwtAuthGuard } from '../../../../common/guards/jwt-auth.guard';
+import { RolesGuard } from '../../../../common/guards/roles.guard';
+import { AuthService } from '../../../auth/auth.service';
 import { CreateTemplateDto, UpdateTemplateDto } from './dto/template.dto';
 import { TemplatesManagementService } from './templates-management.service';
 
+const TEMPLATE_UPLOAD_OPTIONS = {
+  limits: { fileSize: 25 * 1024 * 1024 },
+  fileFilter: (
+    _req: Request,
+    file: Express.Multer.File,
+    cb: (error: Error | null, acceptFile: boolean) => void,
+  ) => {
+    const ext = extname(file.originalname || '').toLowerCase();
+    if (ext !== '.docx') {
+      cb(new BadRequestException('Faqat .docx shablon fayllarini yuklash mumkin'), false);
+      return;
+    }
+    cb(null, true);
+  },
+};
+
+const TEMPLATE_WRITE_ROLES = [Role.SUPER_ADMIN, Role.ADMIN, Role.STAFF, Role.INSPECTOR];
+
 @Controller('templates')
 export class TemplatesController {
-  constructor(private readonly templatesService: TemplatesManagementService) {}
+  constructor(
+    private readonly templatesService: TemplatesManagementService,
+    private readonly authService: AuthService,
+  ) {}
 
   /**
    * Barcha shablonlar ro'yxatini olish
@@ -62,7 +89,8 @@ export class TemplatesController {
    * Bo'sh Word shablonini yaratish
    */
   @Post('blank')
-  @UseGuards(JwtAuthGuard)
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(...TEMPLATE_WRITE_ROLES)
   async createBlankTemplate(@Body() dto: CreateTemplateDto, @Req() req: any) {
     return this.templatesService.createBlankTemplate(dto, req.user);
   }
@@ -71,8 +99,9 @@ export class TemplatesController {
    * Kompyuterdan .docx shablon faylini yuklash
    */
   @Post('upload')
-  @UseGuards(JwtAuthGuard)
-  @UseInterceptors(FileInterceptor('file'))
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(...TEMPLATE_WRITE_ROLES)
+  @UseInterceptors(FileInterceptor('file', TEMPLATE_UPLOAD_OPTIONS))
   async uploadTemplate(
     @UploadedFile() file: Express.Multer.File,
     @Body() dto: CreateTemplateDto,
@@ -88,7 +117,8 @@ export class TemplatesController {
    * Shablon ma'lumotlarini tahrirlash
    */
   @Put(':id')
-  @UseGuards(JwtAuthGuard)
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(...TEMPLATE_WRITE_ROLES)
   async updateTemplate(@Param('id') id: string, @Body() dto: UpdateTemplateDto) {
     return this.templatesService.updateTemplate(id, dto);
   }
@@ -97,7 +127,8 @@ export class TemplatesController {
    * Shablonni o'chirish
    */
   @Delete(':id')
-  @UseGuards(JwtAuthGuard)
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(Role.SUPER_ADMIN, Role.ADMIN)
   async deleteTemplate(@Param('id') id: string) {
     return this.templatesService.deleteTemplate(id);
   }
@@ -112,12 +143,30 @@ export class TemplatesController {
   }
 
   /**
-   * Shablon faylini yuklab olish yoki ko'rish (ONLYOFFICE uchun ochiq)
+   * Shablon faylini yuklab olish yoki ko'rish (foydalanuvchi sessiyasi yoki imzolangan ONLYOFFICE linki orqali)
    */
   @Get(':id/file')
-  async downloadTemplateFile(@Param('id') id: string, @Res() res: Response) {
+  async downloadTemplateFile(
+    @Param('id') id: string,
+    @Query('exp') exp: string | undefined,
+    @Query('sig') sig: string | undefined,
+    @Req() req: Request,
+    @Res() res: Response,
+  ) {
+    const isSignedOnlyOffice = this.templatesService.verifySignedTemplateFileAccess(id, exp, sig);
+    if (!isSignedOnlyOffice) {
+      const authId = await this.authService.resolveAuthIdFromRequest(req);
+      if (!authId) {
+        throw new UnauthorizedException(
+          'Shablonni yuklab olish uchun tizimga kirish talab qilinadi',
+        );
+      }
+    }
+
     const { stream, template } = await this.templatesService.getTemplateFileStream(id);
 
+    res.setHeader('X-Content-Type-Options', 'nosniff');
+    res.setHeader('Cache-Control', 'private, no-store');
     res.setHeader(
       'Content-Type',
       'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
@@ -131,12 +180,12 @@ export class TemplatesController {
   }
 
   /**
-   * ONLYOFFICE shablon saqlash callback webhook'i (Status 200 OK qaytarishi shart)
+   * ONLYOFFICE shablon saqlash callback webhook'i (JWT imzosi bilan himoyalangan)
    */
   @Post(':id/callback')
   @HttpCode(HttpStatus.OK)
-  async handleCallback(@Param('id') id: string, @Body() body: any) {
-    return this.templatesService.handleTemplateCallback(id, body);
+  async handleCallback(@Param('id') id: string, @Body() body: any, @Req() req: Request) {
+    return this.templatesService.handleTemplateCallback(id, body, req);
   }
 
   /**

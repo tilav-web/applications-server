@@ -11,7 +11,8 @@ import { ConfigService } from '@nestjs/config';
 import { JwtService } from '@nestjs/jwt';
 import { InjectRepository } from '@nestjs/typeorm';
 import * as bcrypt from 'bcrypt';
-import type { Response } from 'express';
+import { createHash } from 'crypto';
+import type { Request, Response } from 'express';
 import { Repository } from 'typeorm';
 
 import { Role } from '../../common/enums/role.enum';
@@ -38,12 +39,42 @@ export class AuthService implements OnApplicationBootstrap {
   ) {}
 
   async onApplicationBootstrap(): Promise<void> {
+    this.validateSecurityConfig();
     await this.seedSuperAdmin();
   }
 
+  private validateSecurityConfig(): void {
+    const isProduction = this.configService.get<string>('NODE_ENV') === 'production';
+    if (!isProduction) return;
+
+    const accessSecret = this.configService.get<string>('JWT_ACCESS_SECRET');
+    const refreshSecret = this.configService.get<string>('JWT_REFRESH_SECRET');
+
+    if (
+      !accessSecret ||
+      accessSecret === 'uvd_access_token_secret_key_2026' ||
+      accessSecret.length < 32
+    ) {
+      throw new Error(
+        'XAVFSIZLIK XATOLIGI: Production muhitida JWT_ACCESS_SECRET kamida 32 belgilik maxfiy kalit bo‘lishi shart!',
+      );
+    }
+
+    if (
+      !refreshSecret ||
+      refreshSecret === 'uvd_refresh_token_secret_key_2026' ||
+      refreshSecret.length < 32
+    ) {
+      throw new Error(
+        'XAVFSIZLIK XATOLIGI: Production muhitida JWT_REFRESH_SECRET kamida 32 belgilik maxfiy kalit bo‘lishi shart!',
+      );
+    }
+  }
+
   async seedSuperAdmin(): Promise<void> {
+    const isProduction = this.configService.get<string>('NODE_ENV') === 'production';
     const username = this.configService.get<string>('SUPER_ADMIN_USERNAME', 'admin');
-    const password = this.configService.get<string>('SUPER_ADMIN_PASSWORD', 'admin123');
+    const password = this.configService.get<string>('SUPER_ADMIN_PASSWORD');
     const firstName = this.configService.get<string>('SUPER_ADMIN_FIRST_NAME', 'Admin');
     const lastName = this.configService.get<string>('SUPER_ADMIN_LAST_NAME', 'Boshqaruvchi');
     const phoneNumber = this.configService.get<string>('SUPER_ADMIN_PHONE', '+998901234567');
@@ -68,7 +99,15 @@ export class AuthService implements OnApplicationBootstrap {
         return;
       }
 
-      const hashedPassword = await bcrypt.hash(password, 10);
+      if (isProduction && (!password || password === 'admin123' || password.length < 10)) {
+        this.logger.error(
+          '[Seed] Production muhitida zaif yoki bo‘sh SUPER_ADMIN_PASSWORD bilan admin yaratilmaydi!',
+        );
+        return;
+      }
+
+      const finalPassword = password || 'admin123';
+      const hashedPassword = await bcrypt.hash(finalPassword, 10);
       const auth = this.authRepository.create({
         username,
         password: hashedPassword,
@@ -92,8 +131,12 @@ export class AuthService implements OnApplicationBootstrap {
     }
   }
 
-  private get accessSecret(): string {
+  public getAccessSecret(): string {
     return this.configService.get<string>('JWT_ACCESS_SECRET', 'uvd_access_token_secret_key_2026');
+  }
+
+  private get accessSecret(): string {
+    return this.getAccessSecret();
   }
 
   private get refreshSecret(): string {
@@ -101,6 +144,11 @@ export class AuthService implements OnApplicationBootstrap {
       'JWT_REFRESH_SECRET',
       'uvd_refresh_token_secret_key_2026',
     );
+  }
+
+  // Bcrypt 72-bayt cheklovini aylanib o'tish uchun JWT ni avval SHA-256 bilan xeshlaymiz
+  private digestTokenForBcrypt(token: string): string {
+    return createHash('sha256').update(token).digest('hex');
   }
 
   // 15 minut (sekundlarda)
@@ -160,7 +208,7 @@ export class AuthService implements OnApplicationBootstrap {
       }),
     ]);
 
-    const hashedRefreshToken = await bcrypt.hash(refreshToken, 10);
+    const hashedRefreshToken = await bcrypt.hash(this.digestTokenForBcrypt(refreshToken), 10);
     await this.authRepository.update(auth.id, {
       hashed_refresh_token: hashedRefreshToken,
     });
@@ -168,24 +216,86 @@ export class AuthService implements OnApplicationBootstrap {
     return { accessToken, refreshToken };
   }
 
-  setRefreshTokenCookie(res: Response, refreshToken: string): void {
+  private get isCookieSecure(): boolean {
     const isProduction = this.configService.get<string>('NODE_ENV') === 'production';
+    const override = this.configService.get<string>('COOKIE_SECURE');
+    if (override !== undefined && override !== '') {
+      return override === 'true';
+    }
+    return isProduction;
+  }
+
+  setAccessTokenCookie(res: Response, accessToken: string): void {
+    res.cookie('access_token', accessToken, {
+      httpOnly: true,
+      secure: this.isCookieSecure,
+      sameSite: 'lax',
+      path: '/',
+      maxAge: this.accessExpiresIn * 1000,
+    });
+  }
+
+  setRefreshTokenCookie(res: Response, refreshToken: string): void {
     const sevenDaysInMs = 7 * 24 * 60 * 60 * 1000;
 
     res.cookie('refresh_token', refreshToken, {
       httpOnly: true,
-      secure: isProduction,
+      secure: this.isCookieSecure,
       sameSite: 'lax',
       path: '/',
       maxAge: sevenDaysInMs,
     });
   }
 
-  clearRefreshTokenCookie(res: Response): void {
-    res.clearCookie('refresh_token', {
+  clearAuthCookies(res: Response): void {
+    const cookieOpts = {
       httpOnly: true,
+      secure: this.isCookieSecure,
+      sameSite: 'lax' as const,
       path: '/',
-    });
+    };
+    res.clearCookie('refresh_token', cookieOpts);
+    res.clearCookie('access_token', cookieOpts);
+  }
+
+  async resolveAuthIdFromRequest(req: Request): Promise<string | null> {
+    const reqUser = (req as { user?: Partial<JwtAccessPayload> }).user;
+    if (reqUser?.sub) {
+      return reqUser.sub;
+    }
+
+    const authHeader = req.headers.authorization;
+    const cookies = req.cookies as Record<string, string> | undefined;
+    const accessToken =
+      authHeader && authHeader.startsWith('Bearer ')
+        ? authHeader.substring(7)
+        : cookies?.['access_token'];
+
+    if (accessToken) {
+      try {
+        const payload = await this.jwtService.verifyAsync<JwtAccessPayload>(accessToken, {
+          secret: this.accessSecret,
+          ignoreExpiration: true,
+        });
+        if (payload?.sub) return payload.sub;
+      } catch {
+        // ignore invalid access token
+      }
+    }
+
+    const refreshToken = cookies?.['refresh_token'];
+    if (refreshToken) {
+      try {
+        const payload = await this.jwtService.verifyAsync<JwtRefreshPayload>(refreshToken, {
+          secret: this.refreshSecret,
+        });
+        if (payload?.sub) return payload.sub;
+      } catch {
+        // ignore invalid refresh token
+      }
+    }
+
+    return null;
   }
 
   async login(
@@ -208,6 +318,7 @@ export class AuthService implements OnApplicationBootstrap {
     const auth = await this.validateUser(dto);
     const { accessToken, refreshToken } = await this.generateTokens(auth);
 
+    this.setAccessTokenCookie(res, accessToken);
     this.setRefreshTokenCookie(res, refreshToken);
 
     const profileData = {
@@ -280,7 +391,10 @@ export class AuthService implements OnApplicationBootstrap {
       throw new UnauthorizedException('Sessiya muddati tugagan, iltimos qaytadan kiring');
     }
 
-    const isMatch = await bcrypt.compare(refreshToken, auth.hashed_refresh_token);
+    const isMatch = await bcrypt.compare(
+      this.digestTokenForBcrypt(refreshToken),
+      auth.hashed_refresh_token,
+    );
     if (!isMatch) {
       throw new UnauthorizedException('Sessiya muddati tugagan, iltimos qaytadan kiring');
     }
@@ -289,6 +403,7 @@ export class AuthService implements OnApplicationBootstrap {
       await this.generateTokens(auth);
 
     if (res) {
+      this.setAccessTokenCookie(res, newAccessToken);
       this.setRefreshTokenCookie(res, newRefreshToken);
       res.setHeader('x-new-access-token', newAccessToken);
     }
@@ -305,7 +420,7 @@ export class AuthService implements OnApplicationBootstrap {
       await this.redisService.del(this.getProfileCacheKey(authId));
     }
 
-    this.clearRefreshTokenCookie(res);
+    this.clearAuthCookies(res);
 
     return { message: 'Muvaffaqiyatli tizimdan chiqildi' };
   }
@@ -374,17 +489,21 @@ export class AuthService implements OnApplicationBootstrap {
       await this.authRepository.update(auth.id, { username: dto.username });
     }
 
-    // 2. Agar yangi parol berilgan bo'lsa
+    // 2. Agar yangi parol berilgan bo'lsa — hozirgi parol majburiy tekshiriladi va barcha sessiyalar bekor qilinadi
     const newPassword = dto.new_password || dto.password;
     if (newPassword) {
-      if (dto.current_password) {
-        const isCurrentValid = await bcrypt.compare(dto.current_password, auth.password);
-        if (!isCurrentValid) {
-          throw new BadRequestException("Hozirgi parol noto'g'ri kiritildi");
-        }
+      if (!dto.current_password) {
+        throw new BadRequestException("Parolni o'zgartirish uchun hozirgi parolni kiriting");
+      }
+      const isCurrentValid = await bcrypt.compare(dto.current_password, auth.password);
+      if (!isCurrentValid) {
+        throw new BadRequestException("Hozirgi parol noto'g'ri kiritildi");
       }
       const hashedPassword = await bcrypt.hash(newPassword, 10);
-      await this.authRepository.update(auth.id, { password: hashedPassword });
+      await this.authRepository.update(auth.id, {
+        password: hashedPassword,
+        hashed_refresh_token: null,
+      });
     }
 
     // 3. Profil ma'lumotlarini yangilash (ism, familiya, telefon)

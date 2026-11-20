@@ -17,7 +17,15 @@ import { GenerateFromTemplateDto } from './dto/generate-from-template.dto';
 import { DocumentTemplate } from './templates/document-template.entity';
 import { DocxEngineService } from './templates/docx-engine.service';
 import { buildTemplateContext } from './templates/template-data.builder';
-import { DocumentTemplateConfig, OFFICIAL_TEMPLATES } from './templates/templates.config';
+import { OFFICIAL_TEMPLATES } from './templates/templates.config';
+import {
+  buildSafeOnlyOfficeInternalUrl,
+  createSignedFileAccessQuery,
+  getOnlyOfficeJwtSecret,
+  signOnlyOfficeJwt,
+  verifyOnlyOfficeCallbackRequest,
+  verifySignedFileAccessQuery,
+} from './utils/onlyoffice-security.util';
 import { adaptToScript, formatAmountNumber, formatDateUzbek } from './utils/transliterate.util';
 
 @Injectable()
@@ -213,8 +221,10 @@ export class DocumentsService {
     // Docker tarmog'idagi ichki server URL
     const internalServerHost =
       this.configService.get<string>('ONLYOFFICE_SERVER_INTERNAL_HOST') || 'uvd_app_server:3000';
+    const onlyOfficeSecret = getOnlyOfficeJwtSecret(this.configService);
+    const signedQuery = createSignedFileAccessQuery('doc', doc.id, onlyOfficeSecret, 3600);
 
-    const fileUrl = `http://${internalServerHost}/documents/${doc.id}/file`;
+    const fileUrl = `http://${internalServerHost}/documents/${doc.id}/file?${signedQuery}`;
     const callbackUrl = `http://${internalServerHost}/documents/${doc.id}/callback`;
 
     const userName = user
@@ -224,7 +234,7 @@ export class DocumentsService {
     // Har bir tahrirlash sessiyasiga xatosiz va toza key
     const docKey = doc.doc_key || `doc_${doc.id}_${new Date(doc.updated_at).getTime()}`;
 
-    return {
+    const editorPayload = {
       documentType: 'word',
       document: {
         fileType: doc.file_type || 'docx',
@@ -271,49 +281,53 @@ export class DocumentsService {
           feedback: false,
         },
       },
+    };
+
+    const token = signOnlyOfficeJwt(editorPayload, onlyOfficeSecret);
+
+    return {
+      ...editorPayload,
+      token,
       documentId: doc.id,
       applicationId: doc.application_id,
       title: doc.title,
     };
   }
 
+  verifySignedFileAccess(id: string, exp?: string, sig?: string): boolean {
+    const onlyOfficeSecret = getOnlyOfficeJwtSecret(this.configService);
+    return verifySignedFileAccessQuery('doc', id, exp, sig, onlyOfficeSecret);
+  }
+
   /**
    * ONLYOFFICE dan hujjat saqlanganda keladigan callback handler
    */
-  async handleCallback(id: string, body: any): Promise<{ error: number }> {
-    this.logger.log(`ONLYOFFICE callback keldi (Doc ID: ${id}, Status: ${body?.status})`);
+  async handleCallback(id: string, body: any, req?: any): Promise<{ error: number }> {
+    const onlyOfficeSecret = getOnlyOfficeJwtSecret(this.configService);
+    const verifiedPayload = req
+      ? verifyOnlyOfficeCallbackRequest(req, body, onlyOfficeSecret)
+      : body;
+
+    const status = verifiedPayload?.status ?? body?.status;
+    this.logger.log(`ONLYOFFICE callback keldi (Doc ID: ${id}, Status: ${status})`);
 
     // 2 = Document is ready for saving, 6 = Document being edited, but force-saved
-    if (body?.status === 2 || body?.status === 6) {
-      const downloadUrl: string = body.url;
+    if (status === 2 || status === 6) {
+      const downloadUrl: string = (verifiedPayload?.url as string) || body?.url;
       if (!downloadUrl) {
-        this.logger.warn(`Callbackda status ${body.status} bo'lsa-da yuklab olish URL si yo'q`);
+        this.logger.warn(`Callbackda status ${status} bo'lsa-da yuklab olish URL si yo'q`);
         return { error: 0 };
       }
 
-      this.logger.log(`ONLYOFFICE original yuklab olish URL: ${downloadUrl}`);
-
       try {
-        // Docker tarmog'ida ONLYOFFICE port 80 da ishlaydi.
-        // downloadUrl dagi host/port o'rniga ichki 'http://uvd_app_onlyoffice' konteyneriga yo'naltiramiz
-        let targetUrl = downloadUrl;
-        try {
-          const parsed = new URL(downloadUrl);
-          targetUrl = `http://uvd_app_onlyoffice${parsed.pathname}${parsed.search}`;
-        } catch (e) {
-          this.logger.warn(`URL parse qilishda ogohlantirish: ${e}`);
-        }
+        // SSRF himoyasi: faqat ichki ishonchli ONLYOFFICE konteyneridan yuklab olamiz
+        const internalBaseUrl =
+          this.configService.get<string>('ONLYOFFICE_INTERNAL_URL') || 'http://uvd_app_onlyoffice';
+        const targetUrl = buildSafeOnlyOfficeInternalUrl(downloadUrl, internalBaseUrl);
 
         this.logger.log(`ONLYOFFICE ichki yuklab olish URL: ${targetUrl}`);
 
-        let response = await fetch(targetUrl);
-        if (!response.ok && targetUrl !== downloadUrl) {
-          this.logger.warn(
-            `Ichki URL muvaffaqiyatsiz bo'ldi (${response.status}), original URL dan sinab ko'rilmoqda...`,
-          );
-          response = await fetch(downloadUrl);
-        }
-
+        const response = await fetch(targetUrl);
         if (!response.ok) {
           throw new Error(`Faylni yuklab olishda xatolik: HTTP ${response.status}`);
         }

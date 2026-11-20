@@ -10,13 +10,20 @@ import {
   UseGuards,
 } from '@nestjs/common';
 
+import { CurrentUser } from '../../common/decorators/current-user.decorator';
+import { Roles } from '../../common/decorators/roles.decorator';
+import { Role } from '../../common/enums/role.enum';
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
+import { RolesGuard } from '../../common/guards/roles.guard';
+import type { JwtAccessPayload } from '../../common/types/jwt-payload.interface';
+import { normalizePagination } from '../../common/utils/pagination.util';
 import { CreateUserDto } from './dto/create-user.dto';
 import { UpdateUserDto } from './dto/update-user.dto';
 import { UsersService } from './users.service';
 
 @Controller('users')
-@UseGuards(JwtAuthGuard)
+@UseGuards(JwtAuthGuard, RolesGuard)
+@Roles(Role.SUPER_ADMIN, Role.ADMIN)
 export class UsersController {
   constructor(private readonly usersService: UsersService) {}
 
@@ -31,7 +38,8 @@ export class UsersController {
     @Query('phone_number') phoneNumber?: string,
     @Query('district_id') districtId?: string,
   ) {
-    return this.usersService.findAll(Number(page) || 1, Number(limit) || 10, search, {
+    const pagination = normalizePagination(page, limit, 10);
+    return this.usersService.findAll(pagination.page, pagination.limit, search, {
       role,
       fullName,
       username,
@@ -46,17 +54,21 @@ export class UsersController {
   }
 
   @Post()
-  create(@Body() dto: CreateUserDto) {
-    return this.usersService.create(dto);
+  create(@Body() dto: CreateUserDto, @CurrentUser() currentUser: JwtAccessPayload) {
+    return this.usersService.create(dto, currentUser);
   }
 
   @Patch(':id')
-  update(@Param('id') id: string, @Body() dto: UpdateUserDto) {
-    return this.usersService.update(id, dto);
+  update(
+    @Param('id') id: string,
+    @Body() dto: UpdateUserDto,
+    @CurrentUser() currentUser: JwtAccessPayload,
+  ) {
+    return this.usersService.update(id, dto, currentUser);
   }
 
   @Delete(':id')
-  remove(@Param('id') id: string) {
-    return this.usersService.remove(id);
+  remove(@Param('id') id: string, @CurrentUser() currentUser: JwtAccessPayload) {
+    return this.usersService.remove(id, currentUser);
   }
 }

@@ -10,17 +10,22 @@ import {
   UseGuards,
 } from '@nestjs/common';
 
+import { Roles } from '../../../common/decorators/roles.decorator';
+import { Role } from '../../../common/enums/role.enum';
 import { JwtAuthGuard } from '../../../common/guards/jwt-auth.guard';
+import { RolesGuard } from '../../../common/guards/roles.guard';
+import { normalizePagination } from '../../../common/utils/pagination.util';
 import { DistrictsService } from './districts.service';
 import { CreateDistrictDto } from './dto/create-district.dto';
 import { UpdateDistrictDto } from './dto/update-district.dto';
 
 @Controller('districts')
-@UseGuards(JwtAuthGuard)
+@UseGuards(JwtAuthGuard, RolesGuard)
 export class DistrictsController {
   constructor(private readonly districtsService: DistrictsService) {}
 
   @Post()
+  @Roles(Role.SUPER_ADMIN, Role.ADMIN, Role.INSPECTOR)
   create(@Body() dto: CreateDistrictDto) {
     return this.districtsService.create(dto);
   }
@@ -31,7 +36,8 @@ export class DistrictsController {
     @Query('limit') limit?: number,
     @Query('search') search?: string,
   ) {
-    return this.districtsService.findAll(Number(page) || 1, Number(limit) || 50, search);
+    const pagination = normalizePagination(page, limit, 50);
+    return this.districtsService.findAll(pagination.page, pagination.limit, search);
   }
 
   @Get(':id')
@@ -40,11 +46,13 @@ export class DistrictsController {
   }
 
   @Patch(':id')
+  @Roles(Role.SUPER_ADMIN, Role.ADMIN, Role.INSPECTOR)
   update(@Param('id') id: string, @Body() dto: UpdateDistrictDto) {
     return this.districtsService.update(id, dto);
   }
 
   @Delete(':id')
+  @Roles(Role.SUPER_ADMIN, Role.ADMIN)
   remove(@Param('id') id: string) {
     return this.districtsService.remove(id);
   }

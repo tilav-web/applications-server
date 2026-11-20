@@ -12,17 +12,31 @@ import {
 } from '@nestjs/common';
 import type { Response } from 'express';
 
+import { Roles } from '../../../common/decorators/roles.decorator';
+import { Role } from '../../../common/enums/role.enum';
 import { JwtAuthGuard } from '../../../common/guards/jwt-auth.guard';
+import { RolesGuard } from '../../../common/guards/roles.guard';
+import { normalizePagination } from '../../../common/utils/pagination.util';
 import { CreateTransferDto } from './dto/create-transfer.dto';
 import { UpdateTransferDto } from './dto/update-transfer.dto';
 import { TransfersService } from './transfers.service';
 
+const WRITE_ROLES = [
+  Role.SUPER_ADMIN,
+  Role.ADMIN,
+  Role.STAFF,
+  Role.DISTRICT_OFFICER,
+  Role.INSPECTOR,
+  Role.OPERATOR,
+];
+
 @Controller('transfers')
-@UseGuards(JwtAuthGuard)
+@UseGuards(JwtAuthGuard, RolesGuard)
 export class TransfersController {
   constructor(private readonly transfersService: TransfersService) {}
 
   @Post()
+  @Roles(...WRITE_ROLES)
   create(@Body() dto: CreateTransferDto) {
     return this.transfersService.create(dto);
   }
@@ -40,7 +54,8 @@ export class TransfersController {
     @Query('receiver_card_number') receiverCardNumber?: string,
     @Query('transfer_date') transferDate?: string,
   ) {
-    return this.transfersService.findAll(Number(page) || 1, Number(limit) || 10, search, {
+    const pagination = normalizePagination(page, limit, 10);
+    return this.transfersService.findAll(pagination.page, pagination.limit, search, {
       applicationId,
       status,
       providerId,
@@ -80,11 +95,13 @@ export class TransfersController {
   }
 
   @Patch(':id')
+  @Roles(...WRITE_ROLES)
   update(@Param('id') id: string, @Body() dto: UpdateTransferDto) {
     return this.transfersService.update(id, dto);
   }
 
   @Delete(':id')
+  @Roles(Role.SUPER_ADMIN, Role.ADMIN)
   remove(@Param('id') id: string) {
     return this.transfersService.remove(id);
   }

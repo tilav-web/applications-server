@@ -15,6 +15,7 @@ import type { Response } from 'express';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
 import type { JwtAccessPayload } from '../../common/types/jwt-payload.interface';
+import { normalizePagination } from '../../common/utils/pagination.util';
 import { ApplicationsService } from './applications.service';
 import { CreateApplicationDto } from './dto/create-application.dto';
 import { ExportCyberControlDto } from './dto/export-cybercontrol.dto';
@@ -52,10 +53,11 @@ export class ApplicationsController {
     @Query('relations_filter') relations_filter?: string,
     @CurrentUser() currentUser?: JwtAccessPayload,
   ) {
+    const pagination = normalizePagination(page, limit, 10);
     return this.applicationsService.findAll(
       {
-        page: Number(page) || 1,
-        limit: Number(limit) || 10,
+        page: pagination.page,
+        limit: pagination.limit,
         search,
         status,
         status_id,
@@ -155,8 +157,8 @@ export class ApplicationsController {
   }
 
   @Get(':id')
-  findOne(@Param('id') id: string) {
-    return this.applicationsService.findOne(id);
+  findOne(@Param('id') id: string, @CurrentUser() currentUser?: JwtAccessPayload) {
+    return this.applicationsService.findOne(id, currentUser);
   }
 
   @Patch(':id')

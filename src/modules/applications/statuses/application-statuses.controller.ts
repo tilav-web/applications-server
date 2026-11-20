@@ -10,17 +10,22 @@ import {
   UseGuards,
 } from '@nestjs/common';
 
+import { Roles } from '../../../common/decorators/roles.decorator';
+import { Role } from '../../../common/enums/role.enum';
 import { JwtAuthGuard } from '../../../common/guards/jwt-auth.guard';
+import { RolesGuard } from '../../../common/guards/roles.guard';
+import { normalizePagination } from '../../../common/utils/pagination.util';
 import { ApplicationStatusesService } from './application-statuses.service';
 import { CreateApplicationStatusDto } from './dto/create-application-status.dto';
 import { UpdateApplicationStatusDto } from './dto/update-application-status.dto';
 
 @Controller('application-statuses')
-@UseGuards(JwtAuthGuard)
+@UseGuards(JwtAuthGuard, RolesGuard)
 export class ApplicationStatusesController {
   constructor(private readonly statusesService: ApplicationStatusesService) {}
 
   @Post()
+  @Roles(Role.SUPER_ADMIN, Role.ADMIN, Role.INSPECTOR)
   create(@Body() dto: CreateApplicationStatusDto) {
     return this.statusesService.create(dto);
   }
@@ -31,7 +36,8 @@ export class ApplicationStatusesController {
     @Query('limit') limit?: number,
     @Query('search') search?: string,
   ) {
-    return this.statusesService.findAll(Number(page) || 1, Number(limit) || 50, search);
+    const pagination = normalizePagination(page, limit, 50);
+    return this.statusesService.findAll(pagination.page, pagination.limit, search);
   }
 
   @Get(':id')
@@ -40,11 +46,13 @@ export class ApplicationStatusesController {
   }
 
   @Patch(':id')
+  @Roles(Role.SUPER_ADMIN, Role.ADMIN, Role.INSPECTOR)
   update(@Param('id') id: string, @Body() dto: UpdateApplicationStatusDto) {
     return this.statusesService.update(id, dto);
   }
 
   @Delete(':id')
+  @Roles(Role.SUPER_ADMIN, Role.ADMIN)
   remove(@Param('id') id: string) {
     return this.statusesService.remove(id);
   }

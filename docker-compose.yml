@@ -11,36 +11,41 @@ services:
     container_name: uvd_app_server
     restart: unless-stopped
     ports:
-      - '${BACKEND_EXTERNAL_PORT:-3001}:3000'
+      - '127.0.0.1:${BACKEND_EXTERNAL_PORT:-3001}:3000'
     volumes:
       - ./templates:/usr/src/app/templates
     environment:
       - PORT=3000
       - NODE_ENV=${NODE_ENV:-development}
+      - COOKIE_SECURE=${COOKIE_SECURE:-true}
+      - CORS_ORIGINS=${CORS_ORIGINS:-http://localhost:5173,http://localhost:3000}
       # Ma'lumotlar bazasi sozlamalari
       - DB_HOST=postgres
       - DB_PORT=5432
       - DB_USERNAME=${DB_USERNAME:-postgres}
-      - DB_PASSWORD=${DB_PASSWORD:-postgres_password_2026}
+      - DB_PASSWORD=${DB_PASSWORD:?DB_PASSWORD environment variable is required}
       - DB_NAME=${DB_NAME:-uvd_app_db}
-      - DB_SYNCHRONIZE=${DB_SYNCHRONIZE:-true}
+      - DB_SYNCHRONIZE=${DB_SYNCHRONIZE:-false}
       # Redis sozlamalari
       - REDIS_HOST=redis
       - REDIS_PORT=6379
-      - REDIS_PASSWORD=${REDIS_PASSWORD:-}
+      - REDIS_PASSWORD=${REDIS_PASSWORD:?REDIS_PASSWORD environment variable is required}
       # MinIO (Fayllar xotirasi) sozlamalari
       - MINIO_ENDPOINT=minio
       - MINIO_PORT=9000
       - MINIO_ROOT_USER=${MINIO_ROOT_USER:-minioadmin}
-      - MINIO_ROOT_PASSWORD=${MINIO_ROOT_PASSWORD:-minioadmin123}
+      - MINIO_ROOT_PASSWORD=${MINIO_ROOT_PASSWORD:?MINIO_ROOT_PASSWORD environment variable is required}
       # JWT sozlamalari
-      - JWT_ACCESS_SECRET=${JWT_ACCESS_SECRET:-uvd_access_token_secret_key_2026}
-      - JWT_REFRESH_SECRET=${JWT_REFRESH_SECRET:-uvd_refresh_token_secret_key_2026}
+      - JWT_ACCESS_SECRET=${JWT_ACCESS_SECRET:?JWT_ACCESS_SECRET environment variable is required}
+      - JWT_REFRESH_SECRET=${JWT_REFRESH_SECRET:?JWT_REFRESH_SECRET environment variable is required}
       - JWT_ACCESS_EXPIRES_IN=${JWT_ACCESS_EXPIRES_IN:-15m}
       - JWT_REFRESH_EXPIRES_IN=${JWT_REFRESH_EXPIRES_IN:-7d}
+      # ONLYOFFICE JWT sozlamalari
+      - ONLYOFFICE_JWT_SECRET=${ONLYOFFICE_JWT_SECRET:?ONLYOFFICE_JWT_SECRET environment variable is required}
+      - ONLYOFFICE_INTERNAL_URL=${ONLYOFFICE_INTERNAL_URL:-http://uvd_app_onlyoffice}
       # Super Admin sozlamalari (seed)
       - SUPER_ADMIN_USERNAME=${SUPER_ADMIN_USERNAME:-admin}
-      - SUPER_ADMIN_PASSWORD=${SUPER_ADMIN_PASSWORD:-admin123}
+      - SUPER_ADMIN_PASSWORD=${SUPER_ADMIN_PASSWORD:?SUPER_ADMIN_PASSWORD environment variable is required}
       - SUPER_ADMIN_FIRST_NAME=${SUPER_ADMIN_FIRST_NAME:-Admin}
       - SUPER_ADMIN_LAST_NAME=${SUPER_ADMIN_LAST_NAME:-Boshqaruvchi}
       - SUPER_ADMIN_PHONE=${SUPER_ADMIN_PHONE:-+998901234567}
@@ -62,10 +67,10 @@ services:
     container_name: uvd_app_postgres
     restart: unless-stopped
     ports:
-      - '${DB_EXTERNAL_PORT:-5436}:5432'
+      - '127.0.0.1:${DB_EXTERNAL_PORT:-5436}:5432'
     environment:
       POSTGRES_USER: ${DB_USERNAME:-postgres}
-      POSTGRES_PASSWORD: ${DB_PASSWORD:-postgres_password_2026}
+      POSTGRES_PASSWORD: ${DB_PASSWORD:?DB_PASSWORD environment variable is required}
       POSTGRES_DB: ${DB_NAME:-uvd_app_db}
     volumes:
       - postgres_data:/var/lib/postgresql/data
@@ -84,15 +89,18 @@ services:
     image: redis:7-alpine
     container_name: uvd_app_redis
     restart: unless-stopped
+    command: ['redis-server', '--requirepass', '${REDIS_PASSWORD:?REDIS_PASSWORD environment variable is required}']
     ports:
-      - '${REDIS_EXTERNAL_PORT:-6383}:6379'
+      - '127.0.0.1:${REDIS_EXTERNAL_PORT:-6383}:6379'
     volumes:
       - redis_data:/data
     healthcheck:
-      test: ['CMD', 'redis-cli', 'ping']
+      test: ['CMD-SHELL', 'REDISCLI_AUTH="$REDIS_PASSWORD" redis-cli ping']
       interval: 5s
       timeout: 5s
       retries: 5
+    environment:
+      REDIS_PASSWORD: ${REDIS_PASSWORD:?REDIS_PASSWORD environment variable is required}
     networks:
       - uvd_app_network
 
@@ -107,11 +115,11 @@ services:
     entrypoint: minio
     command: server /data --console-address ":9001"
     ports:
-      - '${MINIO_EXTERNAL_PORT:-9200}:9000' # MinIO S3 API
-      - '${MINIO_CONSOLE_EXTERNAL_PORT:-9201}:9001' # Web Console UI
+      - '127.0.0.1:${MINIO_EXTERNAL_PORT:-9200}:9000' # MinIO S3 API (faqat localhost)
+      - '127.0.0.1:${MINIO_CONSOLE_EXTERNAL_PORT:-9201}:9001' # Web Console UI (faqat localhost)
     environment:
       MINIO_ROOT_USER: ${MINIO_ROOT_USER:-minioadmin}
-      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-minioadmin123}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:?MINIO_ROOT_PASSWORD environment variable is required}
     volumes:
       - minio_data:/data
     healthcheck:
@@ -132,7 +140,9 @@ services:
     ports:
       - '${ONLYOFFICE_PORT:-8084}:80'
     environment:
-      - JWT_ENABLED=false
+      - JWT_ENABLED=true
+      - JWT_SECRET=${ONLYOFFICE_JWT_SECRET:?ONLYOFFICE_JWT_SECRET environment variable is required}
+      - JWT_HEADER=Authorization
       - ALLOW_PRIVATE_IP_ADDRESS=true
     networks:
       - uvd_app_network

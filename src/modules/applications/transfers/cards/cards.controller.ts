@@ -12,17 +12,31 @@ import {
 } from '@nestjs/common';
 import type { Response } from 'express';
 
+import { Roles } from '../../../../common/decorators/roles.decorator';
+import { Role } from '../../../../common/enums/role.enum';
 import { JwtAuthGuard } from '../../../../common/guards/jwt-auth.guard';
+import { RolesGuard } from '../../../../common/guards/roles.guard';
+import { normalizePagination } from '../../../../common/utils/pagination.util';
 import { CardsService } from './cards.service';
 import { CreateCardDto } from './dto/create-card.dto';
 import { UpdateCardDto } from './dto/update-card.dto';
 
+const WRITE_ROLES = [
+  Role.SUPER_ADMIN,
+  Role.ADMIN,
+  Role.STAFF,
+  Role.DISTRICT_OFFICER,
+  Role.INSPECTOR,
+  Role.OPERATOR,
+];
+
 @Controller('cards')
-@UseGuards(JwtAuthGuard)
+@UseGuards(JwtAuthGuard, RolesGuard)
 export class CardsController {
   constructor(private readonly cardsService: CardsService) {}
 
   @Post()
+  @Roles(...WRITE_ROLES)
   create(@Body() dto: CreateCardDto) {
     return this.cardsService.create(dto);
   }
@@ -40,7 +54,8 @@ export class CardsController {
     @Query('phone_number') phoneNumber?: string,
     @Query('expire_date') expireDate?: string,
   ) {
-    return this.cardsService.findAll(Number(page) || 1, Number(limit) || 10, search, citizenId, {
+    const pagination = normalizePagination(page, limit, 10);
+    return this.cardsService.findAll(pagination.page, pagination.limit, search, citizenId, {
       bankId,
       ownerState,
       cardNumber,
@@ -78,11 +93,13 @@ export class CardsController {
   }
 
   @Patch(':id')
+  @Roles(...WRITE_ROLES)
   update(@Param('id') id: string, @Body() dto: UpdateCardDto) {
     return this.cardsService.update(id, dto);
   }
 
   @Delete(':id')
+  @Roles(Role.SUPER_ADMIN, Role.ADMIN)
   remove(@Param('id') id: string) {
     return this.cardsService.remove(id);
   }

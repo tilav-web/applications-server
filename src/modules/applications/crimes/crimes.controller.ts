@@ -10,17 +10,22 @@ import {
   UseGuards,
 } from '@nestjs/common';
 
+import { Roles } from '../../../common/decorators/roles.decorator';
+import { Role } from '../../../common/enums/role.enum';
 import { JwtAuthGuard } from '../../../common/guards/jwt-auth.guard';
+import { RolesGuard } from '../../../common/guards/roles.guard';
+import { normalizePagination } from '../../../common/utils/pagination.util';
 import { CrimesService } from './crimes.service';
 import { CreateCrimeDto } from './dto/create-crime.dto';
 import { UpdateCrimeDto } from './dto/update-crime.dto';
 
 @Controller('crimes')
-@UseGuards(JwtAuthGuard)
+@UseGuards(JwtAuthGuard, RolesGuard)
 export class CrimesController {
   constructor(private readonly crimesService: CrimesService) {}
 
   @Post()
+  @Roles(Role.SUPER_ADMIN, Role.ADMIN, Role.INSPECTOR)
   create(@Body() dto: CreateCrimeDto) {
     return this.crimesService.create(dto);
   }
@@ -31,7 +36,8 @@ export class CrimesController {
     @Query('limit') limit?: number,
     @Query('search') search?: string,
   ) {
-    return this.crimesService.findAll(Number(page) || 1, Number(limit) || 50, search);
+    const pagination = normalizePagination(page, limit, 50);
+    return this.crimesService.findAll(pagination.page, pagination.limit, search);
   }
 
   @Get(':id')
@@ -40,11 +46,13 @@ export class CrimesController {
   }
 
   @Patch(':id')
+  @Roles(Role.SUPER_ADMIN, Role.ADMIN, Role.INSPECTOR)
   update(@Param('id') id: string, @Body() dto: UpdateCrimeDto) {
     return this.crimesService.update(id, dto);
   }
 
   @Delete(':id')
+  @Roles(Role.SUPER_ADMIN, Role.ADMIN)
   remove(@Param('id') id: string) {
     return this.crimesService.remove(id);
   }

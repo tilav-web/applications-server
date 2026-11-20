@@ -1,6 +1,6 @@
 import { Module } from '@nestjs/common';
 import { ConfigModule, ConfigService } from '@nestjs/config';
-import { APP_GUARD } from '@nestjs/core';
+import { APP_GUARD, APP_INTERCEPTOR } from '@nestjs/core';
 import { ThrottlerModule } from '@nestjs/throttler';
 import { TypeOrmModule } from '@nestjs/typeorm';
 
@@ -26,6 +26,9 @@ import { Card } from './modules/applications/transfers/cards/card.entity';
 import { TransferCustomField } from './modules/applications/transfers/custom-fields/transfer-custom-field.entity';
 import { PaymentProvider } from './modules/applications/transfers/payment_providers/payment_provider.entity';
 import { Transfer } from './modules/applications/transfers/transfer.entity';
+import { AuditInterceptor } from './modules/audit/audit.interceptor';
+import { AuditModule } from './modules/audit/audit.module';
+import { AuditLog } from './modules/audit/audit-log.entity';
 import { Auth } from './modules/auth/auth.entity';
 import { AuthModule } from './modules/auth/auth.module';
 import { FinancialFlowModule } from './modules/financial-flow/financial-flow.module';
@@ -47,43 +50,55 @@ import { UsersModule } from './modules/users/users.module';
     TypeOrmModule.forRootAsync({
       imports: [ConfigModule],
       inject: [ConfigService],
-      useFactory: (config: ConfigService) => ({
-        type: 'postgres',
-        host: config.get<string>('DB_HOST', 'localhost'),
-        port: parseInt(config.get<string>('DB_PORT', '5434'), 10),
-        username: config.get<string>('DB_USERNAME', 'postgres'),
-        password: config.get<string>('DB_PASSWORD', 'postgres_password_2026'),
-        database: config.get<string>('DB_NAME', 'uvd_app_db'),
-        entities: [
-          Auth,
-          User,
-          Application,
-          ApplicationCustomField,
-          Citizen,
-          Crime,
-          CrimeMethod,
-          District,
-          Mahalla,
-          Transfer,
-          TransferCustomField,
-          Card,
-          PaymentProvider,
-          Bank,
-          ApplicationDocument,
-          DocumentTemplate,
-          OccupationCategory,
-          Occupation,
-          ApplicationSource,
-          DepartmentService,
-          RejectionReason,
-          DecisionType,
-          PhoneEntity,
-          DigitalIdentifierEntity,
-          EntityApplicationLink,
-        ],
-        synchronize: config.get<string>('DB_SYNCHRONIZE', 'true') === 'true',
-        autoLoadEntities: true,
-      }),
+      useFactory: (config: ConfigService) => {
+        const isProduction = config.get<string>('NODE_ENV') === 'production';
+        const dbPassword = config.get<string>('DB_PASSWORD');
+        if (isProduction && (!dbPassword || dbPassword === 'postgres_password_2026')) {
+          throw new Error(
+            'XAVFSIZLIK XATOLIGI: Production muhitida DB_PASSWORD kuchli maxfiy qiymat bilan sozlanishi shart!',
+          );
+        }
+
+        const defaultSync = isProduction ? 'false' : 'true';
+        return {
+          type: 'postgres',
+          host: config.get<string>('DB_HOST', 'localhost'),
+          port: parseInt(config.get<string>('DB_PORT', '5434'), 10),
+          username: config.get<string>('DB_USERNAME', 'postgres'),
+          password: dbPassword || 'postgres_password_2026',
+          database: config.get<string>('DB_NAME', 'uvd_app_db'),
+          entities: [
+            Auth,
+            User,
+            AuditLog,
+            Application,
+            ApplicationCustomField,
+            Citizen,
+            Crime,
+            CrimeMethod,
+            District,
+            Mahalla,
+            Transfer,
+            TransferCustomField,
+            Card,
+            PaymentProvider,
+            Bank,
+            ApplicationDocument,
+            DocumentTemplate,
+            OccupationCategory,
+            Occupation,
+            ApplicationSource,
+            DepartmentService,
+            RejectionReason,
+            DecisionType,
+            PhoneEntity,
+            DigitalIdentifierEntity,
+            EntityApplicationLink,
+          ],
+          synchronize: config.get<string>('DB_SYNCHRONIZE', defaultSync) === 'true',
+          autoLoadEntities: true,
+        };
+      },
     }),
     RedisModule,
     MinioModule,
@@ -100,6 +115,7 @@ import { UsersModule } from './modules/users/users.module';
       },
     ]),
     AuthModule,
+    AuditModule,
     UsersModule,
     ApplicationsModule,
     FinancialFlowModule,
@@ -110,6 +126,10 @@ import { UsersModule } from './modules/users/users.module';
     {
       provide: APP_GUARD,
       useClass: AppThrottlerGuard,
+    },
+    {
+      provide: APP_INTERCEPTOR,
+      useClass: AuditInterceptor,
     },
   ],
 })

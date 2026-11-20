@@ -1,9 +1,12 @@
 import { Body, Controller, Delete, Get, Param, Post, Put, Query, UseGuards } from '@nestjs/common';
 
+import { Roles } from '../../../common/decorators/roles.decorator';
+import { Role } from '../../../common/enums/role.enum';
 import { JwtAuthGuard } from '../../../common/guards/jwt-auth.guard';
+import { RolesGuard } from '../../../common/guards/roles.guard';
 import { OccupationsService } from './occupations.service';
 
-@UseGuards(JwtAuthGuard)
+@UseGuards(JwtAuthGuard, RolesGuard)
 @Controller()
 export class OccupationsController {
   constructor(private readonly occupationsService: OccupationsService) {}
@@ -17,6 +20,7 @@ export class OccupationsController {
   }
 
   @Post('occupation-categories')
+  @Roles(Role.SUPER_ADMIN, Role.ADMIN, Role.INSPECTOR)
   async createCategory(
     @Body()
     body: {
@@ -30,6 +34,7 @@ export class OccupationsController {
   }
 
   @Put('occupation-categories/:id')
+  @Roles(Role.SUPER_ADMIN, Role.ADMIN, Role.INSPECTOR)
   async updateCategory(
     @Param('id') id: string,
     @Body()
@@ -44,6 +49,7 @@ export class OccupationsController {
   }
 
   @Delete('occupation-categories/:id')
+  @Roles(Role.SUPER_ADMIN, Role.ADMIN)
   async deleteCategory(@Param('id') id: string) {
     return this.occupationsService.removeCategory(id);
   }
@@ -60,6 +66,7 @@ export class OccupationsController {
   }
 
   @Post('occupations')
+  @Roles(Role.SUPER_ADMIN, Role.ADMIN, Role.INSPECTOR)
   async createOccupation(
     @Body()
     body: {
@@ -74,6 +81,7 @@ export class OccupationsController {
   }
 
   @Put('occupations/:id')
+  @Roles(Role.SUPER_ADMIN, Role.ADMIN, Role.INSPECTOR)
   async updateOccupation(
     @Param('id') id: string,
     @Body()
@@ -89,11 +97,13 @@ export class OccupationsController {
   }
 
   @Delete('occupations/:id')
+  @Roles(Role.SUPER_ADMIN, Role.ADMIN)
   async deleteOccupation(@Param('id') id: string) {
     return this.occupationsService.removeOccupation(id);
   }
 
   @Post('occupations/seed')
+  @Roles(Role.SUPER_ADMIN, Role.ADMIN)
   async seed() {
     await this.occupationsService.seedDefaults();
     return { success: true, message: 'Boshlang‘ich kasb toifalari muvaffaqiyatli saqlandi' };

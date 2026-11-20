@@ -14,15 +14,28 @@ import {
 import type { Response } from 'express';
 
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
+import { Roles } from '../../common/decorators/roles.decorator';
+import { Role } from '../../common/enums/role.enum';
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
+import { RolesGuard } from '../../common/guards/roles.guard';
 import type { JwtAccessPayload } from '../../common/types/jwt-payload.interface';
+import { normalizePagination } from '../../common/utils/pagination.util';
 import type { EntityLinkRole } from './entities/entity-application-link.entity';
 import { IntelligenceService } from './intelligence.service';
 import { IntelligenceExportService } from './intelligence-export.service';
 import { IntelligenceSyncService } from './intelligence-sync.service';
 
+const WRITE_ROLES = [
+  Role.SUPER_ADMIN,
+  Role.ADMIN,
+  Role.STAFF,
+  Role.DISTRICT_OFFICER,
+  Role.INSPECTOR,
+  Role.OPERATOR,
+];
+
 @Controller('intelligence')
-@UseGuards(JwtAuthGuard)
+@UseGuards(JwtAuthGuard, RolesGuard)
 export class IntelligenceController {
   constructor(
     private readonly intelligenceService: IntelligenceService,
@@ -37,12 +50,8 @@ export class IntelligenceController {
     @Query('limit') limit?: number,
     @CurrentUser() currentUser?: JwtAccessPayload,
   ) {
-    return this.intelligenceService.globalSearch(
-      q || '',
-      category,
-      Number(limit) || 30,
-      currentUser,
-    );
+    const { limit: safeLimit } = normalizePagination(1, limit, 30, 100);
+    return this.intelligenceService.globalSearch(q || '', category, safeLimit, currentUser);
   }
 
   @Get('radar')
@@ -63,6 +72,7 @@ export class IntelligenceController {
   }
 
   @Post('sync')
+  @Roles(Role.SUPER_ADMIN, Role.ADMIN)
   resyncAll() {
     return this.syncService.syncAllExistingData();
   }
@@ -125,6 +135,7 @@ export class IntelligenceController {
   // ===========================================================================
 
   @Post('dossier/citizen/:id/phones')
+  @Roles(...WRITE_ROLES)
   addPhoneToCitizen(
     @Param('id') citizenId: string,
     @Body() body: { phone_number: string; label?: string; notes?: string; is_primary?: boolean },
@@ -134,11 +145,13 @@ export class IntelligenceController {
   }
 
   @Delete('phones/:phoneId')
+  @Roles(...WRITE_ROLES)
   removePhone(@Param('phoneId') phoneId: string, @CurrentUser() currentUser?: JwtAccessPayload) {
     return this.intelligenceService.removePhoneFromCitizen(phoneId, currentUser);
   }
 
   @Post('dossier/citizen/:id/cards')
+  @Roles(...WRITE_ROLES)
   addCardToCitizen(
     @Param('id') citizenId: string,
     @Body()
@@ -155,6 +168,7 @@ export class IntelligenceController {
   }
 
   @Patch('cards/:cardId/unlink-citizen')
+  @Roles(...WRITE_ROLES)
   unlinkCardFromCitizen(
     @Param('cardId') cardId: string,
     @CurrentUser() currentUser?: JwtAccessPayload,
@@ -163,6 +177,7 @@ export class IntelligenceController {
   }
 
   @Post('dossier/citizen/:id/identifiers')
+  @Roles(...WRITE_ROLES)
   addIdentifierToCitizen(
     @Param('id') citizenId: string,
     @Body() body: { type: string; value: string; type_label?: string; notes?: string },
@@ -172,6 +187,7 @@ export class IntelligenceController {
   }
 
   @Delete('identifiers/:identifierId')
+  @Roles(...WRITE_ROLES)
   removeIdentifier(
     @Param('identifierId') identifierId: string,
     @CurrentUser() currentUser?: JwtAccessPayload,
@@ -180,6 +196,7 @@ export class IntelligenceController {
   }
 
   @Post('bind-to-citizen')
+  @Roles(...WRITE_ROLES)
   bindEntityToCitizen(
     @Body()
     body: {
@@ -193,6 +210,7 @@ export class IntelligenceController {
   }
 
   @Post('transfers/transit')
+  @Roles(...WRITE_ROLES)
   createTransitTransfer(
     @Body()
     body: {
@@ -217,6 +235,7 @@ export class IntelligenceController {
   }
 
   @Post('application-role-link')
+  @Roles(...WRITE_ROLES)
   linkCitizenRoleToApplication(
     @Body()
     body: {
@@ -231,6 +250,7 @@ export class IntelligenceController {
   }
 
   @Post('confirm-match')
+  @Roles(...WRITE_ROLES)
   confirmProbableMatch(
     @Body() body: { citizen_id: string; card_id: string },
     @CurrentUser() currentUser?: JwtAccessPayload,

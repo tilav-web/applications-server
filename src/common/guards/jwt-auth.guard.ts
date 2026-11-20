@@ -1,5 +1,4 @@
 import { CanActivate, ExecutionContext, Injectable, UnauthorizedException } from '@nestjs/common';
-import { ConfigService } from '@nestjs/config';
 import { JwtService } from '@nestjs/jwt';
 import type { Request, Response } from 'express';
 
@@ -10,7 +9,6 @@ import type { JwtAccessPayload } from '../types/jwt-payload.interface';
 export class JwtAuthGuard implements CanActivate {
   constructor(
     private readonly jwtService: JwtService,
-    private readonly configService: ConfigService,
     private readonly authService: AuthService,
   ) {}
 
@@ -19,19 +17,19 @@ export class JwtAuthGuard implements CanActivate {
     const response = context.switchToHttp().getResponse<Response>();
 
     const authHeader = request.headers.authorization;
+    const cookies = request.cookies as Record<string, string> | undefined;
     let accessToken: string | null = null;
 
     if (authHeader && authHeader.startsWith('Bearer ')) {
       accessToken = authHeader.substring(7);
+    } else if (cookies?.['access_token']) {
+      accessToken = cookies['access_token'];
     }
 
     if (accessToken) {
       try {
         const payload = await this.jwtService.verifyAsync<JwtAccessPayload>(accessToken, {
-          secret: this.configService.get<string>(
-            'JWT_ACCESS_SECRET',
-            'uvd_access_token_secret_key_2026',
-          ),
+          secret: this.authService.getAccessSecret(),
         });
         request.user = payload;
         return true;
@@ -40,7 +38,7 @@ export class JwtAuthGuard implements CanActivate {
       }
     }
 
-    const refreshToken = request.cookies?.['refresh_token'] as string | undefined;
+    const refreshToken = cookies?.['refresh_token'];
     if (!refreshToken) {
       throw new UnauthorizedException(
         "Autentifikatsiyadan o'tilmagan yoki sessiya muddati tugagan",

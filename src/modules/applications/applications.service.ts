@@ -2471,7 +2471,7 @@ export class ApplicationsService {
     return 'Bank';
   }
 
-  async findOne(id: string): Promise<Application> {
+  async findOne(id: string, currentUser?: JwtAccessPayload): Promise<Application> {
     const application = await this.applicationRepo.findOne({
       where: { id },
       relations: {
@@ -2523,6 +2523,20 @@ export class ApplicationsService {
 
     if (!application) {
       throw new NotFoundException(`Ariza (ID: ${id}) topilmadi`);
+    }
+
+    // IDOR himoyasi: Tuman xodimi faqat o'ziga biriktirilgan tuman(lar) arizasini ko'ra oladi
+    if (currentUser && currentUser.role === Role.DISTRICT_OFFICER) {
+      const user = await this.userRepo.findOne({
+        where: { auth_id: currentUser.sub },
+        relations: { assigned_districts: true },
+      });
+      const assignedDistrictIds = user?.assigned_districts?.map((d) => d.id) || [];
+      if (application.district_id && !assignedDistrictIds.includes(application.district_id)) {
+        throw new ForbiddenException(
+          "Siz faqat o'zingizga biriktirilgan tuman(lar) arizalarini ko'rishingiz mumkin",
+        );
+      }
     }
 
     return application;
