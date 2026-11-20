@@ -18,7 +18,7 @@ ENV NODE_ENV=production
 ENV PORT=3000
 
 COPY package*.json ./
-RUN npm ci --omit=dev && npm cache clean --force
+RUN npm install --omit=dev && npm cache clean --force
 
 COPY --from=builder --chown=node:node /usr/src/app/dist ./dist
 COPY --chown=node:node templates ./templates
