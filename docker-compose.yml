@@ -43,6 +43,9 @@ services:
       # ONLYOFFICE JWT sozlamalari
       - ONLYOFFICE_JWT_SECRET=${ONLYOFFICE_JWT_SECRET:?ONLYOFFICE_JWT_SECRET environment variable is required}
       - ONLYOFFICE_INTERNAL_URL=${ONLYOFFICE_INTERNAL_URL:-http://uvd_app_onlyoffice}
+      # CrowdSec LAPI integratsiyasi
+      - CROWDSEC_LAPI_URL=${CROWDSEC_LAPI_URL:-http://uvd_app_crowdsec:8080}
+      - CROWDSEC_LAPI_KEY=${CROWDSEC_LAPI_KEY:-}
       # Super Admin sozlamalari (seed)
       - SUPER_ADMIN_USERNAME=${SUPER_ADMIN_USERNAME:-admin}
       - SUPER_ADMIN_PASSWORD=${SUPER_ADMIN_PASSWORD:?SUPER_ADMIN_PASSWORD environment variable is required}
@@ -147,6 +150,25 @@ services:
     networks:
       - uvd_app_network
 
+  # ---------------------------------------------------------------------------
+  # CrowdSec Intrusion Detection & Traffic Security Engine
+  # ---------------------------------------------------------------------------
+  crowdsec:
+    image: crowdsecurity/crowdsec:latest
+    container_name: uvd_app_crowdsec
+    restart: unless-stopped
+    environment:
+      - COLLECTIONS=crowdsecurity/nginx crowdsecurity/http-cve crowdsecurity/base-http-scenarios
+      - GID=1000
+      - BOUNCER_KEY_UVD_DASHBOARD=${CROWDSEC_LAPI_KEY:-}
+    volumes:
+      - ./crowdsec/acquis.yaml:/etc/crowdsec/acquis.yaml:ro
+      - /var/log/nginx:/var/log/nginx:ro
+      - crowdsec_db:/var/lib/crowdsec/data
+      - crowdsec_config:/etc/crowdsec
+    networks:
+      - uvd_app_network
+
 volumes:
   postgres_data:
     name: uvd_app_postgres_data
@@ -154,6 +176,10 @@ volumes:
     name: uvd_app_redis_data
   minio_data:
     name: uvd_app_minio_data
+  crowdsec_db:
+    name: uvd_app_crowdsec_db
+  crowdsec_config:
+    name: uvd_app_crowdsec_config
 
 networks:
   uvd_app_network:

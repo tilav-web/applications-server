@@ -29,6 +29,7 @@ import { Transfer } from './modules/applications/transfers/transfer.entity';
 import { AuditInterceptor } from './modules/audit/audit.interceptor';
 import { AuditModule } from './modules/audit/audit.module';
 import { AuditLog } from './modules/audit/audit-log.entity';
+import { SystemSetting } from './modules/audit/system-setting.entity';
 import { Auth } from './modules/auth/auth.entity';
 import { AuthModule } from './modules/auth/auth.module';
 import { FinancialFlowModule } from './modules/financial-flow/financial-flow.module';
@@ -71,6 +72,7 @@ import { UsersModule } from './modules/users/users.module';
             Auth,
             User,
             AuditLog,
+            SystemSetting,
             Application,
             ApplicationCustomField,
             Citizen,

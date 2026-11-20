@@ -1,8 +1,13 @@
 import { Column, CreateDateColumn, Entity, Index, PrimaryGeneratedColumn } from 'typeorm';
 
+export type AuditSeverity = 'INFO' | 'WARNING' | 'CRITICAL';
+
 @Entity('audit_logs')
-@Index(['created_at'])
-@Index(['user_id', 'created_at'])
+@Index('IDX_audit_logs_created_at', ['created_at'])
+@Index('IDX_audit_logs_user_created', ['user_id', 'created_at'])
+@Index('IDX_audit_logs_action', ['action'])
+@Index('IDX_audit_logs_entity_type', ['entity_type'])
+@Index('IDX_audit_logs_severity', ['severity'])
 export class AuditLog {
   @PrimaryGeneratedColumn('uuid')
   id!: string;
@@ -15,6 +20,21 @@ export class AuditLog {
 
   @Column({ type: 'varchar', length: 64, nullable: true })
   role!: string | null;
+
+  @Column({ type: 'varchar', length: 64, default: 'API_REQUEST' })
+  action!: string;
+
+  @Column({ type: 'varchar', length: 64, nullable: true })
+  entity_type!: string | null;
+
+  @Column({ type: 'varchar', length: 128, nullable: true })
+  entity_id!: string | null;
+
+  @Column({ type: 'varchar', length: 512, nullable: true })
+  summary!: string | null;
+
+  @Column({ type: 'jsonb', nullable: true })
+  details!: Record<string, unknown> | null;
 
   @Column({ type: 'varchar', length: 16 })
   method!: string;
@@ -31,9 +51,15 @@ export class AuditLog {
   @Column({ type: 'int', default: 200 })
   status_code!: number;
 
+  @Column({ type: 'boolean', default: true })
+  is_success!: boolean;
+
+  @Column({ type: 'varchar', length: 16, default: 'INFO' })
+  severity!: AuditSeverity;
+
   @Column({ type: 'int', default: 0 })
   duration_ms!: number;
 
-  @CreateDateColumn()
+  @CreateDateColumn({ type: 'timestamp with time zone' })
   created_at!: Date;
 }
