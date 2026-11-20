@@ -163,8 +163,10 @@ export class MahallasService implements OnApplicationBootstrap {
     }
     if (dto.district_id !== undefined) {
       mahalla.district_id = dto.district_id;
+      delete (mahalla as unknown as Record<string, unknown>).district;
     }
-    return this.mahallaRepo.save(mahalla);
+    await this.mahallaRepo.save(mahalla);
+    return this.findOne(id);
   }
 
   async remove(id: string): Promise<{ success: boolean; message: string }> {

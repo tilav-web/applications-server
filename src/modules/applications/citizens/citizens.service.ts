@@ -258,10 +258,24 @@ export class CitizensService {
     if (dto.phone_number !== undefined) {
       updatedData.phone_number = dto.phone_number ? dto.phone_number.replace(/\D/g, '') : null;
     }
+    // Stale loaded relation ob'ektlarini tozalash (TypeORM FK yangilanishini bosib ketmasligi uchun)
+    if (dto.district_id !== undefined)
+      delete (citizen as unknown as Record<string, unknown>).district;
+    if (dto.mahalla_id !== undefined)
+      delete (citizen as unknown as Record<string, unknown>).mahalla;
+    if (dto.occupation_category_id !== undefined)
+      delete (citizen as unknown as Record<string, unknown>).occupation_category;
+    if (dto.occupation_id !== undefined)
+      delete (citizen as unknown as Record<string, unknown>).occupation;
+    delete (citizen as unknown as Record<string, unknown>).cards;
+    delete (citizen as unknown as Record<string, unknown>).phones;
+    delete (citizen as unknown as Record<string, unknown>).digital_identifiers;
+    delete (citizen as unknown as Record<string, unknown>).applications;
+
     Object.assign(citizen, updatedData);
     const saved = await this.citizenRepo.save(citizen);
     await this.intelligenceSync.syncCitizenEntity(saved);
-    return saved;
+    return this.findOne(id);
   }
 
   async remove(id: string): Promise<{ success: boolean; message: string }> {

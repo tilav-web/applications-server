@@ -202,8 +202,14 @@ export class CardsService {
     if (dto.card_number !== undefined) {
       updatedData.card_number = dto.card_number ? dto.card_number.replace(/\D/g, '') : '';
     }
+    // Stale loaded relation ob'ektlarini tozalash (TypeORM FK yangilanishini bosib ketmasligi uchun)
+    if (dto.bank_id !== undefined) delete (card as unknown as Record<string, unknown>).bank;
+    if (dto.citizen_id !== undefined) delete (card as unknown as Record<string, unknown>).citizen;
+    delete (card as unknown as Record<string, unknown>).applications;
+
     Object.assign(card, updatedData);
-    return this.cardRepo.save(card);
+    await this.cardRepo.save(card);
+    return this.findOne(id);
   }
 
   async remove(id: string): Promise<{ success: boolean; message: string }> {

@@ -350,6 +350,15 @@ export class TransfersService {
       Object.assign(transfer, transferData);
     }
 
+    // Stale loaded relation ob'ektlarini tozalash (TypeORM FK yangilanishini bosib ketmasligi uchun)
+    delete (transfer as unknown as Record<string, unknown>).payment_provider;
+    delete (transfer as unknown as Record<string, unknown>).sender_card;
+    delete (transfer as unknown as Record<string, unknown>).receiver_card;
+    delete (transfer as unknown as Record<string, unknown>).receiver_identifier;
+    delete (transfer as unknown as Record<string, unknown>).card;
+    delete (transfer as unknown as Record<string, unknown>).application;
+    delete (transfer as unknown as Record<string, unknown>).custom_fields;
+
     await this.transferRepo.save(transfer);
 
     if (custom_fields !== undefined) {

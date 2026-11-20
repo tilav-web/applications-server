@@ -177,7 +177,12 @@ export class OccupationsService implements OnModuleInit {
     },
   ): Promise<Occupation> {
     const occ = await this.findOccupationById(id);
-    if (data.category_id !== undefined) occ.category_id = data.category_id;
+    if (data.category_id !== undefined) {
+      const cat = await this.categoryRepo.findOne({ where: { id: data.category_id } });
+      if (!cat) throw new NotFoundException('Tanlangan toifa topilmadi');
+      occ.category_id = data.category_id;
+      delete (occ as unknown as Record<string, unknown>).category;
+    }
     if (data.name !== undefined) {
       const cleanName = data.name.trim();
       const existing = await this.occupationRepo
@@ -195,7 +200,8 @@ export class OccupationsService implements OnModuleInit {
     if (data.sort_order !== undefined) occ.sort_order = data.sort_order;
     if (data.is_active !== undefined) occ.is_active = data.is_active;
 
-    return this.occupationRepo.save(occ);
+    await this.occupationRepo.save(occ);
+    return this.findOccupationById(id);
   }
 
   async removeOccupation(id: string): Promise<{ success: boolean; message: string }> {
