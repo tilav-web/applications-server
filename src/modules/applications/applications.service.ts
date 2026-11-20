@@ -1002,6 +1002,8 @@ export class ApplicationsService {
           date?: string;
           date_from?: string;
           date_to?: string;
+          min_amount?: string | number;
+          max_amount?: string | number;
           relations_filter?: string;
         } = 1,
     limitParam = 10,
@@ -1025,6 +1027,8 @@ export class ApplicationsService {
     let date: string | undefined;
     let date_from: string | undefined;
     let date_to: string | undefined;
+    let min_amount: string | number | undefined;
+    let max_amount: string | number | undefined;
     let relations_filter: string | undefined;
 
     if (typeof pageOrParams === 'object') {
@@ -1044,6 +1048,8 @@ export class ApplicationsService {
       date = pageOrParams.date;
       date_from = pageOrParams.date_from;
       date_to = pageOrParams.date_to;
+      min_amount = pageOrParams.min_amount;
+      max_amount = pageOrParams.max_amount;
       relations_filter = pageOrParams.relations_filter;
     } else {
       page = Number(pageOrParams) || 1;
@@ -1186,6 +1192,24 @@ export class ApplicationsService {
       const dTo = new Date(date_to.trim());
       dTo.setHours(23, 59, 59, 999);
       qb.andWhere('COALESCE(app.date, app.created_at) <= :date_to', { date_to: dTo });
+    }
+
+    const lossSubquery = `(SELECT COALESCE(SUM(t.amount), 0) FROM transfers t WHERE t.id = app.transfer_id OR t.application_id = app.id)`;
+    if (
+      min_amount !== undefined &&
+      min_amount !== null &&
+      String(min_amount).trim() !== '' &&
+      !Number.isNaN(Number(min_amount))
+    ) {
+      qb.andWhere(`${lossSubquery} >= :minAmount`, { minAmount: Number(min_amount) });
+    }
+    if (
+      max_amount !== undefined &&
+      max_amount !== null &&
+      String(max_amount).trim() !== '' &&
+      !Number.isNaN(Number(max_amount))
+    ) {
+      qb.andWhere(`${lossSubquery} <= :maxAmount`, { maxAmount: Number(max_amount) });
     }
 
     qb.orderBy('app.created_at', 'DESC');
@@ -1341,6 +1365,8 @@ export class ApplicationsService {
       date?: string;
       date_from?: string;
       date_to?: string;
+      min_amount?: string | number;
+      max_amount?: string | number;
       relations_filter?: string;
     },
     res: Response,
