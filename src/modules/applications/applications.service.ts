@@ -1203,7 +1203,7 @@ export class ApplicationsService {
       },
       district: true,
       crime: true,
-      crime_method: true,
+      crime_method: { fields: true },
       card: { bank: true, citizen: true },
       transfer: {
         payment_provider: true,
@@ -1865,7 +1865,7 @@ export class ApplicationsService {
         citizen: { district: true, mahalla: true },
         district: true,
         crime: true,
-        crime_method: true,
+        crime_method: { fields: true },
         card: { bank: true, citizen: true },
         transfer: {
           payment_provider: true,
@@ -2490,7 +2490,7 @@ export class ApplicationsService {
         },
         district: true,
         crime: true,
-        crime_method: true,
+        crime_method: { fields: true },
         card: { bank: true, citizen: true },
         transfer: {
           payment_provider: true,

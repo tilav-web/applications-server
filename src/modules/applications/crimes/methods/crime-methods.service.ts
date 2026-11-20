@@ -6,11 +6,13 @@ import {
   OnApplicationBootstrap,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { FindOptionsWhere, ILike, Repository } from 'typeorm';
+import { ILike, In, Repository } from 'typeorm';
 
 import type { PaginatedResult } from '../../../../common/interfaces/pagination.interface';
+import { Crime } from '../crime.entity';
 import { CrimeMethod } from './crime-method.entity';
-import type { CreateCrimeMethodDto } from './dto/create-crime-method.dto';
+import { CrimeMethodField } from './crime-method-field.entity';
+import type { CreateCrimeMethodDto, CrimeMethodFieldDto } from './dto/create-crime-method.dto';
 import type { UpdateCrimeMethodDto } from './dto/update-crime-method.dto';
 
 /**
@@ -229,6 +231,10 @@ export class CrimeMethodsService implements OnApplicationBootstrap {
   constructor(
     @InjectRepository(CrimeMethod)
     private readonly repo: Repository<CrimeMethod>,
+    @InjectRepository(CrimeMethodField)
+    private readonly fieldRepo: Repository<CrimeMethodField>,
+    @InjectRepository(Crime)
+    private readonly crimeRepo: Repository<Crime>,
   ) {}
 
   async onApplicationBootstrap(): Promise<void> {
@@ -294,24 +300,53 @@ export class CrimeMethodsService implements OnApplicationBootstrap {
     }
   }
 
-  async findAll(page = 1, limit = 50, search?: string): Promise<PaginatedResult<CrimeMethod>> {
-    const where: FindOptionsWhere<CrimeMethod>[] = [];
+  private slugifyFieldKey(label: string, index: number): string {
+    const slug = label
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, '_')
+      .replace(/^_+|_+$/g, '')
+      .slice(0, 60);
+    return slug ? `method_${slug}` : `method_field_${index + 1}`;
+  }
+
+  private sortMethodFields(item: CrimeMethod): CrimeMethod {
+    if (Array.isArray(item.fields)) {
+      item.fields.sort((a, b) => (a.sort_order ?? 0) - (b.sort_order ?? 0));
+    }
+    return item;
+  }
+
+  async findAll(
+    page = 1,
+    limit = 50,
+    search?: string,
+    crimeId?: string,
+  ): Promise<PaginatedResult<CrimeMethod>> {
+    const qb = this.repo
+      .createQueryBuilder('cm')
+      .leftJoinAndSelect('cm.crimes', 'crime')
+      .leftJoinAndSelect('cm.fields', 'field')
+      .orderBy('cm.sort_order', 'ASC')
+      .addOrderBy('cm.created_at', 'ASC')
+      .addOrderBy('field.sort_order', 'ASC');
 
     if (search && search.trim()) {
-      const q = search.trim();
-      where.push(
-        { name: ILike(`%${q}%`) },
-        { group_name: ILike(`%${q}%`) },
-        { description: ILike(`%${q}%`) },
+      const q = `%${search.trim()}%`;
+      qb.andWhere('(cm.name ILIKE :q OR cm.group_name ILIKE :q OR cm.description ILIKE :q)', { q });
+    }
+
+    if (crimeId && crimeId.trim()) {
+      // Ushbu jinoyat turiga bog'langan usullar YOKI hech bir jinoyat turiga bog'lanmagan (umumiy) usullar
+      qb.andWhere(
+        `(EXISTS (SELECT 1 FROM crime_method_crimes cmc WHERE cmc.crime_method_id = cm.id AND cmc.crime_id = :crimeId)
+          OR NOT EXISTS (SELECT 1 FROM crime_method_crimes cmc2 WHERE cmc2.crime_method_id = cm.id))`,
+        { crimeId: crimeId.trim() },
       );
     }
 
-    const [items, total] = await this.repo.findAndCount({
-      where: where.length > 0 ? where : undefined,
-      order: { sort_order: 'ASC', created_at: 'ASC' },
-      skip: (page - 1) * limit,
-      take: limit,
-    });
+    qb.skip((page - 1) * limit).take(limit);
+    const [items, total] = await qb.getManyAndCount();
+    items.forEach((it) => this.sortMethodFields(it));
 
     const totalPages = Math.ceil(total / limit) || 1;
     return {
@@ -327,19 +362,72 @@ export class CrimeMethodsService implements OnApplicationBootstrap {
     };
   }
 
-  async findAllActive(): Promise<CrimeMethod[]> {
-    return this.repo.find({
-      where: { is_active: true },
-      order: { sort_order: 'ASC', created_at: 'ASC' },
-    });
+  async findAllActive(crimeId?: string): Promise<CrimeMethod[]> {
+    const qb = this.repo
+      .createQueryBuilder('cm')
+      .leftJoinAndSelect('cm.crimes', 'crime')
+      .leftJoinAndSelect('cm.fields', 'field', 'field.is_active = true')
+      .where('cm.is_active = true')
+      .orderBy('cm.sort_order', 'ASC')
+      .addOrderBy('cm.created_at', 'ASC')
+      .addOrderBy('field.sort_order', 'ASC');
+
+    if (crimeId && crimeId.trim()) {
+      // Tanlangan jinoyat turiga biriktirilgan usullar + hech bir turga bog'lanmagan umumiy usullar
+      qb.andWhere(
+        `(EXISTS (SELECT 1 FROM crime_method_crimes cmc WHERE cmc.crime_method_id = cm.id AND cmc.crime_id = :crimeId)
+          OR NOT EXISTS (SELECT 1 FROM crime_method_crimes cmc2 WHERE cmc2.crime_method_id = cm.id))`,
+        { crimeId: crimeId.trim() },
+      );
+    }
+
+    const items = await qb.getMany();
+    return items.map((it) => this.sortMethodFields(it));
   }
 
   async findOne(id: string): Promise<CrimeMethod> {
-    const item = await this.repo.findOne({ where: { id } });
+    const item = await this.repo.findOne({
+      where: { id },
+      relations: { crimes: true, fields: true },
+    });
     if (!item) {
       throw new NotFoundException(`Jinoyat usuli topilmadi: ${id}`);
     }
-    return item;
+    return this.sortMethodFields(item);
+  }
+
+  private async syncMethodFields(methodId: string, fields: CrimeMethodFieldDto[]): Promise<void> {
+    await this.fieldRepo.delete({ crime_method_id: methodId });
+    if (!fields || fields.length === 0) return;
+
+    const usedKeys = new Set<string>();
+    const entities = fields
+      .filter((f) => f.label && f.label.trim().length > 0)
+      .map((f, idx) => {
+        let key = (f.key || '').trim() || this.slugifyFieldKey(f.label.trim(), idx);
+        while (usedKeys.has(key)) {
+          key = `${key}_${idx + 1}`;
+        }
+        usedKeys.add(key);
+
+        return this.fieldRepo.create({
+          crime_method_id: methodId,
+          key,
+          label: f.label.trim(),
+          field_type: f.field_type || 'STRING',
+          options: Array.isArray(f.options) && f.options.length > 0 ? f.options : null,
+          placeholder: f.placeholder?.trim() || null,
+          is_required: Boolean(f.is_required),
+          show_in_excel: f.show_in_excel !== false,
+          excel_header: f.excel_header?.trim() || f.label.trim(),
+          sort_order: f.sort_order ?? idx,
+          is_active: f.is_active !== false,
+        });
+      });
+
+    if (entities.length > 0) {
+      await this.fieldRepo.save(entities);
+    }
   }
 
   async create(dto: CreateCrimeMethodDto): Promise<CrimeMethod> {
@@ -349,15 +437,28 @@ export class CrimeMethodsService implements OnApplicationBootstrap {
       throw new BadRequestException(`"${cleanName}" usuli allaqachon mavjud`);
     }
 
+    let linkedCrimes: Crime[] = [];
+    if (dto.crime_ids && dto.crime_ids.length > 0) {
+      linkedCrimes = await this.crimeRepo.findBy({ id: In(dto.crime_ids) });
+    }
+
     const entity = this.repo.create({
-      ...dto,
       name: cleanName,
       group_name: (dto.group_name || 'Boshqa holatlar').trim(),
+      code: dto.code ?? null,
+      description: dto.description ?? null,
       sort_order: dto.sort_order ?? 0,
       is_active: dto.is_active ?? true,
+      crimes: linkedCrimes,
     });
 
-    return this.repo.save(entity);
+    const saved = await this.repo.save(entity);
+
+    if (dto.fields && dto.fields.length > 0) {
+      await this.syncMethodFields(saved.id, dto.fields);
+    }
+
+    return this.findOne(saved.id);
   }
 
   async update(id: string, dto: UpdateCrimeMethodDto): Promise<CrimeMethod> {
@@ -380,7 +481,18 @@ export class CrimeMethodsService implements OnApplicationBootstrap {
     if (dto.sort_order !== undefined) item.sort_order = dto.sort_order;
     if (dto.is_active !== undefined) item.is_active = dto.is_active;
 
-    return this.repo.save(item);
+    if (dto.crime_ids !== undefined) {
+      item.crimes =
+        dto.crime_ids.length > 0 ? await this.crimeRepo.findBy({ id: In(dto.crime_ids) }) : [];
+    }
+
+    await this.repo.save(item);
+
+    if (dto.fields !== undefined) {
+      await this.syncMethodFields(item.id, dto.fields);
+    }
+
+    return this.findOne(item.id);
   }
 
   async remove(id: string): Promise<{ success: boolean; message: string }> {

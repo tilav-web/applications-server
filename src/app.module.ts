@@ -10,6 +10,7 @@ import { ApplicationsModule } from './modules/applications/applications.module';
 import { Citizen } from './modules/applications/citizens/citizen.entity';
 import { Crime } from './modules/applications/crimes/crime.entity';
 import { CrimeMethod } from './modules/applications/crimes/methods/crime-method.entity';
+import { CrimeMethodField } from './modules/applications/crimes/methods/crime-method-field.entity';
 import { ApplicationCustomField } from './modules/applications/custom-fields/application-custom-field.entity';
 import { DecisionType } from './modules/applications/decision-types/decision-type.entity';
 import { DepartmentService } from './modules/applications/department-services/department-service.entity';
@@ -78,6 +79,7 @@ import { UsersModule } from './modules/users/users.module';
             Citizen,
             Crime,
             CrimeMethod,
+            CrimeMethodField,
             District,
             Mahalla,
             Transfer,

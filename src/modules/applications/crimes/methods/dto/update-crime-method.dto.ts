@@ -1,4 +1,15 @@
-import { IsBoolean, IsInt, IsOptional, IsString } from 'class-validator';
+import { Type } from 'class-transformer';
+import {
+  IsArray,
+  IsBoolean,
+  IsInt,
+  IsOptional,
+  IsString,
+  IsUUID,
+  ValidateNested,
+} from 'class-validator';
+
+import { CrimeMethodFieldDto } from './create-crime-method.dto';
 
 export class UpdateCrimeMethodDto {
   @IsOptional()
@@ -24,4 +35,15 @@ export class UpdateCrimeMethodDto {
   @IsOptional()
   @IsBoolean()
   is_active?: boolean;
+
+  @IsOptional()
+  @IsArray()
+  @IsUUID('4', { each: true })
+  crime_ids?: string[];
+
+  @IsOptional()
+  @IsArray()
+  @ValidateNested({ each: true })
+  @Type(() => CrimeMethodFieldDto)
+  fields?: CrimeMethodFieldDto[];
 }

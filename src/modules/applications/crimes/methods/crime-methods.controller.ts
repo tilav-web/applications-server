@@ -35,14 +35,15 @@ export class CrimeMethodsController {
     @Query('page') page?: number,
     @Query('limit') limit?: number,
     @Query('search') search?: string,
+    @Query('crime_id') crimeId?: string,
   ) {
     const pagination = normalizePagination(page, limit, 100);
-    return this.service.findAll(pagination.page, pagination.limit, search);
+    return this.service.findAll(pagination.page, pagination.limit, search, crimeId);
   }
 
   @Get('active')
-  findAllActive() {
-    return this.service.findAllActive();
+  findAllActive(@Query('crime_id') crimeId?: string) {
+    return this.service.findAllActive(crimeId);
   }
 
   @Get(':id')

@@ -79,6 +79,39 @@ export class ApplicationsExcelService {
       // Qat'iy oq-qora qoida: hech qanday tabColor ishlatilmaydi
     });
 
+    // Dinamik jinoyat usuli maydonlarini (show_in_excel = true) yig'amiz
+    const dynamicColumnsMap = new Map<
+      string,
+      { key: string; header: string; sort_order: number }
+    >();
+    for (const app of applications) {
+      const methodFields = app.crime_method?.fields || [];
+      for (const f of methodFields) {
+        if (f.is_active !== false && f.show_in_excel !== false && f.key) {
+          if (!dynamicColumnsMap.has(f.key)) {
+            dynamicColumnsMap.set(f.key, {
+              key: f.key,
+              header: f.excel_header || f.label,
+              sort_order: f.sort_order ?? 0,
+            });
+          }
+        }
+      }
+      // Agar custom_fields ichida method_ prefiksli qiymat bo'lsa ham ustunga qo'shamiz
+      for (const cf of app.custom_fields || []) {
+        if (cf.key && cf.key.startsWith('method_') && !dynamicColumnsMap.has(cf.key)) {
+          dynamicColumnsMap.set(cf.key, {
+            key: cf.key,
+            header: cf.label || cf.key,
+            sort_order: cf.order ?? 999,
+          });
+        }
+      }
+    }
+    const dynamicColumns = Array.from(dynamicColumnsMap.values()).sort(
+      (a, b) => a.sort_order - b.sort_order,
+    );
+
     ws.columns = [
       { header: '№', key: 'idx', width: 6 },
       { header: 'Ariza Raqami', key: 'app_num', width: 22 },
@@ -99,6 +132,11 @@ export class ApplicationsExcelService {
       { header: 'Gumonlanuvchilar', key: 'suspects_count', width: 18 },
       { header: 'Tafsilot (Fabula)', key: 'description', width: 45 },
       { header: 'Xodim Qaydlari', key: 'notes', width: 35 },
+      ...dynamicColumns.map((col) => ({
+        header: col.header,
+        key: `dyn_${col.key}`,
+        width: 24,
+      })),
     ];
 
     // Monoxrom audit sarlavhasi
@@ -130,6 +168,35 @@ export class ApplicationsExcelService {
       // Gumonlanuvchilar soni: 3-tabdagi 'Gumonlanuvchilar' B ustunida mos ariza raqamini sanaydi
       const suspectsFormula = `COUNTIF('Gumonlanuvchilar'!$B:$B, B${rowNum})`;
 
+      // Dinamik maydon qiymatlarini ushbu arizaning custom_fields laridan olamiz
+      const dynamicRowData: Record<string, string> = {};
+      if (dynamicColumns.length > 0) {
+        const cfByKey = new Map<string, unknown>();
+        for (const cf of app.custom_fields || []) {
+          if (cf.key) {
+            cfByKey.set(cf.key, cf.value);
+          }
+        }
+        for (const col of dynamicColumns) {
+          const val = cfByKey.get(col.key);
+          if (val === null || val === undefined || val === '') {
+            dynamicRowData[`dyn_${col.key}`] = '—';
+          } else if (Array.isArray(val)) {
+            dynamicRowData[`dyn_${col.key}`] = val.join(', ');
+          } else if (typeof val === 'object') {
+            dynamicRowData[`dyn_${col.key}`] = JSON.stringify(val);
+          } else if (
+            typeof val === 'string' ||
+            typeof val === 'number' ||
+            typeof val === 'boolean'
+          ) {
+            dynamicRowData[`dyn_${col.key}`] = String(val);
+          } else {
+            dynamicRowData[`dyn_${col.key}`] = '—';
+          }
+        }
+      }
+
       const row = ws.addRow({
         idx: index + 1,
         app_num: appNumber,
@@ -150,6 +217,7 @@ export class ApplicationsExcelService {
         suspects_count: { formula: suspectsFormula },
         description: app.description || '—',
         notes: app.officer_notes || '—',
+        ...dynamicRowData,
       });
 
       this.styleDataRow(row);

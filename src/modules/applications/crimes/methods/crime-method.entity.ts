@@ -1,7 +1,9 @@
-import { Column, Entity, OneToMany } from 'typeorm';
+import { Column, Entity, JoinTable, ManyToMany, OneToMany } from 'typeorm';
 
 import { BaseEntity } from '../../../../common/database/base.entity';
 import type { Application } from '../../application.entity';
+import { Crime } from '../crime.entity';
+import { CrimeMethodField } from './crime-method-field.entity';
 
 @Entity('crime_methods')
 export class CrimeMethod extends BaseEntity {
@@ -48,6 +50,26 @@ export class CrimeMethod extends BaseEntity {
     default: true,
   })
   is_active: boolean;
+
+  /**
+   * Qaysi jinoyat turlariga (moddalarga) tegishli ekanligi.
+   * Bo'sh massiv ([]) bo'lsa — UMUMIY usul (barcha jinoyat turlarida tanlash mumkin).
+   */
+  @ManyToMany(() => Crime, { eager: false })
+  @JoinTable({
+    name: 'crime_method_crimes',
+    joinColumn: { name: 'crime_method_id', referencedColumnName: 'id' },
+    inverseJoinColumn: { name: 'crime_id', referencedColumnName: 'id' },
+  })
+  crimes: Crime[];
+
+  /**
+   * Ushbu jinoyat usuli tanlanganda dinamik chiqadigan qo'shimcha maydonlar (APK, Telegram, va h.k.)
+   */
+  @OneToMany(() => CrimeMethodField, (field) => field.crime_method, {
+    cascade: true,
+  })
+  fields: CrimeMethodField[];
 
   @OneToMany('Application', 'crime_method')
   applications: Application[];
