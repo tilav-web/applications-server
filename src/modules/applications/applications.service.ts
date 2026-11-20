@@ -2655,7 +2655,12 @@ export class ApplicationsService {
     return { success: true, message: "Ariza muvaffaqiyatli o'chirildi" };
   }
 
-  async getStatistics(period = 'month', startDate?: string, endDate?: string) {
+  async getStatistics(
+    period = 'month',
+    startDate?: string,
+    endDate?: string,
+    currentUser?: JwtAccessPayload,
+  ) {
     const now = new Date();
     let start: Date;
     let end: Date = new Date();
@@ -2689,8 +2694,18 @@ export class ApplicationsService {
     const prevStart = new Date(start.getTime() - durationMs);
     const prevEnd = new Date(start.getTime() - 1);
 
+    // Hududiy xodim (DISTRICT_OFFICER) uchun faqat biriktirilgan tumanlar
+    let assignedDistrictIds: string[] | null = null;
+    if (currentUser && currentUser.role === Role.DISTRICT_OFFICER) {
+      const user = await this.userRepo.findOne({
+        where: { auth_id: currentUser.sub },
+        relations: { assigned_districts: true },
+      });
+      assignedDistrictIds = user?.assigned_districts?.map((d) => d.id) || [];
+    }
+
     // 1. Current period applications with relations
-    const applications = await this.applicationRepo
+    const appsQb = this.applicationRepo
       .createQueryBuilder('app')
       .leftJoinAndSelect('app.application_status', 'application_status')
       .leftJoinAndSelect('app.transfer', 'transfer')
@@ -2700,21 +2715,46 @@ export class ApplicationsService {
       .leftJoinAndSelect('app.crime', 'crime')
       .leftJoinAndSelect('transfer.payment_provider', 'payment_provider')
       .leftJoinAndSelect('app.custom_fields', 'custom_fields')
-      .where('COALESCE(app.date, app.created_at) BETWEEN :start AND :end', { start, end })
+      .where('app.is_deleted = false')
+      .andWhere('COALESCE(app.date, app.created_at) BETWEEN :start AND :end', { start, end });
+
+    if (assignedDistrictIds !== null) {
+      if (assignedDistrictIds.length > 0) {
+        appsQb.andWhere('app.district_id IN (:...userDistricts)', {
+          userDistricts: assignedDistrictIds,
+        });
+      } else {
+        appsQb.andWhere('1 = 0');
+      }
+    }
+
+    const applications = await appsQb
       .orderBy('COALESCE(app.date, app.created_at)', 'ASC')
       .getMany();
 
     // 2. Previous period summary for comparison
-    const prevRaw = await this.applicationRepo
+    const prevQb = this.applicationRepo
       .createQueryBuilder('app')
       .leftJoin('app.transfer', 'transfer')
       .select('COUNT(app.id)', 'count')
       .addSelect('COALESCE(SUM(transfer.amount), 0)', 'loss')
-      .where('COALESCE(app.date, app.created_at) BETWEEN :prevStart AND :prevEnd', {
+      .where('app.is_deleted = false')
+      .andWhere('COALESCE(app.date, app.created_at) BETWEEN :prevStart AND :prevEnd', {
         prevStart,
         prevEnd,
-      })
-      .getRawOne<{ count?: string | number; loss?: string | number }>();
+      });
+
+    if (assignedDistrictIds !== null) {
+      if (assignedDistrictIds.length > 0) {
+        prevQb.andWhere('app.district_id IN (:...userDistricts)', {
+          userDistricts: assignedDistrictIds,
+        });
+      } else {
+        prevQb.andWhere('1 = 0');
+      }
+    }
+
+    const prevRaw = await prevQb.getRawOne<{ count?: string | number; loss?: string | number }>();
 
     const prevCount = Number(prevRaw?.count ?? 0);
     const prevLoss = Number(prevRaw?.loss ?? 0);
@@ -3002,8 +3042,12 @@ export class ApplicationsService {
       },
     ];
 
-    // 6. byDistrict (barcha 16 ta tuman kiritilgan holda)
-    const allDbDistricts = await this.districtRepo.find({ order: { name: 'ASC' } });
+    // 6. byDistrict (DISTRICT_OFFICER uchun faqat biriktirilgan tumanlar, boshqalar uchun barcha 16 ta tuman)
+    const allDbDistrictsRaw = await this.districtRepo.find({ order: { name: 'ASC' } });
+    const allDbDistricts =
+      assignedDistrictIds !== null
+        ? allDbDistrictsRaw.filter((d) => assignedDistrictIds.includes(d.id))
+        : allDbDistrictsRaw;
     for (const d of allDbDistricts) {
       if (!districtMap.has(d.id)) {
         districtMap.set(d.id, {
@@ -3098,6 +3142,10 @@ export class ApplicationsService {
       byCrime,
       byPaymentProvider,
       recentApplications,
+      scopedDistrictNames:
+        assignedDistrictIds !== null
+          ? allDbDistricts.map((d) => d.name).filter((n): n is string => Boolean(n))
+          : null,
     };
   }
 }

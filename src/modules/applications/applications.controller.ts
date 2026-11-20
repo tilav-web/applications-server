@@ -95,8 +95,9 @@ export class ApplicationsController {
     @Query('period') period?: string,
     @Query('startDate') startDate?: string,
     @Query('endDate') endDate?: string,
+    @CurrentUser() currentUser?: JwtAccessPayload,
   ) {
-    return this.applicationsService.getStatistics(period, startDate, endDate);
+    return this.applicationsService.getStatistics(period, startDate, endDate, currentUser);
   }
 
   @Get(':id/relations')
