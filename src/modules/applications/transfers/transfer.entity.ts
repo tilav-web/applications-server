@@ -10,7 +10,9 @@ import {
 } from 'typeorm';
 
 import { BaseEntity } from '../../../common/database/base.entity';
+import { TransferDestinationType } from '../../../common/enums/transfer-destination-type.enum';
 import { TransferStatus } from '../../../common/enums/transfer-status.enum';
+import { DigitalIdentifierEntity } from '../../intelligence/entities/digital-identifier.entity';
 import type { Application } from '../application.entity';
 import { Card } from './cards/card.entity';
 import { TransferCustomField } from './custom-fields/transfer-custom-field.entity';
@@ -23,6 +25,8 @@ import { PaymentProvider } from './payment_providers/payment_provider.entity';
 @Index('IDX_transfers_card_id', ['card_id'])
 @Index('IDX_transfers_payment_provider_id', ['payment_provider_id'])
 @Index('IDX_transfers_transfer_at', ['transfer_at'])
+@Index('IDX_transfers_destination_type', ['destination_type'])
+@Index('IDX_transfers_receiver_identifier_id', ['receiver_identifier_id'])
 export class Transfer extends BaseEntity {
   @Column({
     name: 'transaction_id',
@@ -141,6 +145,32 @@ export class Transfer extends BaseEntity {
   })
   @JoinColumn({ name: 'card_id' })
   card: Card | null;
+
+  // 4. Pul chiqib ketish kanali (Karta, Kripto-birja, Naqd/ATM, Onlayn platforma, Bank hisob raqami)
+  @Column({
+    name: 'destination_type',
+    type: 'varchar',
+    length: 30,
+    default: TransferDestinationType.CARD,
+  })
+  destination_type: TransferDestinationType;
+
+  // Kripto-hamyon / Binance UID / TikTok / 1xBet / Hisob raqam uchun yagona master raqamli izga bog'lanish
+  @Column({ name: 'receiver_identifier_id', type: 'uuid', nullable: true })
+  receiver_identifier_id: string | null;
+
+  @ManyToOne(() => DigitalIdentifierEntity, {
+    nullable: true,
+    onDelete: 'SET NULL',
+  })
+  @JoinColumn({ name: 'receiver_identifier_id' })
+  receiver_identifier: DigitalIdentifierEntity | null;
+
+  @Column({ name: 'destination_label', type: 'varchar', length: 255, nullable: true })
+  destination_label: string | null;
+
+  @Column({ name: 'destination_details', type: 'jsonb', nullable: true })
+  destination_details: Record<string, unknown> | null;
 
   // Dinamik qo'shimcha maydonlar (Chek rasmlari, fayllar, kvitansiya, qo'shimcha parametrlar)
   @OneToMany(() => TransferCustomField, (field) => field.transfer, {

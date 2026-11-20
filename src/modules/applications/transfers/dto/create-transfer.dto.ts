@@ -3,6 +3,7 @@ import {
   IsArray,
   IsEnum,
   IsNumber,
+  IsObject,
   IsOptional,
   IsString,
   IsUUID,
@@ -10,6 +11,7 @@ import {
 } from 'class-validator';
 
 import { TransferCustomFieldType } from '../../../../common/enums/transfer-custom-field-type.enum';
+import { TransferDestinationType } from '../../../../common/enums/transfer-destination-type.enum';
 import { TransferStatus } from '../../../../common/enums/transfer-status.enum';
 
 export class CreateTransferCustomFieldDto {
@@ -93,6 +95,30 @@ export class CreateTransferDto {
   @IsOptional()
   @IsUUID('4')
   card_id?: string;
+
+  @IsOptional()
+  @IsEnum(TransferDestinationType)
+  destination_type?: TransferDestinationType;
+
+  @IsOptional()
+  @IsUUID('4')
+  receiver_identifier_id?: string;
+
+  @IsOptional()
+  @IsString()
+  destination_platform?: string;
+
+  @IsOptional()
+  @IsString()
+  destination_value?: string;
+
+  @IsOptional()
+  @IsString()
+  destination_label?: string;
+
+  @IsOptional()
+  @IsObject()
+  destination_details?: Record<string, unknown>;
 
   @IsOptional()
   @IsArray()

@@ -3,8 +3,14 @@ import { InjectRepository } from '@nestjs/typeorm';
 import type { Response } from 'express';
 import { In, Repository } from 'typeorm';
 
+import { TransferDestinationType } from '../../../common/enums/transfer-destination-type.enum';
 import { TransferStatus } from '../../../common/enums/transfer-status.enum';
 import type { PaginatedResult } from '../../../common/interfaces/pagination.interface';
+import { DigitalIdentifierEntity } from '../../intelligence/entities/digital-identifier.entity';
+import {
+  getIdentifierTypeLabel,
+  normalizeIdentifierValue,
+} from '../../intelligence/utils/identifier-normalizer.util';
 import { TransferCustomField } from './custom-fields/transfer-custom-field.entity';
 import type { CreateTransferDto } from './dto/create-transfer.dto';
 import type { UpdateTransferDto } from './dto/update-transfer.dto';
@@ -18,12 +24,126 @@ export class TransfersService {
     private readonly transferRepo: Repository<Transfer>,
     @InjectRepository(TransferCustomField)
     private readonly customFieldRepo: Repository<TransferCustomField>,
+    @InjectRepository(DigitalIdentifierEntity)
+    private readonly identifierRepo: Repository<DigitalIdentifierEntity>,
     private readonly excelService: TransfersExcelService,
   ) {}
 
+  private async resolveDestinationFields(dto: {
+    destination_type?: TransferDestinationType;
+    receiver_identifier_id?: string;
+    destination_platform?: string;
+    destination_value?: string;
+    destination_label?: string;
+    destination_details?: Record<string, unknown>;
+  }): Promise<{
+    destination_type: TransferDestinationType;
+    receiver_identifier_id: string | null;
+    destination_label: string | null;
+    destination_details: Record<string, unknown> | null;
+  }> {
+    const destType = dto.destination_type || TransferDestinationType.CARD;
+    const platform = dto.destination_platform?.trim() || '';
+    const rawVal = dto.destination_value?.trim() || '';
+    const details: Record<string, unknown> = {
+      ...(dto.destination_details || {}),
+      ...(platform ? { platform } : {}),
+      ...(rawVal ? { value: rawVal } : {}),
+    };
+
+    let receiverIdentifierId = dto.receiver_identifier_id || null;
+    let label = dto.destination_label?.trim() || null;
+
+    if (destType !== TransferDestinationType.CARD) {
+      if (!label) {
+        if (platform && rawVal) label = `${platform}: ${rawVal}`;
+        else if (rawVal) label = rawVal;
+        else if (platform) label = platform;
+      }
+
+      // CRYPTO, PLATFORM, BANK_ACCOUNT, OTHER uchun yagona master digital_identifiers jadvaliga bog'lash
+      if (
+        !receiverIdentifierId &&
+        rawVal.length >= 2 &&
+        destType !== TransferDestinationType.CASH
+      ) {
+        const identType =
+          destType === TransferDestinationType.CRYPTO
+            ? 'crypto_wallet'
+            : destType === TransferDestinationType.BANK_ACCOUNT
+              ? 'bank_account'
+              : destType === TransferDestinationType.PLATFORM
+                ? platform
+                  ? `platform_${platform.toLowerCase().replace(/[^a-z0-9]+/g, '_')}`
+                  : 'online_platform'
+                : 'cashout_destination';
+
+        const normalized = normalizeIdentifierValue(identType, rawVal);
+        if (normalized && normalized.length >= 2) {
+          let ident = await this.identifierRepo.findOne({
+            where: { type: identType, normalized_value: normalized },
+          });
+          if (!ident) {
+            ident = await this.identifierRepo.save(
+              this.identifierRepo.create({
+                type: identType,
+                type_label:
+                  platform ||
+                  getIdentifierTypeLabel(
+                    identType,
+                    destType === TransferDestinationType.CRYPTO
+                      ? 'Kripto-hamyon / Birja'
+                      : destType === TransferDestinationType.BANK_ACCOUNT
+                        ? 'Bank hisob raqami'
+                        : 'Onlayn tizim / Profil',
+                  ),
+                raw_value: rawVal,
+                normalized_value: normalized,
+              }),
+            );
+          }
+          receiverIdentifierId = ident.id;
+        }
+      }
+    }
+
+    return {
+      destination_type: destType,
+      receiver_identifier_id: receiverIdentifierId,
+      destination_label: label,
+      destination_details: Object.keys(details).length > 0 ? details : null,
+    };
+  }
+
   async create(dto: CreateTransferDto): Promise<Transfer> {
-    const { custom_fields, ...transferData } = dto;
-    const transfer = this.transferRepo.create(transferData);
+    const {
+      custom_fields,
+      destination_platform,
+      destination_value,
+      destination_type,
+      receiver_identifier_id,
+      destination_label,
+      destination_details,
+      ...transferData
+    } = dto;
+
+    const resolvedDest = await this.resolveDestinationFields({
+      destination_type,
+      receiver_identifier_id,
+      destination_platform,
+      destination_value,
+      destination_label,
+      destination_details,
+    });
+
+    const transfer = this.transferRepo.create({
+      ...transferData,
+      ...resolvedDest,
+      receiver_card_id:
+        resolvedDest.destination_type === TransferDestinationType.CARD
+          ? transferData.receiver_card_id || null
+          : null,
+    });
     const saved = await this.transferRepo.save(transfer);
 
     if (custom_fields && custom_fields.length > 0) {
@@ -146,6 +266,7 @@ export class TransfersService {
           payment_provider: true,
           sender_card: true,
           receiver_card: true,
+          receiver_identifier: true,
           card: true,
           custom_fields: true,
         },
@@ -175,6 +296,7 @@ export class TransfersService {
         payment_provider: true,
         sender_card: true,
         receiver_card: true,
+        receiver_identifier: true,
         card: true,
         custom_fields: true,
         application: true,
@@ -190,9 +312,44 @@ export class TransfersService {
 
   async update(id: string, dto: UpdateTransferDto): Promise<Transfer> {
     const transfer = await this.findOne(id);
-    const { custom_fields, ...transferData } = dto;
+    const {
+      custom_fields,
+      destination_platform,
+      destination_value,
+      destination_type,
+      receiver_identifier_id,
+      destination_label,
+      destination_details,
+      ...transferData
+    } = dto;
 
-    Object.assign(transfer, transferData);
+    if (
+      destination_type !== undefined ||
+      destination_platform !== undefined ||
+      destination_value !== undefined ||
+      destination_label !== undefined ||
+      destination_details !== undefined ||
+      receiver_identifier_id !== undefined
+    ) {
+      const resolvedDest = await this.resolveDestinationFields({
+        destination_type: destination_type ?? transfer.destination_type,
+        receiver_identifier_id:
+          destination_value !== undefined
+            ? undefined
+            : (receiver_identifier_id ?? transfer.receiver_identifier_id ?? undefined),
+        destination_platform,
+        destination_value,
+        destination_label,
+        destination_details,
+      });
+      Object.assign(transfer, transferData, resolvedDest);
+      if (resolvedDest.destination_type !== TransferDestinationType.CARD) {
+        transfer.receiver_card_id = null;
+      }
+    } else {
+      Object.assign(transfer, transferData);
+    }
+
     await this.transferRepo.save(transfer);
 
     if (custom_fields !== undefined) {

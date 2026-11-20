@@ -228,6 +228,11 @@ export class IntelligenceController {
       payment_provider_name?: string;
       transaction_id?: string;
       application_id?: string;
+      destination_type?: string;
+      destination_platform?: string;
+      destination_value?: string;
+      destination_label?: string;
+      destination_details?: Record<string, unknown>;
     },
     @CurrentUser() currentUser?: JwtAccessPayload,
   ) {

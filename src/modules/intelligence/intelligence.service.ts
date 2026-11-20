@@ -8,6 +8,7 @@ import { InjectRepository } from '@nestjs/typeorm';
 import { ILike, In, IsNull, Not, Repository } from 'typeorm';
 
 import { Role } from '../../common/enums/role.enum';
+import { TransferDestinationType } from '../../common/enums/transfer-destination-type.enum';
 import { TransferStatus } from '../../common/enums/transfer-status.enum';
 import type { JwtAccessPayload } from '../../common/types/jwt-payload.interface';
 import { formatTitleCase, formatUzbekName } from '../../common/utils/name-formatter.util';
@@ -2783,10 +2784,18 @@ export class IntelligenceService {
       payment_provider_name?: string;
       transaction_id?: string;
       application_id?: string;
+      destination_type?: string;
+      destination_platform?: string;
+      destination_value?: string;
+      destination_label?: string;
+      destination_details?: Record<string, unknown>;
     },
     currentUser?: JwtAccessPayload,
   ) {
     this.assertCanMutate(currentUser);
+
+    const destType =
+      (dto.destination_type as TransferDestinationType) || TransferDestinationType.CARD;
 
     let senderCardId = dto.sender_card_id || null;
     if (!senderCardId && dto.sender_card_number) {
@@ -2797,11 +2806,54 @@ export class IntelligenceService {
     }
 
     let receiverCardId = dto.receiver_card_id || null;
-    if (!receiverCardId && dto.receiver_card_number) {
+    if (destType === TransferDestinationType.CARD && !receiverCardId && dto.receiver_card_number) {
       const rc = await this.syncService.upsertCard(dto.receiver_card_number, {
         fullName: dto.receiver_owner_name ? formatUzbekName(dto.receiver_owner_name) : null,
       });
       receiverCardId = rc?.id || null;
+    }
+
+    let receiverIdentifierId: string | null = null;
+    const platform = dto.destination_platform?.trim() || '';
+    const rawVal = dto.destination_value?.trim() || '';
+    let destLabel = dto.destination_label?.trim() || null;
+    const destDetails: Record<string, unknown> = {
+      ...(dto.destination_details || {}),
+      ...(platform ? { platform } : {}),
+      ...(rawVal ? { value: rawVal } : {}),
+    };
+
+    if (destType !== TransferDestinationType.CARD) {
+      receiverCardId = null;
+      if (!destLabel) {
+        if (platform && rawVal) destLabel = `${platform}: ${rawVal}`;
+        else if (rawVal) destLabel = rawVal;
+        else if (platform) destLabel = platform;
+      }
+
+      if (rawVal.length >= 2 && destType !== TransferDestinationType.CASH) {
+        const identType =
+          destType === TransferDestinationType.CRYPTO
+            ? 'crypto_wallet'
+            : destType === TransferDestinationType.BANK_ACCOUNT
+              ? 'bank_account'
+              : destType === TransferDestinationType.PLATFORM
+                ? platform
+                  ? `platform_${platform.toLowerCase().replace(/[^a-z0-9]+/g, '_')}`
+                  : 'online_platform'
+                : 'cashout_destination';
+
+        const ident = await this.syncService.upsertDigitalIdentifier(identType, rawVal, {
+          typeLabel:
+            platform ||
+            (destType === TransferDestinationType.CRYPTO
+              ? 'Kripto-hamyon / Birja'
+              : destType === TransferDestinationType.BANK_ACCOUNT
+                ? 'Bank hisob raqami'
+                : 'Onlayn tizim / Profil'),
+        });
+        receiverIdentifierId = ident?.id || null;
+      }
     }
 
     if (!senderCardId && !receiverCardId) {
@@ -2837,6 +2889,10 @@ export class IntelligenceService {
       receiver_card_id: receiverCardId,
       card_id: senderCardId || receiverCardId,
       application_id: dto.application_id || null,
+      destination_type: destType,
+      receiver_identifier_id: receiverIdentifierId,
+      destination_label: destLabel,
+      destination_details: Object.keys(destDetails).length > 0 ? destDetails : null,
     });
 
     const saved = await this.transferRepo.save(transfer);

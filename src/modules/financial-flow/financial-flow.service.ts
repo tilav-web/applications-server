@@ -2,6 +2,7 @@ import { Injectable } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 
+import { TransferDestinationType } from '../../common/enums/transfer-destination-type.enum';
 import { Application } from '../applications/application.entity';
 import { Bank } from '../applications/transfers/banks/bank.entity';
 import { Card } from '../applications/transfers/cards/card.entity';
@@ -13,7 +14,9 @@ export type GraphCardRole =
   | 'VICTIM_SOURCE'
   | 'COMPROMISED_VICTIM'
   | 'ATM_TERMINAL'
-  | 'CRYPTO_CASHOUT';
+  | 'CRYPTO_CASHOUT'
+  | 'PLATFORM_CASHOUT'
+  | 'BANK_ACCOUNT_OUT';
 
 export interface LinkedApplicationInfo {
   id: string;
@@ -51,6 +54,8 @@ export interface IGraphNode {
   pinfl?: string;
   passport?: string;
   phone?: string;
+  destinationType?: string;
+  identifierId?: string;
   linkedApplications?: LinkedApplicationInfo[];
 }
 
@@ -174,6 +179,7 @@ export class FinancialFlowService {
         payment_provider: true,
         sender_card: { bank: true, citizen: true },
         receiver_card: { bank: true, citizen: true },
+        receiver_identifier: true,
         card: { bank: true, citizen: true },
         application: { citizen: true, application_status: true },
         custom_fields: true,
@@ -258,8 +264,98 @@ export class FinancialFlowService {
 
       const sClean = senderCard ? this.cleanCard(senderCard.card_number) : '';
       const rClean = receiverCard ? this.cleanCard(receiverCard.card_number) : '';
+      const destType = tr.destination_type || TransferDestinationType.CARD;
 
-      if (sClean && rClean && sClean !== rClean) {
+      if (destType !== TransferDestinationType.CARD && sClean) {
+        const fromNode = getOrCreateNode(senderCard, sClean, 'VICTIM_SOURCE');
+        const ident = tr.receiver_identifier;
+        const details = (tr.destination_details || {}) as Record<string, string | undefined>;
+        const displayLabel =
+          tr.destination_label ||
+          (ident ? `${ident.type_label || ident.type}: ${ident.raw_value}` : null) ||
+          details.value ||
+          details.platform ||
+          (destType === TransferDestinationType.CASH
+            ? 'Naqdlashtirish (ATM)'
+            : destType === TransferDestinationType.CRYPTO
+              ? 'Kripto-birja / Hamyon'
+              : destType === TransferDestinationType.PLATFORM
+                ? 'Onlayn servis'
+                : 'Boshqa chiqish');
+
+        const destKey = ident
+          ? `ident__${ident.id}`
+          : `dest__${destType}__${displayLabel.toLowerCase().trim()}`;
+
+        const destRole: GraphCardRole =
+          destType === TransferDestinationType.CRYPTO
+            ? 'CRYPTO_CASHOUT'
+            : destType === TransferDestinationType.CASH
+              ? 'ATM_TERMINAL'
+              : destType === TransferDestinationType.BANK_ACCOUNT
+                ? 'BANK_ACCOUNT_OUT'
+                : 'PLATFORM_CASHOUT';
+
+        const subLabel =
+          details.platform ||
+          ident?.type_label ||
+          (destType === TransferDestinationType.CRYPTO
+            ? 'Kripto / Birja'
+            : destType === TransferDestinationType.CASH
+              ? 'Naqdlashtirish (ATM)'
+              : destType === TransferDestinationType.BANK_ACCOUNT
+                ? 'Bank hisob raqami'
+                : 'Onlayn tizim / Profil');
+
+        if (!nodeMap.has(destKey)) {
+          nodeMap.set(destKey, {
+            id: destKey,
+            cardNumber: displayLabel,
+            maskedCard: displayLabel,
+            bankName: subLabel,
+            totalIn: 0,
+            totalOut: 0,
+            netFlow: 0,
+            inDegree: 0,
+            outDegree: 0,
+            reportsCount: 0,
+            reportIds: [],
+            riskScore: 80,
+            role: destRole,
+            isBlacklisted: false,
+            destinationType: destType,
+            identifierId: ident?.id || undefined,
+            linkedApplications: [],
+          });
+        }
+
+        const toNode = nodeMap.get(destKey)!;
+        if (fromNode && toNode) {
+          fromNode.totalOut += amount;
+          fromNode.outDegree += 1;
+          toNode.totalIn += amount;
+          toNode.inDegree += 1;
+
+          const edgeKey = `${sClean}__${destKey}`;
+          if (edgeMap.has(edgeKey)) {
+            const existingEdge = edgeMap.get(edgeKey)!;
+            existingEdge.amount += amount;
+            existingEdge.transactionsCount += 1;
+            existingEdge.lastDate = dateStr || existingEdge.lastDate;
+          } else {
+            edgeMap.set(edgeKey, {
+              id: tr.id || edgeKey,
+              from: fromNode.id,
+              to: toNode.id,
+              amount,
+              paymentProvider: details.platform || providerName,
+              transactionsCount: 1,
+              lastDate: dateStr,
+              applicationId: tr.application_id || undefined,
+            });
+          }
+        }
+      } else if (sClean && rClean && sClean !== rClean) {
         const fromNode = getOrCreateNode(senderCard, sClean, 'VICTIM_SOURCE');
         const toNode = getOrCreateNode(receiverCard, rClean, 'MULE_DROPPER');
 
@@ -468,10 +564,20 @@ export class FinancialFlowService {
     let transitCount = 0;
     let blacklistedCount = 0;
 
+    const specialExitRoles = new Set<GraphCardRole>([
+      'ATM_TERMINAL',
+      'CRYPTO_CASHOUT',
+      'PLATFORM_CASHOUT',
+      'BANK_ACCOUNT_OUT',
+    ]);
+
     for (const node of nodeMap.values()) {
       node.netFlow = node.totalIn - node.totalOut;
 
-      if (node.inDegree > 0 && node.outDegree === 0) {
+      if (specialExitRoles.has(node.role)) {
+        node.riskScore = Math.min(95, 70 + node.inDegree * 8);
+        droppersCount++;
+      } else if (node.inDegree > 0 && node.outDegree === 0) {
         node.role = 'MULE_DROPPER';
         node.riskScore = Math.min(95, 60 + node.inDegree * 10 + (node.reportsCount > 1 ? 20 : 0));
         droppersCount++;
@@ -517,7 +623,7 @@ export class FinancialFlowService {
       nodes = nodes.filter((n) => connectedNodeIds.has(n.id));
     }
 
-    // Xavf darajasi filtri
+    // Xavf darajasi / kanal filtri
     if (filter.riskLevel && filter.riskLevel !== 'ALL') {
       if (filter.riskLevel === 'RED') {
         nodes = nodes.filter((n) => n.role === 'MULE_DROPPER' || n.riskScore >= 70);
@@ -525,6 +631,12 @@ export class FinancialFlowService {
         nodes = nodes.filter((n) => n.role === 'TRANSIT');
       } else if (filter.riskLevel === 'BLUE') {
         nodes = nodes.filter((n) => n.role === 'VICTIM_SOURCE');
+      } else if (filter.riskLevel === 'CRYPTO') {
+        nodes = nodes.filter((n) => n.role === 'CRYPTO_CASHOUT');
+      } else if (filter.riskLevel === 'CASH') {
+        nodes = nodes.filter((n) => n.role === 'ATM_TERMINAL');
+      } else if (filter.riskLevel === 'PLATFORM') {
+        nodes = nodes.filter((n) => n.role === 'PLATFORM_CASHOUT' || n.role === 'BANK_ACCOUNT_OUT');
       }
       const validNodeIds = new Set(nodes.map((n) => n.id));
       edges = edges.filter((e) => validNodeIds.has(e.from) && validNodeIds.has(e.to));
