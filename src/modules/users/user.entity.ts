@@ -29,4 +29,26 @@ export class User extends BaseEntity {
     inverseJoinColumn: { name: 'district_id', referencedColumnName: 'id' },
   })
   assigned_districts: District[];
+
+  @Column({ name: 'telegram_chat_id', type: 'varchar', length: 64, nullable: true })
+  telegram_chat_id: string | null;
+
+  @Column({ name: 'telegram_username', type: 'varchar', length: 100, nullable: true })
+  telegram_username: string | null;
+
+  @Column({ name: 'telegram_first_name', type: 'varchar', length: 120, nullable: true })
+  telegram_first_name: string | null;
+
+  @Column({ name: 'telegram_link_token', type: 'varchar', length: 64, nullable: true })
+  telegram_link_token: string | null;
+
+  @Column({
+    name: 'telegram_link_expires_at',
+    type: 'timestamp with time zone',
+    nullable: true,
+  })
+  telegram_link_expires_at: Date | null;
+
+  @Column({ name: 'notification_prefs', type: 'jsonb', default: () => "'{}'" })
+  notification_prefs: Record<string, boolean>;
 }

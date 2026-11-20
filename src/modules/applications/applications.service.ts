@@ -11,6 +11,7 @@ import type { JwtAccessPayload } from '../../common/types/jwt-payload.interface'
 import { formatTitleCase, formatUzbekName } from '../../common/utils/name-formatter.util';
 import { IntelligenceService } from '../intelligence/intelligence.service';
 import { IntelligenceSyncService } from '../intelligence/intelligence-sync.service';
+import { NotificationsService } from '../notifications/notifications.service';
 import { User } from '../users/user.entity';
 import { Application, SuspectTreeNode } from './application.entity';
 import { Citizen } from './citizens/citizen.entity';
@@ -62,6 +63,7 @@ export class ApplicationsService {
     private readonly cyberControlExcelService: CyberControlShablonExcelService,
     private readonly intelligenceSync: IntelligenceSyncService,
     private readonly intelligenceService: IntelligenceService,
+    private readonly notificationsService: NotificationsService,
   ) {}
 
   private async processCustomFields(
@@ -976,6 +978,7 @@ export class ApplicationsService {
     }
 
     await this.intelligenceSync.syncApplicationById(saved.id);
+    void this.notificationsService.onApplicationCreated(saved.id, currentUser?.sub);
     return this.findOne(saved.id);
   }
 
@@ -2616,6 +2619,18 @@ export class ApplicationsService {
     }
 
     await this.intelligenceSync.syncApplicationById(id);
+    if (dto.status || dto.status_id) {
+      const updatedApp = await this.findOne(id);
+      const statusLabel = updatedApp.application_status?.name || updatedApp.status || '';
+      if (statusLabel) {
+        void this.notificationsService.onApplicationStatusChanged(
+          id,
+          statusLabel,
+          currentUser?.sub,
+        );
+      }
+      return updatedApp;
+    }
     return this.findOne(id);
   }
 

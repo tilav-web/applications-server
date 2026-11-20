@@ -39,6 +39,8 @@ import { EntityApplicationLink } from './modules/intelligence/entities/entity-ap
 import { PhoneEntity } from './modules/intelligence/entities/phone.entity';
 import { IntelligenceModule } from './modules/intelligence/intelligence.module';
 import { MinioModule } from './modules/minio/minio.module';
+import { Notification } from './modules/notifications/notification.entity';
+import { NotificationsModule } from './modules/notifications/notifications.module';
 import { RedisModule } from './modules/redis/redis.module';
 import { User } from './modules/users/user.entity';
 import { UsersModule } from './modules/users/users.module';
@@ -98,6 +100,7 @@ import { UsersModule } from './modules/users/users.module';
             PhoneEntity,
             DigitalIdentifierEntity,
             EntityApplicationLink,
+            Notification,
           ],
           synchronize: config.get<string>('DB_SYNCHRONIZE', defaultSync) === 'true',
           migrations: [__dirname + '/migrations/*{.ts,.js}'],
@@ -122,6 +125,7 @@ import { UsersModule } from './modules/users/users.module';
     ]),
     AuthModule,
     AuditModule,
+    NotificationsModule,
     UsersModule,
     ApplicationsModule,
     FinancialFlowModule,
