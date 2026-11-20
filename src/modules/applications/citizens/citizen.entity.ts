@@ -3,6 +3,7 @@ import {
   BeforeUpdate,
   Column,
   Entity,
+  Index,
   JoinColumn,
   ManyToOne,
   OneToMany,
@@ -19,6 +20,17 @@ import { OccupationCategory } from '../occupations/occupation-category.entity';
 import type { Card } from '../transfers/cards/card.entity';
 
 @Entity('citizens')
+@Index('UQ_citizens_passport_not_null', ['passport'], {
+  unique: true,
+  where: '"passport" IS NOT NULL AND "passport" <> \'\'',
+})
+@Index('UQ_citizens_pinfl_not_null', ['pinfl'], {
+  unique: true,
+  where: '"pinfl" IS NOT NULL AND "pinfl" <> \'\'',
+})
+@Index('IDX_citizens_phone_number', ['phone_number'])
+@Index('IDX_citizens_district_id', ['district_id'])
+@Index('IDX_citizens_mahalla_id', ['mahalla_id'])
 export class Citizen extends BaseEntity {
   @Column({
     name: 'first_name',

@@ -3,6 +3,7 @@ import {
   BeforeUpdate,
   Column,
   Entity,
+  Index,
   JoinColumn,
   ManyToOne,
   OneToMany,
@@ -32,6 +33,14 @@ export interface SuspectTreeNode {
 }
 
 @Entity('applications')
+@Index('IDX_applications_is_deleted_date', ['is_deleted', 'date'])
+@Index('IDX_applications_district_id', ['district_id'])
+@Index('IDX_applications_status_id', ['status_id'])
+@Index('IDX_applications_citizen_id', ['citizen_id'])
+@Index('IDX_applications_crime_id', ['crime_id'])
+@Index('IDX_applications_card_id', ['card_id'])
+@Index('IDX_applications_transfer_id', ['transfer_id'])
+@Index('IDX_applications_created_by_id', ['created_by_id'])
 export class Application extends BaseEntity {
   /**
    * Arizaning rasmiy qayd raqami.
@@ -218,9 +227,15 @@ export class Application extends BaseEntity {
   @JoinColumn({ name: 'created_by_id' })
   created_by: User | null;
 
-  // 11. Soft Delete (O'chirilganlik holati)
+  // 11. Soft Delete (O'chirilganlik holati va audit metadata)
   @Column({ name: 'is_deleted', type: 'boolean', default: false })
   is_deleted: boolean;
+
+  @Column({ name: 'deleted_at', type: 'timestamp with time zone', nullable: true })
+  deleted_at: Date | null;
+
+  @Column({ name: 'deleted_by_id', type: 'uuid', nullable: true })
+  deleted_by_id: string | null;
 
   // 12. Arizaga biriktirilgan va yaratilgan Word hujjatlar
   @OneToMany(() => ApplicationDocument, (doc: ApplicationDocument) => doc.application)

@@ -1,4 +1,4 @@
-import { Column, Entity, JoinColumn, ManyToOne } from 'typeorm';
+import { Column, Entity, Index, JoinColumn, ManyToOne } from 'typeorm';
 
 import { BaseEntity } from '../../../common/database/base.entity';
 import { CustomFieldType } from '../../../common/enums/custom-field-type.enum';
@@ -10,6 +10,11 @@ import { Card } from '../transfers/cards/card.entity';
 import { Transfer } from '../transfers/transfer.entity';
 
 @Entity('application_custom_fields')
+@Index('IDX_app_custom_fields_application_id', ['application_id'])
+@Index('IDX_app_custom_fields_citizen_id', ['citizen_id'])
+@Index('IDX_app_custom_fields_card_id', ['card_id'])
+@Index('IDX_app_custom_fields_transfer_id', ['transfer_id'])
+@Index('IDX_app_custom_fields_type', ['type'])
 export class ApplicationCustomField extends BaseEntity {
   @Column({ name: 'application_id', type: 'uuid', nullable: true })
   application_id: string | null;

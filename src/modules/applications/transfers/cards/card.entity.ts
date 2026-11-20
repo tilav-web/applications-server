@@ -3,6 +3,7 @@ import {
   BeforeUpdate,
   Column,
   Entity,
+  Index,
   JoinColumn,
   ManyToOne,
   OneToMany,
@@ -15,6 +16,12 @@ import { Bank } from '../banks/bank.entity';
 import type { Transfer } from '../transfer.entity';
 
 @Entity('cards')
+@Index('UQ_cards_card_number_not_null', ['card_number'], {
+  unique: true,
+  where: '"card_number" IS NOT NULL AND "card_number" <> \'\'',
+})
+@Index('IDX_cards_citizen_id', ['citizen_id'])
+@Index('IDX_cards_bank_id', ['bank_id'])
 export class Card extends BaseEntity {
   @Column({
     name: 'card_number',

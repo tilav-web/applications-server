@@ -1,10 +1,14 @@
-import { Column, Entity, OneToMany } from 'typeorm';
+import { Column, Entity, Index, OneToMany } from 'typeorm';
 
 import { BaseEntity } from '../../../common/database/base.entity';
 import { CrimeGravity } from '../../../common/enums/crime-gravity.enum';
 import type { Application } from '../application.entity';
 
 @Entity('crimes')
+@Index('UQ_crimes_article_not_null', ['article'], {
+  unique: true,
+  where: '"article" IS NOT NULL AND "article" <> \'\'',
+})
 export class Crime extends BaseEntity {
   @Column({
     name: 'article',

@@ -13,6 +13,23 @@ export type EntityLinkSource = 'AUTO_SYNC' | 'MANUAL_OFFICER' | 'CONFIRMED_MATCH
 
 @Entity('entity_application_links')
 @Index(['application_id', 'role'])
+@Index('UQ_entity_links_app_citizen_only_role', ['application_id', 'citizen_id', 'role'], {
+  unique: true,
+  where:
+    '"citizen_id" IS NOT NULL AND "card_id" IS NULL AND "phone_id" IS NULL AND "identifier_id" IS NULL',
+})
+@Index('UQ_entity_links_app_card_role', ['application_id', 'card_id', 'role'], {
+  unique: true,
+  where: '"card_id" IS NOT NULL',
+})
+@Index('UQ_entity_links_app_phone_role', ['application_id', 'phone_id', 'role'], {
+  unique: true,
+  where: '"phone_id" IS NOT NULL',
+})
+@Index('UQ_entity_links_app_identifier_role', ['application_id', 'identifier_id', 'role'], {
+  unique: true,
+  where: '"identifier_id" IS NOT NULL',
+})
 export class EntityApplicationLink extends BaseEntity {
   @Column({ name: 'application_id', type: 'uuid' })
   application_id: string;

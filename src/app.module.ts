@@ -96,6 +96,8 @@ import { UsersModule } from './modules/users/users.module';
             EntityApplicationLink,
           ],
           synchronize: config.get<string>('DB_SYNCHRONIZE', defaultSync) === 'true',
+          migrations: [__dirname + '/migrations/*{.ts,.js}'],
+          migrationsRun: true,
           autoLoadEntities: true,
         };
       },

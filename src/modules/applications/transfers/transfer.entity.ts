@@ -1,4 +1,13 @@
-import { Column, Entity, JoinColumn, ManyToOne, OneToMany } from 'typeorm';
+import {
+  BeforeInsert,
+  BeforeUpdate,
+  Column,
+  Entity,
+  Index,
+  JoinColumn,
+  ManyToOne,
+  OneToMany,
+} from 'typeorm';
 
 import { BaseEntity } from '../../../common/database/base.entity';
 import { TransferStatus } from '../../../common/enums/transfer-status.enum';
@@ -8,6 +17,12 @@ import { TransferCustomField } from './custom-fields/transfer-custom-field.entit
 import { PaymentProvider } from './payment_providers/payment_provider.entity';
 
 @Entity('transfers')
+@Index('IDX_transfers_application_id', ['application_id'])
+@Index('IDX_transfers_sender_card_id', ['sender_card_id'])
+@Index('IDX_transfers_receiver_card_id', ['receiver_card_id'])
+@Index('IDX_transfers_card_id', ['card_id'])
+@Index('IDX_transfers_payment_provider_id', ['payment_provider_id'])
+@Index('IDX_transfers_transfer_at', ['transfer_at'])
 export class Transfer extends BaseEntity {
   @Column({
     name: 'transaction_id',
@@ -60,6 +75,16 @@ export class Transfer extends BaseEntity {
     nullable: true,
   })
   transfer_time: string | null;
+
+  /**
+   * Indekslangan aniq tranzaksiya vaqti (transfer_date + transfer_time dan avtomatik hisoblanadi)
+   */
+  @Column({
+    name: 'transfer_at',
+    type: 'timestamp with time zone',
+    nullable: true,
+  })
+  transfer_at: Date | null;
 
   @Column({ name: 'application_id', type: 'uuid', nullable: true })
   application_id: string | null;
@@ -122,4 +147,19 @@ export class Transfer extends BaseEntity {
     cascade: true,
   })
   custom_fields: TransferCustomField[];
+
+  @BeforeInsert()
+  @BeforeUpdate()
+  syncTransferTimestamp(): void {
+    if (!this.transfer_date) return;
+    const rawDate = this.transfer_date.trim();
+    const rawTime = (this.transfer_time || '00:00:00').trim();
+    const isoCandidate = /^\d{4}-\d{2}-\d{2}$/.test(rawDate)
+      ? `${rawDate}T${rawTime.length === 5 ? `${rawTime}:00` : rawTime}`
+      : rawDate;
+    const parsed = new Date(isoCandidate);
+    if (!Number.isNaN(parsed.getTime())) {
+      this.transfer_at = parsed;
+    }
+  }
 }

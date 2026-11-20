@@ -2639,6 +2639,8 @@ export class ApplicationsService {
           throw new ForbiddenException("Faqat o'zingiz yaratgan arizani o'chira olasiz");
         }
         application.is_deleted = true;
+        application.deleted_at = new Date();
+        application.deleted_by_id = currentUser.sub;
         await this.applicationRepo.save(application);
         await this.intelligenceSync.syncApplicationById(id);
         return { success: true, message: "Ariza arxivlandi (o'chirildi)" };
@@ -2646,6 +2648,8 @@ export class ApplicationsService {
     }
 
     application.is_deleted = true;
+    application.deleted_at = new Date();
+    application.deleted_by_id = currentUser?.sub || null;
     await this.applicationRepo.save(application);
     await this.intelligenceSync.syncApplicationById(id);
     return { success: true, message: "Ariza muvaffaqiyatli o'chirildi" };

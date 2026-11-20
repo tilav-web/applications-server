@@ -1,9 +1,17 @@
-import { Column, Entity, OneToMany } from 'typeorm';
+import { Column, Entity, Index, OneToMany } from 'typeorm';
 
 import { BaseEntity } from '../../../../common/database/base.entity';
 import type { Card } from '../cards/card.entity';
 
 @Entity('banks')
+@Index('UQ_banks_name_not_null', ['name'], {
+  unique: true,
+  where: '"name" IS NOT NULL AND "name" <> \'\'',
+})
+@Index('UQ_banks_mfo_not_null', ['mfo'], {
+  unique: true,
+  where: '"mfo" IS NOT NULL AND "mfo" <> \'\'',
+})
 export class Bank extends BaseEntity {
   @Column({
     name: 'name',

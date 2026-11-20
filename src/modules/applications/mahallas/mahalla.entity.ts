@@ -1,10 +1,12 @@
-import { Column, Entity, JoinColumn, ManyToOne, OneToMany } from 'typeorm';
+import { Column, Entity, Index, JoinColumn, ManyToOne, OneToMany } from 'typeorm';
 
 import { BaseEntity } from '../../../common/database/base.entity';
 import type { Citizen } from '../citizens/citizen.entity';
 import { District } from '../districts/district.entity';
 
 @Entity('mahallas')
+@Index('IDX_mahallas_district_id', ['district_id'])
+@Index('UQ_mahallas_district_name', ['district_id', 'name'], { unique: true })
 export class Mahalla extends BaseEntity {
   @Column({
     name: 'name',
