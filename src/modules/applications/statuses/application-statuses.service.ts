@@ -416,6 +416,12 @@ export class ApplicationStatusesService implements OnApplicationBootstrap {
         label: 'ariza',
         extraWhere: 'is_deleted = false',
       },
+      {
+        table: 'detected_crimes',
+        column: 'status_id',
+        label: 'aniqlangan jinoyat',
+        extraWhere: 'is_deleted = false',
+      },
     ]);
 
     await this.statusRepo.remove(status);

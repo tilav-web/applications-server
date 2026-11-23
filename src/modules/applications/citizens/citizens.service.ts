@@ -297,6 +297,7 @@ export class CitizensService {
         extraWhere: 'is_deleted = false',
       },
       { table: 'cards', column: 'citizen_id', label: 'plastik karta' },
+      { table: 'detected_crime_suspects', column: 'citizen_id', label: 'aniqlangan jinoyat' },
     ]);
     await this.citizenRepo.remove(citizen);
     return { success: true, message: "Fuqaro muvaffaqiyatli o'chirildi" };

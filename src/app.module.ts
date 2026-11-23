@@ -35,6 +35,11 @@ import { AuditLog } from './modules/audit/audit-log.entity';
 import { SystemSetting } from './modules/audit/system-setting.entity';
 import { Auth } from './modules/auth/auth.entity';
 import { AuthModule } from './modules/auth/auth.module';
+import { DetectedCrimesModule } from './modules/detected-crimes/detected-crimes.module';
+import { DetectedCrime } from './modules/detected-crimes/entities/detected-crime.entity';
+import { DetectedCrimeEvidence } from './modules/detected-crimes/entities/detected-crime-evidence.entity';
+import { DetectedCrimeSuspect } from './modules/detected-crimes/entities/detected-crime-suspect.entity';
+import { DetectionSource } from './modules/detected-crimes/entities/detection-source.entity';
 import { FinancialFlowModule } from './modules/financial-flow/financial-flow.module';
 import { DigitalIdentifierEntity } from './modules/intelligence/entities/digital-identifier.entity';
 import { EntityApplicationLink } from './modules/intelligence/entities/entity-application-link.entity';
@@ -105,6 +110,10 @@ import { UsersModule } from './modules/users/users.module';
             DigitalIdentifierEntity,
             EntityApplicationLink,
             Notification,
+            DetectionSource,
+            DetectedCrime,
+            DetectedCrimeSuspect,
+            DetectedCrimeEvidence,
           ],
           synchronize: config.get<string>('DB_SYNCHRONIZE', defaultSync) === 'true',
           migrations: [__dirname + '/migrations/*{.ts,.js}'],
@@ -132,6 +141,7 @@ import { UsersModule } from './modules/users/users.module';
     NotificationsModule,
     UsersModule,
     ApplicationsModule,
+    DetectedCrimesModule,
     FinancialFlowModule,
     IntelligenceModule,
   ],

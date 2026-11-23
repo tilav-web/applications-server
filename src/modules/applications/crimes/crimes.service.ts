@@ -124,6 +124,12 @@ export class CrimesService implements OnModuleInit {
           label: 'ariza',
           extraWhere: 'is_deleted = false',
         },
+        {
+          table: 'detected_crimes',
+          column: 'crime_id',
+          label: 'aniqlangan jinoyat',
+          extraWhere: 'is_deleted = false',
+        },
       ],
     );
     await this.crimeRepo.remove(crime);
