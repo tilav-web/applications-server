@@ -214,10 +214,18 @@ export class ApplicationStatusesService implements OnApplicationBootstrap {
           });
           await this.statusRepo.save(created);
         } else {
-          // Mavjud statusda legal_article yoki default atributlar bo'sh bo'lsa yumshoq boyitamiz
+          // Mavjud statusda JPK/SLA atributlari bo'sh yoki eskirgan bo'lsa avtomatik sinxronlaymiz
           let changed = false;
           if (!existing.legal_article && ds.legal_article) {
             existing.legal_article = ds.legal_article;
+            changed = true;
+          }
+          if (existing.category !== ds.category && existing.code === ds.code) {
+            existing.category = ds.category;
+            existing.tracks_sla = ds.tracks_sla;
+            existing.default_sla_days = ds.default_sla_days;
+            existing.requires_decision = ds.requires_decision;
+            existing.requires_rejection_reason = ds.requires_rejection_reason;
             changed = true;
           }
           if (changed) {
