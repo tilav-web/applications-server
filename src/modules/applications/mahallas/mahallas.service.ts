@@ -176,7 +176,10 @@ export class MahallasService implements OnApplicationBootstrap {
       this.mahallaRepo.manager,
       `«${mahalla.name}» mahallasi`,
       mahalla.id,
-      [{ table: 'citizens', column: 'mahalla_id', label: 'fuqaro' }],
+      [
+        { table: 'citizens', column: 'mahalla_id', label: 'fuqaro' },
+        { table: 'workplaces', column: 'mahalla_id', label: 'ish joyi / tashkilot' },
+      ],
     );
     await this.mahallaRepo.remove(mahalla);
     return { success: true, message: "Mahalla muvaffaqiyatli o'chirildi" };

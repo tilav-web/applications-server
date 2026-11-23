@@ -228,6 +228,11 @@ export class CitizensService {
         mahalla: true,
         occupation_category: true,
         occupation: true,
+        workplace: {
+          district: true,
+          mahalla: true,
+          occupation_category: true,
+        },
       },
     });
 
@@ -268,6 +273,8 @@ export class CitizensService {
       delete (citizen as unknown as Record<string, unknown>).occupation_category;
     if (dto.occupation_id !== undefined)
       delete (citizen as unknown as Record<string, unknown>).occupation;
+    if (dto.workplace_id !== undefined)
+      delete (citizen as unknown as Record<string, unknown>).workplace;
     delete (citizen as unknown as Record<string, unknown>).cards;
     delete (citizen as unknown as Record<string, unknown>).phones;
     delete (citizen as unknown as Record<string, unknown>).digital_identifiers;

@@ -18,6 +18,7 @@ import { Mahalla } from '../mahallas/mahalla.entity';
 import { Occupation } from '../occupations/occupation.entity';
 import { OccupationCategory } from '../occupations/occupation-category.entity';
 import type { Card } from '../transfers/cards/card.entity';
+import { Workplace } from '../workplaces/workplace.entity';
 
 @Entity('citizens')
 @Index('UQ_citizens_passport_not_null', ['passport'], {
@@ -158,6 +159,19 @@ export class Citizen extends BaseEntity {
   })
   @JoinColumn({ name: 'occupation_id' })
   occupation: Occupation | null;
+
+  @Column({ name: 'workplace_id', type: 'uuid', nullable: true })
+  workplace_id: string | null;
+
+  @ManyToOne(() => Workplace, {
+    nullable: true,
+    onDelete: 'SET NULL',
+  })
+  @JoinColumn({ name: 'workplace_id' })
+  workplace: Workplace | null;
+
+  @Column({ name: 'work_position', type: 'varchar', length: 200, nullable: true })
+  work_position: string | null;
 
   @OneToMany('Application', 'citizen')
   applications: Application[];

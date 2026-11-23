@@ -206,6 +206,18 @@ export class CreateApplicationDto {
   @IsUUID('4')
   decision_type_id?: string | null;
 
+  @IsOptional()
+  @IsUUID('4')
+  workplace_id?: string | null;
+
+  @IsOptional()
+  @IsString()
+  work_position?: string | null;
+
+  @IsOptional()
+  @IsObject()
+  workplace_data?: Record<string, unknown>;
+
   // Yagona massiv: Dinamik Custom Fields
   @IsOptional()
   @IsArray()

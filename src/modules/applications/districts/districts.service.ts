@@ -114,6 +114,7 @@ export class DistrictsService implements OnApplicationBootstrap {
         },
         { table: 'citizens', column: 'district_id', label: 'fuqaro' },
         { table: 'mahallas', column: 'district_id', label: 'mahalla' },
+        { table: 'workplaces', column: 'district_id', label: 'ish joyi / tashkilot' },
         { table: 'user_assigned_districts', column: 'district_id', label: 'biriktirilgan xodim' },
       ],
     );

@@ -25,6 +25,7 @@ import { ApplicationSource } from './sources/application-source.entity';
 import { ApplicationStatus as ApplicationStatusEntity } from './statuses/application-status.entity';
 import { Card } from './transfers/cards/card.entity';
 import { Transfer } from './transfers/transfer.entity';
+import { Workplace } from './workplaces/workplace.entity';
 
 export interface SuspectTreeNode {
   id: string;
@@ -253,6 +254,20 @@ export class Application extends BaseEntity {
   })
   @JoinColumn({ name: 'decision_type_id' })
   decision_type: DecisionType | null;
+
+  // 9.1. Arizachining ariza paytidagi ish joyi / tashkiloti va lavozimi (Snapshot)
+  @Column({ name: 'workplace_id', type: 'uuid', nullable: true })
+  workplace_id: string | null;
+
+  @ManyToOne(() => Workplace, {
+    nullable: true,
+    onDelete: 'SET NULL',
+  })
+  @JoinColumn({ name: 'workplace_id' })
+  workplace: Workplace | null;
+
+  @Column({ name: 'work_position', type: 'varchar', length: 200, nullable: true })
+  work_position: string | null;
 
   // 10. Arizani yaratgan xodim (Audit & RBAC)
   @Column({ name: 'created_by_id', type: 'uuid', nullable: true })

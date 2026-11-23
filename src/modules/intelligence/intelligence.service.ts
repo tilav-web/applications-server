@@ -1334,6 +1334,11 @@ export class IntelligenceService {
         mahalla: true,
         occupation_category: true,
         occupation: true,
+        workplace: {
+          district: true,
+          mahalla: true,
+          occupation_category: true,
+        },
       },
     });
 

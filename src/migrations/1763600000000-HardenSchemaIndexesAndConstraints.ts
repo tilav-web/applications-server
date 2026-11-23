@@ -6,6 +6,9 @@ export class HardenSchemaIndexesAndConstraints1763600000000 implements Migration
   public async up(queryRunner: QueryRunner): Promise<void> {
     // 1. Soft-delete audit ustunlari (applications) va aniq timestamp (transfers)
     await queryRunner.query(
+      `ALTER TABLE "applications" ADD COLUMN IF NOT EXISTS "is_deleted" boolean NOT NULL DEFAULT false`,
+    );
+    await queryRunner.query(
       `ALTER TABLE "applications" ADD COLUMN IF NOT EXISTS "deleted_at" TIMESTAMP WITH TIME ZONE`,
     );
     await queryRunner.query(

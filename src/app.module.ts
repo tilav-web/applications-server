@@ -28,6 +28,7 @@ import { Card } from './modules/applications/transfers/cards/card.entity';
 import { TransferCustomField } from './modules/applications/transfers/custom-fields/transfer-custom-field.entity';
 import { PaymentProvider } from './modules/applications/transfers/payment_providers/payment_provider.entity';
 import { Transfer } from './modules/applications/transfers/transfer.entity';
+import { Workplace } from './modules/applications/workplaces/workplace.entity';
 import { AuditInterceptor } from './modules/audit/audit.interceptor';
 import { AuditModule } from './modules/audit/audit.module';
 import { AuditLog } from './modules/audit/audit-log.entity';
@@ -95,6 +96,7 @@ import { UsersModule } from './modules/users/users.module';
             DocumentTemplate,
             OccupationCategory,
             Occupation,
+            Workplace,
             ApplicationSource,
             DepartmentService,
             RejectionReason,

@@ -78,4 +78,12 @@ export class CreateCitizenDto {
   @IsOptional()
   @IsString()
   occupation_id?: string | null;
+
+  @IsOptional()
+  @IsString()
+  workplace_id?: string | null;
+
+  @IsOptional()
+  @IsString()
+  work_position?: string | null;
 }

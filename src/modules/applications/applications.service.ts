@@ -39,6 +39,7 @@ import { Card } from './transfers/cards/card.entity';
 import { TransferCustomField } from './transfers/custom-fields/transfer-custom-field.entity';
 import { PaymentProvider } from './transfers/payment_providers/payment_provider.entity';
 import { Transfer } from './transfers/transfer.entity';
+import { WorkplacesService } from './workplaces/workplaces.service';
 
 @Injectable()
 export class ApplicationsService {
@@ -77,6 +78,7 @@ export class ApplicationsService {
     private readonly intelligenceService: IntelligenceService,
     private readonly notificationsService: NotificationsService,
     private readonly slaQueueService: SlaQueueService,
+    private readonly workplacesService: WorkplacesService,
   ) {}
 
   private async processCustomFields(
@@ -908,6 +910,36 @@ export class ApplicationsService {
       }
     }
 
+    // Ish joyi / Tashkilot (workplaces master modeli) ni hal qilish (findOrCreate)
+    let workplaceId: string | null | undefined = dto.workplace_id;
+    if (!workplaceId && dto.workplace_data) {
+      const wpData = dto.workplace_data as Record<string, string | null | undefined>;
+      if (wpData.name && wpData.name.trim()) {
+        const wp = await this.workplacesService.findOrCreate({
+          name: wpData.name,
+          district_id: wpData.district_id || null,
+          mahalla_id: wpData.mahalla_id || null,
+          occupation_category_id: wpData.occupation_category_id || null,
+          address: wpData.address || null,
+          inn: wpData.inn || null,
+        });
+        workplaceId = wp.id;
+      }
+    }
+
+    const workPosition =
+      dto.work_position !== undefined ? dto.work_position?.trim() || null : undefined;
+
+    // Fuqaro profilining joriy ish joyi va lavozimini ham yangilab qo'yamiz
+    if (citizenId && (workplaceId !== undefined || workPosition !== undefined)) {
+      const citizenPatch: { workplace_id?: string | null; work_position?: string | null } = {};
+      if (workplaceId !== undefined) citizenPatch.workplace_id = workplaceId || null;
+      if (workPosition !== undefined) citizenPatch.work_position = workPosition;
+      if (Object.keys(citizenPatch).length > 0) {
+        await this.citizenRepo.update(citizenId, citizenPatch);
+      }
+    }
+
     return {
       citizen_id: citizenId,
       district_id: districtId,
@@ -921,6 +953,8 @@ export class ApplicationsService {
       department_service_id: departmentServiceId,
       rejection_reason_id: rejectionReasonId,
       decision_type_id: decisionTypeId,
+      ...(workplaceId !== undefined ? { workplace_id: workplaceId || null } : {}),
+      ...(workPosition !== undefined ? { work_position: workPosition } : {}),
     };
   }
 
@@ -946,6 +980,7 @@ export class ApplicationsService {
       crime_data: _crime_data,
       card_data: _card_data,
       transfer_data: _transfer_data,
+      workplace_data: _workplace_data,
       ...applicationData
     } = dto;
 
@@ -2596,12 +2631,22 @@ export class ApplicationsService {
         department_service: true,
         rejection_reason: true,
         decision_type: true,
+        workplace: {
+          district: true,
+          mahalla: true,
+          occupation_category: true,
+        },
         created_by: true,
         citizen: {
           district: true,
           mahalla: true,
           occupation_category: true,
           occupation: true,
+          workplace: {
+            district: true,
+            mahalla: true,
+            occupation_category: true,
+          },
         },
         district: true,
         crime: true,
@@ -2895,6 +2940,7 @@ export class ApplicationsService {
       crime_data: _crime_data,
       card_data: _card_data,
       transfer_data: _transfer_data,
+      workplace_data: _workplace_data,
       ...applicationData
     } = dto;
 
@@ -2942,6 +2988,7 @@ export class ApplicationsService {
     delete (application as unknown as Record<string, unknown>).department_service;
     delete (application as unknown as Record<string, unknown>).rejection_reason;
     delete (application as unknown as Record<string, unknown>).decision_type;
+    delete (application as unknown as Record<string, unknown>).workplace;
 
     Object.assign(application, applicationData, resolved);
     if (applicationData.application_number !== undefined) {

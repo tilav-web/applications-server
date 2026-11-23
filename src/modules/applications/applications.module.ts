@@ -49,6 +49,8 @@ import { PaymentProvider } from './transfers/payment_providers/payment_provider.
 import { PaymentProvidersModule } from './transfers/payment_providers/payment-providers.module';
 import { Transfer } from './transfers/transfer.entity';
 import { TransfersModule } from './transfers/transfers.module';
+import { Workplace } from './workplaces/workplace.entity';
+import { WorkplacesModule } from './workplaces/workplaces.module';
 
 @Module({
   imports: [
@@ -76,6 +78,7 @@ import { TransfersModule } from './transfers/transfers.module';
       DepartmentService,
       RejectionReason,
       DecisionType,
+      Workplace,
     ]),
     AuthModule,
     CitizensModule,
@@ -96,6 +99,7 @@ import { TransfersModule } from './transfers/transfers.module';
     DepartmentServicesModule,
     RejectionReasonsModule,
     DecisionTypesModule,
+    WorkplacesModule,
   ],
   controllers: [ApplicationsController, ApplicationsReportsController],
   providers: [
@@ -116,6 +120,7 @@ import { TransfersModule } from './transfers/transfers.module';
     DepartmentServicesModule,
     RejectionReasonsModule,
     DecisionTypesModule,
+    WorkplacesModule,
   ],
 })
 export class ApplicationsModule {}
