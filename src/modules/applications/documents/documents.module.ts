@@ -3,6 +3,7 @@ import { ConfigModule } from '@nestjs/config';
 import { TypeOrmModule } from '@nestjs/typeorm';
 
 import { AuthModule } from '../../auth/auth.module';
+import { DetectedCrime } from '../../detected-crimes/entities/detected-crime.entity';
 import { MinioModule } from '../../minio/minio.module';
 import { User } from '../../users/user.entity';
 import { Application } from '../application.entity';
@@ -22,6 +23,7 @@ import { TemplatesManagementService } from './templates/templates-management.ser
     TypeOrmModule.forFeature([
       ApplicationDocument,
       Application,
+      DetectedCrime,
       User,
       DocumentTemplate,
       Transfer,

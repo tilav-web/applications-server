@@ -8,6 +8,7 @@ import JSZip from 'jszip';
 import * as path from 'path';
 import { Repository } from 'typeorm';
 
+import { DetectedCrime } from '../../detected-crimes/entities/detected-crime.entity';
 import { MinioService } from '../../minio/minio.service';
 import { User } from '../../users/user.entity';
 import { Application } from '../application.entity';
@@ -37,6 +38,8 @@ export class DocumentsService {
     private readonly documentsRepository: Repository<ApplicationDocument>,
     @InjectRepository(Application)
     private readonly applicationsRepository: Repository<Application>,
+    @InjectRepository(DetectedCrime)
+    private readonly detectedCrimeRepo: Repository<DetectedCrime>,
     @InjectRepository(User)
     private readonly usersRepository: Repository<User>,
     @InjectRepository(DocumentTemplate)
@@ -190,6 +193,131 @@ export class DocumentsService {
   async getDocumentsByApplication(applicationId: string): Promise<ApplicationDocument[]> {
     return this.documentsRepository.find({
       where: { application_id: applicationId },
+      order: { created_at: 'DESC' },
+    });
+  }
+
+  /**
+   * Aniqlangan jinoyat uchun bo'sh Word (.docx) hujjat yaratish
+   */
+  async createBlankForDetectedCrime(
+    detectedCrimeId: string,
+    user: any,
+    title?: string,
+  ): Promise<ApplicationDocument> {
+    const crime = await this.detectedCrimeRepo.findOne({
+      where: { id: detectedCrimeId, is_deleted: false },
+    });
+    if (!crime) {
+      throw new NotFoundException(`Aniqlangan jinoyat (ID: ${detectedCrimeId}) topilmadi`);
+    }
+
+    const code = crime.case_number || 'AJ-YANGI';
+    const doc = new Document({
+      sections: [
+        {
+          properties: {
+            page: {
+              margin: { top: 1440, bottom: 1440, left: 1440, right: 1440 },
+            },
+          },
+          children: [new Paragraph({ children: [] })],
+        },
+      ],
+    });
+
+    const buffer = await Packer.toBuffer(doc);
+    const cleanDocTitle = title?.trim() || `Rasmiy hujjat - ${code}`;
+    const cleanFileName = `${code}_hujjat_${Date.now()}.docx`.replace(/[^a-zA-Z0-9._-]/g, '_');
+    const fileKey = `documents/detected-crimes/${detectedCrimeId}/${cleanFileName}`;
+
+    const uploaded = await this.minioService.uploadBuffer(
+      buffer,
+      fileKey,
+      'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+      cleanFileName,
+    );
+
+    const docKey = `doc_${randomUUID().slice(0, 8)}_${Date.now()}`;
+    const entity = this.documentsRepository.create({
+      application_id: null,
+      detected_crime_id: detectedCrimeId,
+      title: cleanDocTitle,
+      file_name: cleanFileName,
+      file_key: uploaded.key,
+      file_url: uploaded.url,
+      file_type: 'docx',
+      size: buffer.length,
+      version: 1,
+      doc_key: docKey,
+      created_by_id: user?.id || null,
+    });
+
+    return this.documentsRepository.save(entity);
+  }
+
+  /**
+   * Aniqlangan jinoyatga kompyuterdan Word (.docx / .doc) fayl yuklash
+   */
+  async uploadForDetectedCrime(
+    detectedCrimeId: string,
+    file: Express.Multer.File,
+    user: any,
+    title?: string,
+  ): Promise<ApplicationDocument> {
+    const crime = await this.detectedCrimeRepo.findOne({
+      where: { id: detectedCrimeId, is_deleted: false },
+    });
+    if (!crime) {
+      throw new NotFoundException(`Aniqlangan jinoyat (ID: ${detectedCrimeId}) topilmadi`);
+    }
+    if (!file) {
+      throw new BadRequestException('Fayl yuborilmadi');
+    }
+
+    const code = crime.case_number || 'AJ-YANGI';
+    const ext = file.originalname.split('.').pop()?.toLowerCase() || 'docx';
+    const originalNameWithoutExt =
+      file.originalname.substring(0, file.originalname.lastIndexOf('.')) || file.originalname;
+
+    const cleanDocTitle = title?.trim() || originalNameWithoutExt;
+    const cleanFileName = `${code}_${Date.now()}_${file.originalname}`.replace(
+      /[^a-zA-Z0-9._-]/g,
+      '_',
+    );
+    const fileKey = `documents/detected-crimes/${detectedCrimeId}/${cleanFileName}`;
+
+    const uploaded = await this.minioService.uploadBuffer(
+      file.buffer,
+      fileKey,
+      file.mimetype || 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+      cleanFileName,
+    );
+
+    const docKey = `doc_${randomUUID().slice(0, 8)}_${Date.now()}`;
+    const entity = this.documentsRepository.create({
+      application_id: null,
+      detected_crime_id: detectedCrimeId,
+      title: cleanDocTitle,
+      file_name: cleanFileName,
+      file_key: uploaded.key,
+      file_url: uploaded.url,
+      file_type: ext,
+      size: file.size,
+      version: 1,
+      doc_key: docKey,
+      created_by_id: user?.id || null,
+    });
+
+    return this.documentsRepository.save(entity);
+  }
+
+  /**
+   * Aniqlangan jinoyatga tegishli Word hujjatlar ro'yxati
+   */
+  async getDocumentsByDetectedCrime(detectedCrimeId: string): Promise<ApplicationDocument[]> {
+    return this.documentsRepository.find({
+      where: { detected_crime_id: detectedCrimeId },
       order: { created_at: 'DESC' },
     });
   }

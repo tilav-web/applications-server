@@ -140,6 +140,48 @@ export class DocumentsController {
   }
 
   /**
+   * Aniqlangan jinoyat uchun bo'sh rasmiy Word hujjat yaratish
+   */
+  @Post('detected-crimes/:id/documents/blank')
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(...WRITE_ROLES)
+  async createBlankForDetectedCrime(
+    @Param('id') id: string,
+    @Body('title') title: string,
+    @Req() req: any,
+  ) {
+    return this.documentsService.createBlankForDetectedCrime(id, req.user, title);
+  }
+
+  /**
+   * Aniqlangan jinoyatga Word (.docx / .doc) fayl yuklash
+   */
+  @Post('detected-crimes/:id/documents/upload')
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(...WRITE_ROLES)
+  @UseInterceptors(FileInterceptor('file', WORD_UPLOAD_OPTIONS))
+  async uploadForDetectedCrime(
+    @Param('id') id: string,
+    @UploadedFile() file: Express.Multer.File,
+    @Body('title') title: string,
+    @Req() req: any,
+  ) {
+    if (!file) {
+      throw new BadRequestException('Word fayli tanlanmadi');
+    }
+    return this.documentsService.uploadForDetectedCrime(id, file, req.user, title);
+  }
+
+  /**
+   * Aniqlangan jinoyatning barcha Word hujjatlarini olish
+   */
+  @Get('detected-crimes/:id/documents')
+  @UseGuards(JwtAuthGuard)
+  async getDocumentsByDetectedCrime(@Param('id') id: string) {
+    return this.documentsService.getDocumentsByDetectedCrime(id);
+  }
+
+  /**
    * Bitta hujjat haqida ma'lumot
    */
   @Get('documents/:id')

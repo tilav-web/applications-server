@@ -1,16 +1,24 @@
 import { Column, Entity, JoinColumn, ManyToOne } from 'typeorm';
 
 import { BaseEntity } from '../../../common/database/base.entity';
+import type { DetectedCrime } from '../../detected-crimes/entities/detected-crime.entity';
 import type { Application } from '../application.entity';
 
 @Entity('application_documents')
 export class ApplicationDocument extends BaseEntity {
-  @Column({ name: 'application_id', type: 'uuid' })
-  application_id: string;
+  @Column({ name: 'application_id', type: 'uuid', nullable: true })
+  application_id: string | null;
 
-  @ManyToOne('Application', 'documents', { onDelete: 'CASCADE' })
+  @ManyToOne('Application', 'documents', { onDelete: 'CASCADE', nullable: true })
   @JoinColumn({ name: 'application_id' })
-  application: Application;
+  application: Application | null;
+
+  @Column({ name: 'detected_crime_id', type: 'uuid', nullable: true })
+  detected_crime_id: string | null;
+
+  @ManyToOne('DetectedCrime', { onDelete: 'CASCADE', nullable: true })
+  @JoinColumn({ name: 'detected_crime_id' })
+  detected_crime: DetectedCrime | null;
 
   @Column({ name: 'title', type: 'varchar', length: 255 })
   title: string;
