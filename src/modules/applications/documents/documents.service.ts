@@ -3,11 +3,13 @@ import { ConfigService } from '@nestjs/config';
 import { InjectRepository } from '@nestjs/typeorm';
 import { randomUUID } from 'crypto';
 import { Document, Packer, Paragraph } from 'docx';
+import type { Request } from 'express';
 import * as fs from 'fs';
 import JSZip from 'jszip';
 import * as path from 'path';
 import { Repository } from 'typeorm';
 
+import type { JwtAccessPayload } from '../../../common/types/jwt-payload.interface';
 import { DetectedCrime } from '../../detected-crimes/entities/detected-crime.entity';
 import { MinioService } from '../../minio/minio.service';
 import { User } from '../../users/user.entity';
@@ -17,7 +19,7 @@ import { ApplicationDocument } from './application-document.entity';
 import { GenerateFromTemplateDto } from './dto/generate-from-template.dto';
 import { DocumentTemplate } from './templates/document-template.entity';
 import { DocxEngineService } from './templates/docx-engine.service';
-import { buildTemplateContext } from './templates/template-data.builder';
+import { buildTemplateContext, TemplateOfficerUser } from './templates/template-data.builder';
 import { OFFICIAL_TEMPLATES } from './templates/templates.config';
 import {
   buildSafeOnlyOfficeInternalUrl,
@@ -28,6 +30,20 @@ import {
   verifySignedFileAccessQuery,
 } from './utils/onlyoffice-security.util';
 import { adaptToScript, formatAmountNumber, formatDateUzbek } from './utils/transliterate.util';
+
+export type DocumentActor = Partial<JwtAccessPayload> & TemplateOfficerUser;
+
+export interface AvailableTemplateItem {
+  id: string;
+  title: string;
+  defaultDocTitle: string;
+  description: string;
+  category: string;
+  pageCount: number;
+  isDynamic: boolean;
+  availableTags?: string[];
+  fields: unknown[];
+}
 
 @Injectable()
 export class DocumentsService {
@@ -56,7 +72,7 @@ export class DocumentsService {
    */
   async createBlankDocument(
     applicationId: string,
-    user: any,
+    user?: DocumentActor | null,
     title?: string,
   ): Promise<ApplicationDocument> {
     const application = await this.applicationsRepository.findOne({
@@ -134,7 +150,7 @@ export class DocumentsService {
   async uploadDocument(
     applicationId: string,
     file: Express.Multer.File,
-    user: any,
+    user?: DocumentActor | null,
     title?: string,
   ): Promise<ApplicationDocument> {
     const application = await this.applicationsRepository.findOne({
@@ -202,7 +218,7 @@ export class DocumentsService {
    */
   async createBlankForDetectedCrime(
     detectedCrimeId: string,
-    user: any,
+    user?: DocumentActor | null,
     title?: string,
   ): Promise<ApplicationDocument> {
     const crime = await this.detectedCrimeRepo.findOne({
@@ -262,7 +278,7 @@ export class DocumentsService {
   async uploadForDetectedCrime(
     detectedCrimeId: string,
     file: Express.Multer.File,
-    user: any,
+    user?: DocumentActor | null,
     title?: string,
   ): Promise<ApplicationDocument> {
     const crime = await this.detectedCrimeRepo.findOne({
@@ -343,7 +359,7 @@ export class DocumentsService {
   /**
    * ONLYOFFICE uchun tahrirlash konfiguratsiyasini shakllantirish
    */
-  async getDocumentEditorConfig(id: string, user: any) {
+  async getDocumentEditorConfig(id: string, user?: DocumentActor | null) {
     const doc = await this.getDocumentById(id);
 
     // Docker tarmog'idagi ichki server URL
@@ -430,18 +446,27 @@ export class DocumentsService {
   /**
    * ONLYOFFICE dan hujjat saqlanganda keladigan callback handler
    */
-  async handleCallback(id: string, body: any, req?: any): Promise<{ error: number }> {
+  async handleCallback(
+    id: string,
+    body: Record<string, unknown>,
+    req?: Request,
+  ): Promise<{ error: number }> {
     const onlyOfficeSecret = getOnlyOfficeJwtSecret(this.configService);
     const verifiedPayload = req
       ? verifyOnlyOfficeCallbackRequest(req, body, onlyOfficeSecret)
       : body;
 
     const status = verifiedPayload?.status ?? body?.status;
-    this.logger.log(`ONLYOFFICE callback keldi (Doc ID: ${id}, Status: ${status})`);
+    this.logger.log(`ONLYOFFICE callback keldi (Doc ID: ${id}, Status: ${String(status)})`);
 
     // 2 = Document is ready for saving, 6 = Document being edited, but force-saved
     if (status === 2 || status === 6) {
-      const downloadUrl: string = (verifiedPayload?.url as string) || body?.url;
+      const downloadUrl =
+        typeof verifiedPayload?.url === 'string'
+          ? verifiedPayload.url
+          : typeof body?.url === 'string'
+            ? body.url
+            : '';
       if (!downloadUrl) {
         this.logger.warn(`Callbackda status ${status} bo'lsa-da yuklab olish URL si yo'q`);
         return { error: 0 };
@@ -537,7 +562,7 @@ export class DocumentsService {
     };
 
     // 1. Dinamik universal shablonlar (bazadan)
-    let dynamicTemplates: any[] = [];
+    let dynamicTemplates: AvailableTemplateItem[] = [];
     try {
       const dbTemplates = await this.templateRepo.find({
         where: { is_active: true },
@@ -576,7 +601,7 @@ export class DocumentsService {
   /**
    * Foydalanuvchi ma'lumotlarini authId orqali topish
    */
-  private async resolveOfficerName(user: any): Promise<string> {
+  private async resolveOfficerName(user?: DocumentActor | null): Promise<string> {
     if (!user) return 'Xodim';
     if (user.first_name || user.last_name) {
       return `${user.first_name || ''} ${user.last_name || ''}`.trim();
@@ -602,7 +627,7 @@ export class DocumentsService {
     applicationId: string,
     templateId: string,
     script: 'lotin' | 'krill' = 'lotin',
-    user?: any,
+    user?: DocumentActor | null,
   ) {
     const application = await this.applicationsRepository.findOne({
       where: { id: applicationId },
@@ -672,7 +697,7 @@ export class DocumentsService {
         },
       });
 
-      let officerUser: any = null;
+      let officerUser: User | null = null;
       const authId = user?.sub || user?.id;
       if (authId) {
         officerUser = await this.usersRepository.findOne({ where: { auth_id: authId } });
@@ -841,7 +866,7 @@ export class DocumentsService {
   async createFromTemplate(
     applicationId: string,
     dto: GenerateFromTemplateDto,
-    user: any,
+    user?: DocumentActor | null,
   ): Promise<ApplicationDocument> {
     const script = dto.script || 'lotin';
 
@@ -896,7 +921,7 @@ export class DocumentsService {
         },
       });
 
-      let officerUser: any = null;
+      let officerUser: User | null = null;
       const authId = user?.sub || user?.id;
       if (authId) {
         officerUser = await this.usersRepository.findOne({ where: { auth_id: authId } });
@@ -1002,10 +1027,15 @@ export class DocumentsService {
 
     const preview = await this.getTemplatePreview(applicationId, dto.templateId, script, user);
     // Foydalanuvchi kiritgan customData mavjud bo'lsa, avtomatik to'ldirilgan ma'lumotlar bilan birlashtiramiz
-    const finalData: Record<string, any> = {
-      ...preview.prefilledData,
-      ...(dto.customData || {}),
-    };
+    const finalData: Record<string, string> = {};
+    for (const [key, value] of Object.entries(preview.prefilledData)) {
+      if (typeof value === 'string') {
+        finalData[key] = value;
+      }
+    }
+    if (dto.customData) {
+      Object.assign(finalData, dto.customData);
+    }
 
     // Faylni o'qish
     const fileBuffer = fs.readFileSync(templateFilePath);

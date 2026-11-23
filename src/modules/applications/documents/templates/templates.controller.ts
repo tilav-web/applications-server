@@ -25,6 +25,7 @@ import { Roles } from '../../../../common/decorators/roles.decorator';
 import { Role } from '../../../../common/enums/role.enum';
 import { JwtAuthGuard } from '../../../../common/guards/jwt-auth.guard';
 import { RolesGuard } from '../../../../common/guards/roles.guard';
+import type { AuthenticatedRequest } from '../../../../common/types/jwt-payload.interface';
 import { AuthService } from '../../../auth/auth.service';
 import { CreateTemplateDto, UpdateTemplateDto } from './dto/template.dto';
 import { TemplatesManagementService } from './templates-management.service';
@@ -91,7 +92,7 @@ export class TemplatesController {
   @Post('blank')
   @UseGuards(JwtAuthGuard, RolesGuard)
   @Roles(...TEMPLATE_WRITE_ROLES)
-  async createBlankTemplate(@Body() dto: CreateTemplateDto, @Req() req: any) {
+  async createBlankTemplate(@Body() dto: CreateTemplateDto, @Req() req: AuthenticatedRequest) {
     return this.templatesService.createBlankTemplate(dto, req.user);
   }
 
@@ -105,7 +106,7 @@ export class TemplatesController {
   async uploadTemplate(
     @UploadedFile() file: Express.Multer.File,
     @Body() dto: CreateTemplateDto,
-    @Req() req: any,
+    @Req() req: AuthenticatedRequest,
   ) {
     if (!file) {
       throw new BadRequestException('Word (.docx) fayli tanlanmadi');
@@ -138,7 +139,7 @@ export class TemplatesController {
    */
   @Get(':id/config')
   @UseGuards(JwtAuthGuard)
-  async getTemplateEditorConfig(@Param('id') id: string, @Req() req: any) {
+  async getTemplateEditorConfig(@Param('id') id: string, @Req() req: AuthenticatedRequest) {
     return this.templatesService.getTemplateEditorConfig(id, req.user);
   }
 
@@ -184,7 +185,11 @@ export class TemplatesController {
    */
   @Post(':id/callback')
   @HttpCode(HttpStatus.OK)
-  async handleCallback(@Param('id') id: string, @Body() body: any, @Req() req: Request) {
+  async handleCallback(
+    @Param('id') id: string,
+    @Body() body: Record<string, unknown>,
+    @Req() req: Request,
+  ) {
     return this.templatesService.handleTemplateCallback(id, body, req);
   }
 
@@ -197,7 +202,7 @@ export class TemplatesController {
     @Param('id') id: string,
     @Body('applicationId') applicationId?: string,
     @Body('script') script: 'lotin' | 'krill' = 'lotin',
-    @Req() req?: any,
+    @Req() req?: AuthenticatedRequest,
     @Res() res?: Response,
   ) {
     const buffer = await this.templatesService.testGenerateTemplate(

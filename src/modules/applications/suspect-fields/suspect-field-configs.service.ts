@@ -125,8 +125,9 @@ export class SuspectFieldConfigsService implements OnApplicationBootstrap {
         }
         this.logger.log(`Standart ${DEFAULT_SUSPECT_FIELDS.length} ta parametr kiritildi.`);
       }
-    } catch (e: any) {
-      this.logger.warn(`suspect_field_configs bootstrap xatosi: ${e.message}`);
+    } catch (e: unknown) {
+      const msg = e instanceof Error ? e.message : String(e);
+      this.logger.warn(`suspect_field_configs bootstrap xatosi: ${msg}`);
     }
   }
 

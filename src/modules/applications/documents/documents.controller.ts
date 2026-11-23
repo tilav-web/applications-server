@@ -24,6 +24,7 @@ import { Roles } from '../../../common/decorators/roles.decorator';
 import { Role } from '../../../common/enums/role.enum';
 import { JwtAuthGuard } from '../../../common/guards/jwt-auth.guard';
 import { RolesGuard } from '../../../common/guards/roles.guard';
+import type { AuthenticatedRequest } from '../../../common/types/jwt-payload.interface';
 import { AuthService } from '../../auth/auth.service';
 import { DocumentsService } from './documents.service';
 import { GenerateFromTemplateDto } from './dto/generate-from-template.dto';
@@ -78,7 +79,7 @@ export class DocumentsController {
     @Param('id') id: string,
     @Param('templateId') templateId: string,
     @Query('script') script: 'lotin' | 'krill' = 'lotin',
-    @Req() req: any,
+    @Req() req: AuthenticatedRequest,
   ) {
     return this.documentsService.getTemplatePreview(id, templateId, script, req.user);
   }
@@ -92,7 +93,7 @@ export class DocumentsController {
   async createFromTemplate(
     @Param('id') id: string,
     @Body() dto: GenerateFromTemplateDto,
-    @Req() req: any,
+    @Req() req: AuthenticatedRequest,
   ) {
     return this.documentsService.createFromTemplate(id, dto, req.user);
   }
@@ -106,7 +107,7 @@ export class DocumentsController {
   async createBlankDocument(
     @Param('id') id: string,
     @Body('title') title: string,
-    @Req() req: any,
+    @Req() req: AuthenticatedRequest,
   ) {
     return this.documentsService.createBlankDocument(id, req.user, title);
   }
@@ -122,7 +123,7 @@ export class DocumentsController {
     @Param('id') id: string,
     @UploadedFile() file: Express.Multer.File,
     @Body('title') title: string,
-    @Req() req: any,
+    @Req() req: AuthenticatedRequest,
   ) {
     if (!file) {
       throw new BadRequestException('Word fayli tanlanmadi');
@@ -148,7 +149,7 @@ export class DocumentsController {
   async createBlankForDetectedCrime(
     @Param('id') id: string,
     @Body('title') title: string,
-    @Req() req: any,
+    @Req() req: AuthenticatedRequest,
   ) {
     return this.documentsService.createBlankForDetectedCrime(id, req.user, title);
   }
@@ -164,7 +165,7 @@ export class DocumentsController {
     @Param('id') id: string,
     @UploadedFile() file: Express.Multer.File,
     @Body('title') title: string,
-    @Req() req: any,
+    @Req() req: AuthenticatedRequest,
   ) {
     if (!file) {
       throw new BadRequestException('Word fayli tanlanmadi');
@@ -195,7 +196,7 @@ export class DocumentsController {
    */
   @Get('documents/:id/config')
   @UseGuards(JwtAuthGuard)
-  async getDocumentConfig(@Param('id') id: string, @Req() req: any) {
+  async getDocumentConfig(@Param('id') id: string, @Req() req: AuthenticatedRequest) {
     return this.documentsService.getDocumentEditorConfig(id, req.user);
   }
 
@@ -244,7 +245,11 @@ export class DocumentsController {
    */
   @Post('documents/:id/callback')
   @HttpCode(HttpStatus.OK)
-  async handleCallback(@Param('id') id: string, @Body() body: any, @Req() req: Request) {
+  async handleCallback(
+    @Param('id') id: string,
+    @Body() body: Record<string, unknown>,
+    @Req() req: Request,
+  ) {
     return this.documentsService.handleCallback(id, body, req);
   }
 

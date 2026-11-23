@@ -41,6 +41,76 @@ import { PaymentProvider } from './transfers/payment_providers/payment_provider.
 import { Transfer } from './transfers/transfer.entity';
 import { WorkplacesService } from './workplaces/workplaces.service';
 
+export interface LinkedApplicationSummary {
+  id: string;
+  application_number: string;
+  status: string | null;
+  status_label: string;
+  status_color: string;
+  date: Date | null;
+  citizen_name: string;
+  citizen_phone?: string | null;
+  role_in_that_app?: string;
+  transfer_amount: number | null;
+  currency: string;
+  payment_provider?: string | null;
+  description: string | null;
+}
+
+export interface CardRelationSummary {
+  id: string;
+  card_number: string | null;
+  masked_number: string | null;
+  full_name: string | null;
+  bank_name: string | null;
+}
+
+export interface CitizenRelationSummary {
+  id: string;
+  first_name: string | null;
+  last_name: string | null;
+  middle_name: string | null;
+  phone_number: string | null;
+  passport: string | null;
+  pinfl: string | null;
+}
+
+export interface RelationGraphNode {
+  id: string;
+  cardNumber: string;
+  maskedCard: string;
+  bankName: string;
+  totalIn: number;
+  totalOut: number;
+  netFlow: number;
+  inDegree: number;
+  outDegree: number;
+  reportsCount: number;
+  reportIds: string[];
+  riskScore: number;
+  role: 'MULE_DROPPER' | 'TRANSIT' | 'VICTIM_SOURCE';
+  isBlacklisted: boolean;
+  isUnknownDestination?: boolean;
+  ownerName?: string;
+  pinfl?: string;
+  passport?: string;
+  phone?: string;
+  linkedApplications: LinkedApplicationSummary[];
+}
+
+export interface RelationGraphEdge {
+  id: string;
+  from: string;
+  to: string;
+  amount: number;
+  paymentProvider: string;
+  transactionsCount: number;
+  lastDate: string;
+  applicationNumber: string;
+  applicationId: string;
+  isUnknownDestination: boolean;
+}
+
 @Injectable()
 export class ApplicationsService {
   constructor(
@@ -1853,7 +1923,11 @@ export class ApplicationsService {
 
       const appExtracts = new Map<
         string,
-        { cardData: any; citizenData: any; suspectTokens: any[] }
+        {
+          cardData: ReturnType<ApplicationsService['extractCardData']>;
+          citizenData: ReturnType<ApplicationsService['extractCitizenData']>;
+          suspectTokens: ReturnType<ApplicationsService['extractSuspectTokens']>;
+        }
       >();
       for (const a of allApps) {
         appExtracts.set(a.id, {
@@ -2065,18 +2139,18 @@ export class ApplicationsService {
     const cardRelationsMap = new Map<
       string,
       {
-        card: any;
+        card: CardRelationSummary;
         role_in_current_app: 'RECEIVER' | 'SENDER' | 'RELATED';
-        linked_applications: any[];
+        linked_applications: LinkedApplicationSummary[];
       }
     >();
 
     const citizenRelationsMap = new Map<
       string,
       {
-        citizen: any;
+        citizen: CitizenRelationSummary;
         match_reasons: Set<string>;
-        linked_applications: any[];
+        linked_applications: LinkedApplicationSummary[];
       }
     >();
 
@@ -2086,7 +2160,7 @@ export class ApplicationsService {
         field_path: string;
         value: string;
         matched_with: string;
-        linked_applications: any[];
+        linked_applications: LinkedApplicationSummary[];
       }
     >();
 
@@ -2320,8 +2394,8 @@ export class ApplicationsService {
     // =========================================================================
     // 3. GRAPH CANVAS UCHUN TUGUNLAR (NODES) VA QIRRALAR (EDGES) SHAKLLANTIRISH
     // =========================================================================
-    const graphNodesMap = new Map<string, any>();
-    const graphEdges: any[] = [];
+    const graphNodesMap = new Map<string, RelationGraphNode>();
+    const graphEdges: RelationGraphEdge[] = [];
 
     const ensureCardNode = (
       card: Card | null | undefined,

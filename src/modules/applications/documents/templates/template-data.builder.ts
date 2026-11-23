@@ -8,22 +8,47 @@ import {
   numberToWordsUz,
 } from '../utils/transliterate.util';
 
+export interface TemplateOfficerUser {
+  id?: string;
+  sub?: string;
+  first_name?: string | null;
+  last_name?: string | null;
+  phone_number?: string | null;
+  username?: string | null;
+  auth?: {
+    username?: string | null;
+    role?: string | null;
+  } | null;
+}
+
+interface RawSuspectItem {
+  id?: string;
+  field_key?: string;
+  key?: string;
+  field_label?: string;
+  label?: string;
+  value?: string;
+  note?: string;
+  description?: string;
+  children?: RawSuspectItem[];
+}
+
 export interface TemplateDataContext {
-  citizen: Record<string, any>;
-  application: Record<string, any>;
-  crime: Record<string, any>;
-  district: Record<string, any>;
-  victim_card: Record<string, any>;
-  fraud_card: Record<string, any>;
-  suspect: Record<string, any>;
-  suspect_list?: Array<Record<string, any>>;
-  suspect_tree: Array<Record<string, any>>;
-  transfer: Record<string, any>;
-  transfers: Array<Record<string, any>>;
-  custom: Record<string, any>;
-  custom_fields: Record<string, any>;
-  officer: Record<string, any>;
-  head: Record<string, any>;
+  citizen: Record<string, unknown>;
+  application: Record<string, unknown>;
+  crime: Record<string, unknown>;
+  district: Record<string, unknown>;
+  victim_card: Record<string, unknown>;
+  fraud_card: Record<string, unknown>;
+  suspect: Record<string, unknown>;
+  suspect_list?: Array<Record<string, unknown>>;
+  suspect_tree: Array<Record<string, unknown>>;
+  transfer: Record<string, unknown>;
+  transfers: Array<Record<string, unknown>>;
+  custom: Record<string, unknown>;
+  custom_fields: Record<string, unknown>;
+  officer: Record<string, unknown>;
+  head: Record<string, unknown>;
   total_stolen_amount: string;
   total_stolen_amount_words: string;
   total_amount: string;
@@ -32,13 +57,13 @@ export interface TemplateDataContext {
   current_date_text: string;
   current_year: string;
   // Aliases for backwards compatibility
-  [key: string]: any;
+  [key: string]: unknown;
 }
 
 export function buildTemplateContext(
   application: Application,
   transfers: Transfer[] = [],
-  officerUser: any = null,
+  officerUser: TemplateOfficerUser | null = null,
   script: 'lotin' | 'krill' = 'lotin',
   customData: Record<string, string> = {},
 ): TemplateDataContext {
@@ -164,12 +189,12 @@ export function buildTemplateContext(
   }));
 
   // 6b. Suspect Fields / Tree parser (Firibgar / Gumonlanuvchi ma'lumotlari)
-  const rawSuspectData: any[] = Array.isArray(application.suspect_tree)
+  const rawSuspectData: RawSuspectItem[] = Array.isArray(application.suspect_tree)
     ? application.suspect_tree
     : [];
 
   const suspectKeyValues: Record<string, string> = {};
-  const suspectList: Array<Record<string, any>> = [];
+  const suspectList: Array<Record<string, unknown>> = [];
   const suspectDetailsLines: string[] = [];
 
   const branchPaths: string[] = [];
@@ -218,7 +243,7 @@ export function buildTemplateContext(
       }
     } else {
       // Tree format: recursive walk
-      const walk = (nodes: any[], currentPath: string[] = []) => {
+      const walk = (nodes: RawSuspectItem[], currentPath: string[] = []) => {
         for (const node of nodes) {
           if (!node) continue;
           const text = (node.label || node.value || '').trim();
@@ -260,7 +285,7 @@ export function buildTemplateContext(
   const finalSuspectList = suspectList.length > 0 ? suspectList : formattedSuspectTree;
 
   // 7. Dynamic Custom Fields parser
-  const customFieldsContext: Record<string, any> = {};
+  const customFieldsContext: Record<string, unknown> = {};
   if (application.custom_fields && Array.isArray(application.custom_fields)) {
     for (const cf of application.custom_fields) {
       if (!cf.key) continue;

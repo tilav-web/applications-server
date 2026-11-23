@@ -2,13 +2,25 @@ import { Injectable, Logger } from '@nestjs/common';
 import Docxtemplater from 'docxtemplater';
 import PizZip from 'pizzip';
 
+interface DocxtemplaterSubError {
+  message?: string;
+  explanation?: string;
+}
+
+interface DocxtemplaterError {
+  message?: string;
+  properties?: {
+    errors?: DocxtemplaterSubError[];
+  };
+}
+
 @Injectable()
 export class DocxEngineService {
   private readonly logger = new Logger(DocxEngineService.name);
 
   private createDocxParser(tag: string) {
     return {
-      get: (scope: any) => {
+      get: (scope: Record<string, unknown> | null | undefined): unknown => {
         if (!scope) return '';
         if (tag === '.') return scope;
         // 1. Agar to'g'ridan-to'g'ri kalit mavjud bo'lsa (flat key)
@@ -17,10 +29,10 @@ export class DocxEngineService {
         }
         // 2. Nuqta orqali bog'langan yo'l bo'lsa (nested property path, masalan: citizen.district.name)
         const parts = tag.split('.');
-        let val = scope;
+        let val: unknown = scope;
         for (const part of parts) {
-          if (val === null || val === undefined) return '';
-          val = val[part];
+          if (val === null || val === undefined || typeof val !== 'object') return '';
+          val = (val as Record<string, unknown>)[part];
         }
         return val !== undefined && val !== null ? val : '';
       },
@@ -30,7 +42,7 @@ export class DocxEngineService {
   /**
    * Shablon buferiga berilgan context ma'lumotlarini kiritib yangi Docx buferini qaytarish
    */
-  renderTemplate(templateBuffer: Buffer, contextData: Record<string, any>): Buffer {
+  renderTemplate(templateBuffer: Buffer, contextData: Record<string, unknown>): Buffer {
     try {
       const zip = new PizZip(templateBuffer);
       const doc = new Docxtemplater(zip, {
@@ -49,15 +61,17 @@ export class DocxEngineService {
       });
 
       return generatedBuffer;
-    } catch (error: any) {
+    } catch (error: unknown) {
       this.logger.error('Docxtemplater rendering error:', error);
-      if (error.properties && error.properties.errors) {
-        const errorMessages = error.properties.errors
-          .map((e: any) => e.message || e.explanation)
+      const docxErr = error as DocxtemplaterError;
+      if (docxErr?.properties?.errors) {
+        const errorMessages = docxErr.properties.errors
+          .map((e) => e.message || e.explanation)
           .join('; ');
         throw new Error(`Shablonni to‘ldirishda xatolik: ${errorMessages}`);
       }
-      throw new Error(`Shablonni to‘ldirishda xatolik: ${error.message || error}`);
+      const message = error instanceof Error ? error.message : String(error);
+      throw new Error(`Shablonni to‘ldirishda xatolik: ${message}`);
     }
   }
 
@@ -67,7 +81,7 @@ export class DocxEngineService {
   extractTags(templateBuffer: Buffer): string[] {
     try {
       const zip = new PizZip(templateBuffer);
-      const doc = new Docxtemplater(zip, {
+      new Docxtemplater(zip, {
         delimiters: { start: '{{', end: '}}' },
         paragraphLoop: true,
         linebreaks: true,
@@ -87,8 +101,9 @@ export class DocxEngineService {
       }
 
       return Array.from(foundTags);
-    } catch (e: any) {
-      this.logger.warn(`extractTags ogohlantirish: ${e.message}`);
+    } catch (e: unknown) {
+      const message = e instanceof Error ? e.message : String(e);
+      this.logger.warn(`extractTags ogohlantirish: ${message}`);
       return [];
     }
   }
@@ -123,13 +138,15 @@ export class DocxEngineService {
         errors: [],
         tags,
       };
-    } catch (err: any) {
-      if (err.properties && err.properties.errors) {
-        for (const e of err.properties.errors) {
+    } catch (err: unknown) {
+      const docxErr = err as DocxtemplaterError;
+      if (docxErr?.properties?.errors) {
+        for (const e of docxErr.properties.errors) {
           errors.push(e.message || e.explanation || 'Noma’lum sintaktik xatolik');
         }
       } else {
-        errors.push(err.message || 'Shablon faylini o‘qishda xatolik');
+        const message = err instanceof Error ? err.message : undefined;
+        errors.push(message || 'Shablon faylini o‘qishda xatolik');
       }
 
       return {

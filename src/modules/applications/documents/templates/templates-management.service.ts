@@ -9,11 +9,13 @@ import { ConfigService } from '@nestjs/config';
 import { InjectRepository } from '@nestjs/typeorm';
 import { randomUUID } from 'crypto';
 import { Document, Packer, Paragraph } from 'docx';
+import type { Request } from 'express';
 import * as fs from 'fs';
 import * as path from 'path';
 import PizZip from 'pizzip';
 import { Repository } from 'typeorm';
 
+import type { JwtAccessPayload } from '../../../../common/types/jwt-payload.interface';
 import { MinioService } from '../../../minio/minio.service';
 import { Application } from '../../application.entity';
 import { SuspectFieldConfig } from '../../suspect-fields/suspect-field-config.entity';
@@ -29,12 +31,15 @@ import {
 import { DocumentTemplate } from './document-template.entity';
 import { DocxEngineService } from './docx-engine.service';
 import { CreateTemplateDto, UpdateTemplateDto } from './dto/template.dto';
-import { buildTemplateContext } from './template-data.builder';
+import { buildTemplateContext, TemplateOfficerUser } from './template-data.builder';
 import {
   TEMPLATE_VARIABLES_DICTIONARY,
   TemplateCategoryConfig,
   TemplateVariableItem,
 } from './template-variables.dictionary';
+
+export type TemplateActor = Partial<JwtAccessPayload> & TemplateOfficerUser;
+export type DocumentTemplateWithDisplayTitle = DocumentTemplate & { displayTitle?: string };
 
 @Injectable()
 export class TemplatesManagementService implements OnApplicationBootstrap {
@@ -65,7 +70,7 @@ export class TemplatesManagementService implements OnApplicationBootstrap {
     script: 'lotin' | 'krill' = 'lotin',
     category?: string,
     search?: string,
-  ): Promise<DocumentTemplate[]> {
+  ): Promise<DocumentTemplateWithDisplayTitle[]> {
     const qb = this.templateRepo.createQueryBuilder('t');
 
     if (category && category !== 'all') {
@@ -84,9 +89,9 @@ export class TemplatesManagementService implements OnApplicationBootstrap {
 
     // Agar Krill so'ralsa va title_krill mavjud bo'lsa, uni sarlavha sifatida ko'rsatish
     return templates.map((tpl) => {
-      (tpl as any).displayTitle =
-        script === 'krill' && tpl.title_krill ? tpl.title_krill : tpl.title;
-      return tpl;
+      const withTitle: DocumentTemplateWithDisplayTitle = tpl;
+      withTitle.displayTitle = script === 'krill' && tpl.title_krill ? tpl.title_krill : tpl.title;
+      return withTitle;
     });
   }
 
@@ -152,10 +157,9 @@ export class TemplatesManagementService implements OnApplicationBootstrap {
           });
         }
       }
-    } catch (e: any) {
-      this.logger.warn(
-        `getVariablesDictionary suspect_field_configs olishda xatolik: ${e.message}`,
-      );
+    } catch (e: unknown) {
+      const msg = e instanceof Error ? e.message : String(e);
+      this.logger.warn(`getVariablesDictionary suspect_field_configs olishda xatolik: ${msg}`);
     }
 
     if (customSuspectItems.length > 0) {
@@ -176,7 +180,10 @@ export class TemplatesManagementService implements OnApplicationBootstrap {
   /**
    * Noldan bo'sh Word shablonini yaratish
    */
-  async createBlankTemplate(dto: CreateTemplateDto, user: any): Promise<DocumentTemplate> {
+  async createBlankTemplate(
+    dto: CreateTemplateDto,
+    user?: TemplateActor | null,
+  ): Promise<DocumentTemplate> {
     const doc = new Document({
       sections: [
         {
@@ -237,7 +244,7 @@ export class TemplatesManagementService implements OnApplicationBootstrap {
   async uploadTemplateFile(
     file: Express.Multer.File,
     dto: CreateTemplateDto,
-    user: any,
+    user?: TemplateActor | null,
   ): Promise<DocumentTemplate> {
     if (!file) {
       throw new BadRequestException('Fayl tanlanmadi');
@@ -320,7 +327,7 @@ export class TemplatesManagementService implements OnApplicationBootstrap {
   /**
    * ONLYOFFICE uchun shablonni tahrirlash konfiguratsiyasi
    */
-  async getTemplateEditorConfig(id: string, user: any) {
+  async getTemplateEditorConfig(id: string, user?: TemplateActor | null) {
     const tpl = await this.getTemplateById(id);
 
     const internalServerHost =
@@ -405,18 +412,29 @@ export class TemplatesManagementService implements OnApplicationBootstrap {
   /**
    * ONLYOFFICE dan shablon saqlanganda keladigan callback handler
    */
-  async handleTemplateCallback(id: string, body: any, req?: any): Promise<{ error: number }> {
+  async handleTemplateCallback(
+    id: string,
+    body: Record<string, unknown>,
+    req?: Request,
+  ): Promise<{ error: number }> {
     const onlyOfficeSecret = getOnlyOfficeJwtSecret(this.configService);
     const verifiedPayload = req
       ? verifyOnlyOfficeCallbackRequest(req, body, onlyOfficeSecret)
       : body;
 
     const status = verifiedPayload?.status ?? body?.status;
-    this.logger.log(`ONLYOFFICE template callback keldi (Template ID: ${id}, Status: ${status})`);
+    this.logger.log(
+      `ONLYOFFICE template callback keldi (Template ID: ${id}, Status: ${String(status)})`,
+    );
 
     // 2 = Document is ready for saving, 6 = Force-saved
     if (status === 2 || status === 6) {
-      const downloadUrl: string = (verifiedPayload?.url as string) || body?.url;
+      const downloadUrl =
+        typeof verifiedPayload?.url === 'string'
+          ? verifiedPayload.url
+          : typeof body?.url === 'string'
+            ? body.url
+            : '';
       if (!downloadUrl) {
         return { error: 0 };
       }
@@ -473,7 +491,7 @@ export class TemplatesManagementService implements OnApplicationBootstrap {
     templateId: string,
     applicationId?: string,
     script: 'lotin' | 'krill' = 'lotin',
-    user?: any,
+    user?: TemplateActor | null,
   ): Promise<Buffer> {
     const tpl = await this.getTemplateById(templateId);
 
@@ -550,7 +568,7 @@ export class TemplatesManagementService implements OnApplicationBootstrap {
           address: 'Qarshi shahri, Mustaqillik ko‘chasi, 12-uy',
           district: { name: 'Qarshi shahri' },
           mahalla: { name: 'Mustaqillik MFY' },
-        } as any,
+        },
         crime: {
           article: '168-modda',
           part: '3-qismi',
@@ -558,25 +576,25 @@ export class TemplatesManagementService implements OnApplicationBootstrap {
           category: 'Mulkka qarshi jinoyatlar',
           description:
             'O‘zganing mulkini aldash yoki ishonchni suiiste’mol qilish yo‘li bilan talon-toroj qilish',
-        } as any,
+        },
         application_status: {
           name: 'Jarayonda',
           code: 'PROCESSING',
           description: 'Ariza bo‘yicha tergov harakatlari olib borilmoqda',
-        } as any,
+        },
         custom_fields: [
           {
             key: 'dalil_tavsifi',
             label: 'Dalillar tavsifi',
             value: 'Fuqaroning telefoni ko‘zdan kechirildi va skrinshotlar ilova qilindi',
           },
-        ] as any,
-        district: { name: 'Qarshi tumani' } as any,
+        ],
+        district: { name: 'Qarshi tumani' },
         card: {
           card_number: '8600123456789012',
           full_name: 'SANJAR ERGASHEV',
           bank: { name: 'O‘zmilliybank' },
-        } as any,
+        },
         transfer: {
           amount: 5000000,
           receiver_card: {
@@ -584,29 +602,29 @@ export class TemplatesManagementService implements OnApplicationBootstrap {
             full_name: 'ALIEV VALI',
             bank: { name: 'Anorbank' },
           },
-        } as any,
-      } as Application;
+        },
+      } as unknown as Application;
 
       transfers = [
         {
           amount: 2500000,
-          sender_card: { card_number: '8600123456789012' } as any,
-          receiver_card: { card_number: '9860998877665544' } as any,
+          sender_card: { card_number: '8600123456789012' },
+          receiver_card: { card_number: '9860998877665544' },
           transfer_date: '01.07.2026',
           transfer_time: '14:35',
-          payment_provider: { name: 'Payme' } as any,
-          status: 'BAJARILDI' as any,
-        } as any,
+          payment_provider: { name: 'Payme' },
+          status: 'BAJARILDI',
+        },
         {
           amount: 2500000,
-          sender_card: { card_number: '8600123456789012' } as any,
-          receiver_card: { card_number: '9860998877665544' } as any,
+          sender_card: { card_number: '8600123456789012' },
+          receiver_card: { card_number: '9860998877665544' },
           transfer_date: '01.07.2026',
           transfer_time: '14:37',
-          payment_provider: { name: 'Payme' } as any,
-          status: 'BAJARILDI' as any,
-        } as any,
-      ];
+          payment_provider: { name: 'Payme' },
+          status: 'BAJARILDI',
+        },
+      ] as unknown as Transfer[];
     }
 
     const context = buildTemplateContext(application, transfers, user, script, {});
@@ -771,7 +789,7 @@ export class TemplatesManagementService implements OnApplicationBootstrap {
       }
 
       this.logger.log('Boshlang‘ich shablonlar muvaffaqiyatli yuklandi!');
-    } catch (e: any) {
+    } catch (e: unknown) {
       this.logger.error(`Shablonlarni seeder qilishda xatolik:`, e);
     }
   }
