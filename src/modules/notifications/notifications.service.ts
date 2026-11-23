@@ -7,6 +7,7 @@ import { ApplicationStatus } from '../../common/enums/application-status.enum';
 import { Role } from '../../common/enums/role.enum';
 import { Application } from '../applications/application.entity';
 import { SystemSetting } from '../audit/system-setting.entity';
+import { DetectedCrime } from '../detected-crimes/entities/detected-crime.entity';
 import { User } from '../users/user.entity';
 import {
   Notification,
@@ -534,6 +535,125 @@ export class NotificationsService implements OnModuleInit, OnModuleDestroy {
       }
     } catch (err) {
       this.logger.warn(`onDeadlineExtended xatosi: ${(err as Error).message}`);
+    }
+  }
+
+  /**
+   * 7. Aniqlangan jinoyat (DetectedCrime) uchun BullMQ SLA bosqichi eskalatsiyasi
+   */
+  async dispatchDetectedCrimeSlaNotification(
+    dc: DetectedCrime,
+    stage: 'WARN_72H' | 'URGENT_24H' | 'OVERDUE_0H' | 'ESCALATE_24H',
+  ): Promise<void> {
+    try {
+      const code = dc.case_number || 'Kodsiz';
+      const districtName = dc.district?.name || 'Noma‘lum tuman';
+      const statusName = dc.application_status?.name || 'Jarayonda';
+      const deadlineStr = dc.deadline_at
+        ? new Date(dc.deadline_at).toLocaleString('uz-UZ', {
+            day: '2-digit',
+            month: '2-digit',
+            year: 'numeric',
+            hour: '2-digit',
+            minute: '2-digit',
+          })
+        : '—';
+
+      const recipientMap = new Map<string, User>();
+      const addUsers = (list: User[]) => {
+        for (const u of list) recipientMap.set(u.id, u);
+      };
+
+      const districtOfficers = dc.district_id
+        ? await this.findUsersByRoles([Role.DISTRICT_OFFICER], dc.district_id)
+        : [];
+      const creatorId = dc.created_by_id || dc.detected_by_id;
+      const creatorUser = creatorId
+        ? await this.userRepo.findOne({ where: { id: creatorId } })
+        : null;
+
+      let type: NotificationType = 'SLA_WARNING';
+      let priority: NotificationPriority = 'WARNING';
+      let title = '';
+      let message = '';
+
+      if (stage === 'WARN_72H') {
+        addUsers(districtOfficers);
+        if (creatorUser) addUsers([creatorUser]);
+        type = 'SLA_WARNING';
+        priority = 'WARNING';
+        title = `Muddat yaqinlashmoqda: Aniqlangan jinoyat ${code}`;
+        message = `Sarlavha: ${dc.title}\nHudud: ${districtName}\nHolat: ${statusName}\nProtsessual muddat: ${deadlineStr}`;
+      } else if (stage === 'URGENT_24H') {
+        addUsers(districtOfficers);
+        if (creatorUser) addUsers([creatorUser]);
+        type = 'SLA_WARNING';
+        priority = 'WARNING';
+        title = `Shoshilinch! 24 soat qoldi: Aniqlangan jinoyat ${code}`;
+        message = `Sarlavha: ${dc.title}\nHudud: ${districtName}\nMuddat tugash vaqti: ${deadlineStr}`;
+      } else if (stage === 'OVERDUE_0H') {
+        addUsers(districtOfficers);
+        if (creatorUser) addUsers([creatorUser]);
+        addUsers(await this.findUsersByRoles([Role.BOSS]));
+        type = 'SLA_OVERDUE';
+        priority = 'CRITICAL';
+        title = `Muddat tugadi (Kechikish): Aniqlangan jinoyat ${code}`;
+        message = `Sarlavha: ${dc.title}\nHudud: ${districtName}\nBelgilangan muddat (${deadlineStr}) yakunlandi! Rahbar nazoratiga o‘tkazildi.`;
+      } else {
+        addUsers(await this.findUsersByRoles([Role.BOSS, Role.SUPER_ADMIN]));
+        type = 'SLA_OVERDUE';
+        priority = 'CRITICAL';
+        title = `ESKALATSIYA (Muddati o‘tgan): Aniqlangan jinoyat ${code}`;
+        message = `Sarlavha: ${dc.title}\nHudud: ${districtName}\nMuddat: ${deadlineStr} dan beri yopilmagan!`;
+      }
+
+      for (const u of recipientMap.values()) {
+        await this.notifyUser(u, {
+          type,
+          priority,
+          title,
+          message,
+          link_url: `/detected-crimes/${dc.id}`,
+          metadata: { detected_crime_id: dc.id, stage, deadline_at: dc.deadline_at },
+        });
+      }
+    } catch (err) {
+      this.logger.warn(`dispatchDetectedCrimeSlaNotification xatosi: ${(err as Error).message}`);
+    }
+  }
+
+  async onDetectedCrimeDeadlineExtended(
+    dc: DetectedCrime,
+    newDeadline: Date,
+    reason: string,
+    actorAuthId?: string,
+  ): Promise<void> {
+    try {
+      const code = dc.case_number || 'Kodsiz';
+      const districtName = dc.district?.name || 'Noma‘lum tuman';
+      const dateStr = newDeadline.toLocaleDateString('uz-UZ');
+      const bosses = await this.findUsersByRoles([Role.BOSS]);
+      const officers = dc.district_id
+        ? await this.findUsersByRoles([Role.DISTRICT_OFFICER], dc.district_id)
+        : [];
+
+      const unique = new Map<string, User>();
+      [...bosses, ...officers].forEach((u) => {
+        if (!actorAuthId || u.auth_id !== actorAuthId) unique.set(u.id, u);
+      });
+
+      for (const u of unique.values()) {
+        await this.notifyUser(u, {
+          type: 'STATUS_CHANGED',
+          priority: 'INFO',
+          title: `Muddat uzaytirildi: Aniqlangan jinoyat ${code}`,
+          message: `Sarlavha: ${dc.title}\nHudud: ${districtName}\nYangi muddat: ${dateStr}\nAsos: ${reason}`,
+          link_url: `/detected-crimes/${dc.id}`,
+          metadata: { detected_crime_id: dc.id, new_deadline: newDeadline.toISOString() },
+        });
+      }
+    } catch (err) {
+      this.logger.warn(`onDetectedCrimeDeadlineExtended xatosi: ${(err as Error).message}`);
     }
   }
 

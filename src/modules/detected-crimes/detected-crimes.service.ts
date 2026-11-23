@@ -18,6 +18,8 @@ import {
   ApplicationStatus,
   ApplicationStatusCategory,
 } from '../applications/statuses/application-status.entity';
+import { NotificationsService } from '../notifications/notifications.service';
+import { SlaQueueService } from '../notifications/sla-queue.service';
 import { User } from '../users/user.entity';
 import { DetectedCrime, DetectedCrimeQualification } from './entities/detected-crime.entity';
 import {
@@ -91,6 +93,8 @@ export class DetectedCrimesService {
     private readonly citizenRepo: Repository<Citizen>,
     @InjectRepository(User)
     private readonly userRepo: Repository<User>,
+    private readonly slaQueueService: SlaQueueService,
+    private readonly notificationsService: NotificationsService,
   ) {}
 
   private async getUserWithDistricts(currentUser?: JwtAccessPayload): Promise<User | null> {
@@ -261,6 +265,8 @@ export class DetectedCrimesService {
     if (Array.isArray(dto.evidences) && dto.evidences.length > 0) {
       await this.syncEvidences(saved.id, dto.evidences);
     }
+
+    void this.slaQueueService.scheduleForDetectedCrime(saved.id);
 
     return this.findOne(saved.id, currentUser);
   }
@@ -531,6 +537,8 @@ export class DetectedCrimesService {
       await this.syncEvidences(id, evidences);
     }
 
+    void this.slaQueueService.scheduleForDetectedCrime(id);
+
     return this.findOne(id, currentUser);
   }
 
@@ -564,7 +572,16 @@ export class DetectedCrimesService {
       ...(extStatus ? { status_id: extStatus.id } : {}),
     });
 
-    return this.findOne(id, currentUser);
+    void this.slaQueueService.scheduleForDetectedCrime(id);
+    const updated = await this.findOne(id, currentUser);
+    void this.notificationsService.onDetectedCrimeDeadlineExtended(
+      updated,
+      newDeadline,
+      dto.reason.trim(),
+      currentUser?.sub,
+    );
+
+    return updated;
   }
 
   async remove(id: string, currentUser?: JwtAccessPayload) {
@@ -577,6 +594,7 @@ export class DetectedCrimesService {
       deleted_at: new Date(),
       deleted_by_id: currentUser?.sub || null,
     });
+    void this.slaQueueService.cancelForDetectedCrime(item.id);
     return { success: true, message: "Aniqlangan jinoyat o'chirildi" };
   }
 
@@ -631,23 +649,96 @@ export class DetectedCrimesService {
     res: Response,
     currentUser?: JwtAccessPayload,
   ): Promise<void> {
-    const result = await this.findAll({ ...params, page: 1, limit: 1000 }, currentUser);
-    const workbook = new ExcelJS.Workbook();
-    const sheet = workbook.addWorksheet('Aniqlangan jinoyatlar');
+    const qb = this.repo
+      .createQueryBuilder('dc')
+      .leftJoinAndSelect('dc.district', 'district')
+      .leftJoinAndSelect('dc.crime', 'crime')
+      .leftJoinAndSelect('dc.detection_source', 'source')
+      .leftJoinAndSelect('dc.department_service', 'dept')
+      .leftJoinAndSelect('dc.application_status', 'st')
+      .leftJoinAndSelect('dc.decision_type', 'decision')
+      .leftJoinAndSelect('dc.suspects', 'suspects')
+      .leftJoinAndSelect('suspects.citizen', 'suspect_citizen')
+      .leftJoinAndSelect('suspect_citizen.workplace', 'suspect_workplace')
+      .leftJoinAndSelect('dc.evidences', 'evidences')
+      .where('dc.is_deleted = false');
 
-    sheet.columns = [
-      { header: '№ / Kod', key: 'case_number', width: 16 },
-      { header: 'Aniqlangan sana', key: 'detected_at', width: 15 },
-      { header: 'Sarlavha', key: 'title', width: 32 },
-      { header: 'Malaka (JK/MJTK)', key: 'qualification', width: 18 },
-      { header: 'Modda', key: 'article', width: 20 },
-      { header: 'Hudud', key: 'district', width: 18 },
-      { header: 'Aniqlash usuli', key: 'source', width: 24 },
-      { header: 'Platforma / Kanal', key: 'platform', width: 24 },
-      { header: 'Gumonlanuvchilar', key: 'suspects', width: 30 },
-      { header: 'Bildirgi / KUSP', key: 'report', width: 20 },
-      { header: 'Holati', key: 'status', width: 22 },
-    ];
+    if (currentUser?.role === Role.DISTRICT_OFFICER) {
+      const user = await this.getUserWithDistricts(currentUser);
+      const assigned = user?.assigned_districts?.map((d) => d.id) || [];
+      if (assigned.length > 0) {
+        qb.andWhere('dc.district_id IN (:...assigned)', { assigned });
+      } else {
+        qb.andWhere('1 = 0');
+      }
+    }
+
+    if (params.search?.trim()) {
+      const q = `%${params.search.trim()}%`;
+      qb.andWhere(
+        '(dc.case_number ILIKE :q OR dc.title ILIKE :q OR dc.description ILIKE :q OR dc.report_number ILIKE :q OR dc.kusp_number ILIKE :q OR dc.platform ILIKE :q OR dc.channel_or_source_url ILIKE :q OR dc.mjtk_article ILIKE :q)',
+        { q },
+      );
+    }
+    if (params.district_id) qb.andWhere('dc.district_id = :dId', { dId: params.district_id });
+    if (params.crime_id) qb.andWhere('dc.crime_id = :cId', { cId: params.crime_id });
+    if (params.detection_source_id) {
+      qb.andWhere('dc.detection_source_id = :srcId', { srcId: params.detection_source_id });
+    }
+    if (params.status_id) qb.andWhere('dc.status_id = :stId', { stId: params.status_id });
+    if (params.qualification_type) {
+      qb.andWhere('dc.qualification_type = :qt', { qt: params.qualification_type });
+    }
+
+    const items = await qb.orderBy('dc.detected_at', 'DESC').take(2000).getMany();
+
+    const workbook = new ExcelJS.Workbook();
+    workbook.creator = 'Arizalar bazasi';
+    workbook.created = new Date();
+
+    const styleHeader = (row: ExcelJS.Row) => {
+      row.height = 28;
+      row.eachCell((cell) => {
+        cell.font = { name: 'Calibri', size: 10, bold: true, color: { argb: '000000' } };
+        cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'F1F5F9' } };
+        cell.alignment = { vertical: 'middle', horizontal: 'center', wrapText: true };
+        cell.border = {
+          top: { style: 'thin', color: { argb: '94A3B8' } },
+          left: { style: 'thin', color: { argb: 'CBD5E1' } },
+          bottom: { style: 'medium', color: { argb: '000000' } },
+          right: { style: 'thin', color: { argb: 'CBD5E1' } },
+        };
+      });
+    };
+
+    const styleData = (row: ExcelJS.Row) => {
+      row.height = 22;
+      row.eachCell({ includeEmpty: true }, (cell) => {
+        cell.font = { name: 'Calibri', size: 9.5, color: { argb: '000000' } };
+        cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFFFFF' } };
+        cell.alignment = { vertical: 'middle', horizontal: 'left' };
+        cell.border = {
+          top: { style: 'thin', color: { argb: 'E2E8F0' } },
+          left: { style: 'thin', color: { argb: 'E2E8F0' } },
+          bottom: { style: 'thin', color: { argb: 'E2E8F0' } },
+          right: { style: 'thin', color: { argb: 'E2E8F0' } },
+        };
+      });
+    };
+
+    const styleTotal = (row: ExcelJS.Row) => {
+      row.height = 25;
+      row.eachCell({ includeEmpty: true }, (cell) => {
+        cell.font = { name: 'Calibri', size: 10, bold: true, color: { argb: '000000' } };
+        cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'F8FAFC' } };
+        cell.border = {
+          top: { style: 'thin', color: { argb: '000000' } },
+          bottom: { style: 'double', color: { argb: '000000' } },
+          left: { style: 'thin', color: { argb: 'CBD5E1' } },
+          right: { style: 'thin', color: { argb: 'CBD5E1' } },
+        };
+      });
+    };
 
     const qualMap: Record<string, string> = {
       CRIMINAL: 'Jinoyat (JK)',
@@ -655,37 +746,178 @@ export class DetectedCrimesService {
       PRE_INVESTIGATION: 'Tekshiruvda',
     };
 
-    for (const item of result.items) {
-      const suspectNames = (item.suspects || [])
-        .map((s) =>
-          s.citizen ? `${s.citizen.last_name || ''} ${s.citizen.first_name || ''}`.trim() : '',
-        )
-        .filter(Boolean)
-        .join(', ');
+    // 1-SHEET: Aniqlangan jinoyatlar
+    const ws1 = workbook.addWorksheet('Aniqlangan jinoyatlar', {
+      views: [{ state: 'frozen', ySplit: 1 }],
+    });
+    ws1.columns = [
+      { header: '№', key: 'idx', width: 6 },
+      { header: 'Ichki kod', key: 'case_number', width: 16 },
+      { header: 'Aniqlangan sana', key: 'detected_at', width: 14 },
+      { header: 'Sarlavha', key: 'title', width: 34 },
+      { header: 'Malaka (JK/MJTK)', key: 'qualification', width: 18 },
+      { header: 'Modda', key: 'article', width: 22 },
+      { header: 'Hudud (Tuman)', key: 'district', width: 18 },
+      { header: 'Aniqlash usuli', key: 'source', width: 26 },
+      { header: 'Sohaviy xizmat', key: 'dept', width: 22 },
+      { header: 'Platforma / Manzil', key: 'platform', width: 28 },
+      { header: 'Bildirgi / KUSP', key: 'report', width: 22 },
+      { header: 'Gumonlanuvchilar', key: 'suspects_count', width: 16 },
+      { header: 'Ashyoviy dalillar', key: 'evidences_count', width: 16 },
+      { header: 'Zarar / Aylanma (UZS)', key: 'damage', width: 22 },
+      { header: 'Holati', key: 'status', width: 22 },
+      { header: 'Protsessual muddat', key: 'deadline', width: 20 },
+      { header: 'Yakuniy qaror / Raqami', key: 'decision', width: 28 },
+      { header: 'Fabula', key: 'description', width: 45 },
+    ];
+    styleHeader(ws1.getRow(1));
 
-      sheet.addRow({
+    items.forEach((item, idx) => {
+      const deadlineStr = item.deadline_at
+        ? `${new Date(item.deadline_at).toISOString().slice(0, 10)}${
+            item.extended_until ? ` (${item.sla_days || 30} kun)` : ''
+          }`
+        : '—';
+      const decisionStr = item.decision_type?.name
+        ? `${item.decision_type.name}${item.decision_number ? ` (№ ${item.decision_number})` : ''}`
+        : item.decision_number
+          ? `№ ${item.decision_number}`
+          : '—';
+
+      const row = ws1.addRow({
+        idx: idx + 1,
         case_number: item.case_number || '—',
-        detected_at: item.detected_at
-          ? new Date(item.detected_at).toLocaleDateString('uz-UZ')
-          : '—',
+        detected_at: item.detected_at ? new Date(item.detected_at).toISOString().slice(0, 10) : '—',
         title: item.title,
         qualification: qualMap[item.qualification_type] || item.qualification_type,
         article: item.crime?.article || item.mjtk_article || '—',
         district: item.district?.name || '—',
         source: item.detection_source?.name || '—',
+        dept: item.department_service?.short_name || item.department_service?.name || '—',
         platform: [item.platform, item.channel_or_source_url].filter(Boolean).join(' — ') || '—',
-        suspects: suspectNames || 'Aniqlanmoqda',
         report: [item.report_number, item.kusp_number].filter(Boolean).join(' / ') || '—',
+        suspects_count: item.suspects?.length || 0,
+        evidences_count: item.evidences?.length || 0,
+        damage: Number(item.estimated_damage) || 0,
         status: item.application_status?.name || '—',
+        deadline: deadlineStr,
+        decision: decisionStr,
+        description: item.description || '—',
       });
+      styleData(row);
+      row.getCell('case_number').numFmt = '@';
+      row.getCell('report').numFmt = '@';
+      row.getCell('suspects_count').alignment = { horizontal: 'center', vertical: 'middle' };
+      row.getCell('evidences_count').alignment = { horizontal: 'center', vertical: 'middle' };
+      row.getCell('damage').numFmt = '#,##0.00';
+      row.getCell('damage').alignment = { horizontal: 'right', vertical: 'middle' };
+    });
+
+    const lastRow1 = ws1.rowCount;
+    if (lastRow1 >= 2) {
+      const totalRow = ws1.addRow({
+        report: 'JAMI:',
+        suspects_count: { formula: `SUM(L2:L${lastRow1})` },
+        evidences_count: { formula: `SUM(M2:M${lastRow1})` },
+        damage: { formula: `SUM(N2:N${lastRow1})` },
+      });
+      styleTotal(totalRow);
+      totalRow.getCell('report').alignment = { horizontal: 'right', vertical: 'middle' };
+      totalRow.getCell('suspects_count').alignment = { horizontal: 'center', vertical: 'middle' };
+      totalRow.getCell('evidences_count').alignment = { horizontal: 'center', vertical: 'middle' };
+      totalRow.getCell('damage').numFmt = '#,##0.00';
+      totalRow.getCell('damage').alignment = { horizontal: 'right', vertical: 'middle' };
     }
 
-    sheet.getRow(1).font = { bold: true };
+    // 2-SHEET: Gumonlanuvchilar
+    const ws2 = workbook.addWorksheet('Gumonlanuvchilar', {
+      views: [{ state: 'frozen', ySplit: 1 }],
+    });
+    ws2.columns = [
+      { header: '№', key: 'idx', width: 6 },
+      { header: 'Ish kodi', key: 'case_number', width: 16 },
+      { header: 'F.I.O.', key: 'name', width: 28 },
+      { header: 'Pasport', key: 'passport', width: 16 },
+      { header: 'Telefon', key: 'phone', width: 18 },
+      { header: 'Ish joyi', key: 'workplace', width: 26 },
+      { header: 'Jinoyatdagi roli', key: 'role', width: 18 },
+      { header: 'Ehtiyot chorasi', key: 'detention', width: 18 },
+      { header: 'Takroriy shaxs', key: 'repeat', width: 16 },
+      { header: 'Izoh', key: 'notes', width: 32 },
+    ];
+    styleHeader(ws2.getRow(1));
+
+    let sIdx = 0;
+    for (const item of items) {
+      for (const s of item.suspects || []) {
+        sIdx++;
+        const fullName = s.citizen
+          ? [s.citizen.last_name, s.citizen.first_name, s.citizen.middle_name]
+              .filter(Boolean)
+              .join(' ')
+          : '—';
+        const row = ws2.addRow({
+          idx: sIdx,
+          case_number: item.case_number || '—',
+          name: fullName,
+          passport: s.citizen?.passport || '—',
+          phone: s.citizen?.phone_number || '—',
+          workplace: s.citizen?.workplace?.name || '—',
+          role: s.role_in_crime,
+          detention: s.detention_status,
+          repeat: s.is_repeat_offender ? 'Ha (Takroriy)' : 'Yo‘q',
+          notes: s.notes || '—',
+        });
+        styleData(row);
+        row.getCell('case_number').numFmt = '@';
+        row.getCell('passport').numFmt = '@';
+        row.getCell('phone').numFmt = '@';
+      }
+    }
+
+    // 3-SHEET: Ashyoviy dalillar
+    const ws3 = workbook.addWorksheet('Ashyoviy dalillar', {
+      views: [{ state: 'frozen', ySplit: 1 }],
+    });
+    ws3.columns = [
+      { header: '№', key: 'idx', width: 6 },
+      { header: 'Ish kodi', key: 'case_number', width: 16 },
+      { header: 'Dalil turi', key: 'type', width: 22 },
+      { header: 'Nomi', key: 'title', width: 30 },
+      { header: 'IMEI / Identifikator', key: 'identifier', width: 26 },
+      { header: 'Biriktirilgan fayl', key: 'file_name', width: 26 },
+      { header: 'Izoh', key: 'notes', width: 32 },
+    ];
+    styleHeader(ws3.getRow(1));
+
+    let eIdx = 0;
+    for (const item of items) {
+      for (const ev of item.evidences || []) {
+        eIdx++;
+        const row = ws3.addRow({
+          idx: eIdx,
+          case_number: item.case_number || '—',
+          type: ev.evidence_type,
+          title: ev.title,
+          identifier: ev.identifier_value || '—',
+          file_name: ev.file_name || '—',
+          notes: ev.notes || '—',
+        });
+        styleData(row);
+        row.getCell('case_number').numFmt = '@';
+        row.getCell('identifier').numFmt = '@';
+      }
+    }
+
+    const dateStr = new Date().toISOString().slice(0, 10);
     res.setHeader(
       'Content-Type',
       'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
     );
-    res.setHeader('Content-Disposition', 'attachment; filename="aniqlangan_jinoyatlar.xlsx"');
+    res.setHeader(
+      'Content-Disposition',
+      `attachment; filename="Aniqlangan_Jinoyatlar_${dateStr}.xlsx"`,
+    );
     await workbook.xlsx.write(res);
     res.end();
   }

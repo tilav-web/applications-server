@@ -132,6 +132,12 @@ export class ApplicationsExcelService {
       { header: 'Gumonlanuvchilar', key: 'suspects_count', width: 18 },
       { header: 'Tafsilot (Fabula)', key: 'description', width: 45 },
       { header: 'Xodim Qaydlari', key: 'notes', width: 35 },
+      { header: 'Kasbi / Sohasi', key: 'occupation', width: 24 },
+      { header: 'Ish joyi / Tashkilot', key: 'workplace', width: 28 },
+      { header: 'Lavozimi', key: 'work_position', width: 20 },
+      { header: 'Sohaviy xizmat', key: 'department_service', width: 22 },
+      { header: 'Protsessual muddat (SLA)', key: 'sla_deadline', width: 24 },
+      { header: 'Yakuniy qaror / Raqami', key: 'decision', width: 28 },
       ...dynamicColumns.map((col) => ({
         header: col.header,
         key: `dyn_${col.key}`,
@@ -197,6 +203,29 @@ export class ApplicationsExcelService {
         }
       }
 
+      const occupationStr =
+        [citizen?.occupation_category?.name, citizen?.occupation?.name]
+          .filter(Boolean)
+          .join(' — ') || '—';
+      const workplaceStr = app.workplace?.name || citizen?.workplace?.name || '—';
+      const workPositionStr = app.work_position || citizen?.work_position || '—';
+      const deptServiceStr =
+        app.department_service?.short_name || app.department_service?.name || '—';
+      const slaDeadlineStr = app.deadline_at
+        ? `${new Date(app.deadline_at).toISOString().slice(0, 10)}${
+            app.extended_until
+              ? ` (Uzaytirilgan: ${app.sla_days || 30} kun)`
+              : app.sla_days
+                ? ` (${app.sla_days} kun)`
+                : ''
+          }`
+        : '—';
+      const decisionStr = app.decision_type?.name
+        ? `${app.decision_type.name}${app.decision_number ? ` (№ ${app.decision_number})` : ''}`
+        : app.decision_number
+          ? `№ ${app.decision_number}`
+          : '—';
+
       const row = ws.addRow({
         idx: index + 1,
         app_num: appNumber,
@@ -217,6 +246,12 @@ export class ApplicationsExcelService {
         suspects_count: { formula: suspectsFormula },
         description: app.description || '—',
         notes: app.officer_notes || '—',
+        occupation: occupationStr,
+        workplace: workplaceStr,
+        work_position: workPositionStr,
+        department_service: deptServiceStr,
+        sla_deadline: slaDeadlineStr,
+        decision: decisionStr,
         ...dynamicRowData,
       });
 
