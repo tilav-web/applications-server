@@ -14,6 +14,7 @@ import type { PaginatedResult } from '../../common/interfaces/pagination.interfa
 import type { JwtAccessPayload } from '../../common/types/jwt-payload.interface';
 import type { SuspectTreeNode } from '../applications/application.entity';
 import { Citizen } from '../applications/citizens/citizen.entity';
+import { District } from '../applications/districts/district.entity';
 import {
   ApplicationStatus,
   ApplicationStatusCategory,
@@ -94,6 +95,8 @@ export class DetectedCrimesService {
     private readonly statusRepo: Repository<ApplicationStatus>,
     @InjectRepository(DetectedCrimeStatus)
     private readonly crimeStatusRepo: Repository<DetectedCrimeStatus>,
+    @InjectRepository(District)
+    private readonly districtRepo: Repository<District>,
     @InjectRepository(Citizen)
     private readonly citizenRepo: Repository<Citizen>,
     @InjectRepository(User)
@@ -615,6 +618,132 @@ export class DetectedCrimesService {
       finalCount,
       inProgressCount: rows.length - finalCount,
       overdueCount: 0,
+    };
+  }
+
+  async getMapStats(
+    params: { period?: string; startDate?: string; endDate?: string },
+    currentUser?: JwtAccessPayload,
+  ) {
+    const qb = this.repo
+      .createQueryBuilder('dc')
+      .leftJoinAndSelect('dc.district', 'district')
+      .leftJoinAndSelect('dc.suspects', 'suspects')
+      .leftJoinAndSelect('suspects.citizen', 'citizen')
+      .leftJoinAndSelect('citizen.mahalla', 'mahalla')
+      .leftJoinAndSelect('citizen.district', 'citizen_district')
+      .where('dc.is_deleted = false');
+
+    let assignedDistrictIds: string[] | null = null;
+    if (currentUser?.role === Role.DISTRICT_OFFICER) {
+      const user = await this.getUserWithDistricts(currentUser);
+      assignedDistrictIds = user?.assigned_districts?.map((d) => d.id) || [];
+      if (assignedDistrictIds.length > 0) {
+        qb.andWhere('dc.district_id IN (:...assigned)', { assigned: assignedDistrictIds });
+      } else {
+        qb.andWhere('1 = 0');
+      }
+    }
+
+    const now = new Date();
+    let fromDate: Date | null = null;
+    let toDate: Date | null = null;
+    if (params.period === 'today') {
+      fromDate = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 0, 0, 0, 0);
+    } else if (params.period === 'week') {
+      fromDate = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
+    } else if (params.period === 'month') {
+      fromDate = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000);
+    } else if (params.period === 'year') {
+      fromDate = new Date(now.getTime() - 365 * 24 * 60 * 60 * 1000);
+    } else if (params.period === 'custom') {
+      if (params.startDate) fromDate = new Date(params.startDate);
+      if (params.endDate) {
+        toDate = new Date(params.endDate);
+        toDate.setHours(23, 59, 59, 999);
+      }
+    }
+    if (fromDate) qb.andWhere('dc.detected_at >= :fromDate', { fromDate });
+    if (toDate) qb.andWhere('dc.detected_at <= :toDate', { toDate });
+
+    const items = await qb.getMany();
+    const allDistricts = await this.districtRepo.find({ order: { name: 'ASC' } });
+    const scopedDistricts =
+      assignedDistrictIds !== null
+        ? allDistricts.filter((d) => assignedDistrictIds.includes(d.id))
+        : allDistricts;
+
+    const districtMap = new Map<
+      string,
+      { id: string; name: string; count: number; totalLoss: number }
+    >();
+    for (const d of scopedDistricts) {
+      districtMap.set(d.id, { id: d.id, name: d.name || '', count: 0, totalLoss: 0 });
+    }
+
+    const mahallaMap = new Map<
+      string,
+      {
+        id: string;
+        name: string;
+        district_id: string;
+        district_name: string | null;
+        count: number;
+        totalLoss: number;
+      }
+    >();
+
+    let totalDamage = 0;
+    for (const dc of items) {
+      const dmg = Number(dc.estimated_damage) || 0;
+      totalDamage += dmg;
+
+      if (dc.district_id && districtMap.has(dc.district_id)) {
+        const entry = districtMap.get(dc.district_id)!;
+        entry.count += 1;
+        entry.totalLoss += dmg;
+      }
+
+      // Gumonlanuvchilarning yashash mahallasi bo'yicha xarita nuqtalari
+      const countedMahallas = new Set<string>();
+      for (const s of dc.suspects || []) {
+        const m = s.citizen?.mahalla;
+        if (!m || countedMahallas.has(m.id)) continue;
+        countedMahallas.add(m.id);
+        const existing = mahallaMap.get(m.id) || {
+          id: m.id,
+          name: m.name,
+          district_id: m.district_id || s.citizen?.district_id || dc.district_id || '',
+          district_name: s.citizen?.district?.name || dc.district?.name || null,
+          count: 0,
+          totalLoss: 0,
+        };
+        existing.count += 1;
+        existing.totalLoss += dmg;
+        mahallaMap.set(m.id, existing);
+      }
+    }
+
+    const total = items.length;
+    const byDistrict = Array.from(districtMap.values())
+      .sort((a, b) => b.count - a.count)
+      .map((d) => ({
+        ...d,
+        percent: total > 0 ? Math.round((d.count / total) * 100) : 0,
+      }));
+
+    const byMahalla = Array.from(mahallaMap.values())
+      .sort((a, b) => b.count - a.count)
+      .map((m) => ({
+        ...m,
+        percent: total > 0 ? Math.round((m.count / total) * 100) : 0,
+      }));
+
+    return {
+      total,
+      totalDamage,
+      byDistrict,
+      byMahalla,
     };
   }
 

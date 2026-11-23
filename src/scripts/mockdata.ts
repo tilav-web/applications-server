@@ -29,6 +29,23 @@ import { Bank } from '../modules/applications/transfers/banks/bank.entity';
 import { Card } from '../modules/applications/transfers/cards/card.entity';
 import { PaymentProvider } from '../modules/applications/transfers/payment_providers/payment_provider.entity';
 import { Transfer } from '../modules/applications/transfers/transfer.entity';
+import { Workplace } from '../modules/applications/workplaces/workplace.entity';
+import {
+  DetectedCrime,
+  type DetectedCrimeMeasure,
+  DetectedCrimeQualification,
+} from '../modules/detected-crimes/entities/detected-crime.entity';
+import {
+  DetectedCrimeEvidence,
+  type EvidenceType,
+} from '../modules/detected-crimes/entities/detected-crime-evidence.entity';
+import { DetectedCrimeStatus } from '../modules/detected-crimes/entities/detected-crime-status.entity';
+import {
+  DetectedCrimeSuspect,
+  type DetentionStatus,
+  type SuspectCrimeRole,
+} from '../modules/detected-crimes/entities/detected-crime-suspect.entity';
+import { DetectionSource } from '../modules/detected-crimes/entities/detection-source.entity';
 import { DigitalIdentifierEntity } from '../modules/intelligence/entities/digital-identifier.entity';
 import { EntityApplicationLink } from '../modules/intelligence/entities/entity-application-link.entity';
 import { PhoneEntity } from '../modules/intelligence/entities/phone.entity';
@@ -415,6 +432,8 @@ async function cleanMockData(
   log(`Mock ma‘lumotlarni tozalash boshlandi (${totalTracked} ta belgilangan yozuv)...`);
 
   const appIds = await getRegisteredIds(ds, 'applications');
+  const detectedCrimeIds = await getRegisteredIds(ds, 'detected_crimes');
+  const workplaceIds = await getRegisteredIds(ds, 'workplaces');
   const transferIds = await getRegisteredIds(ds, 'transfers');
   const acfIds = await getRegisteredIds(ds, 'application_custom_fields');
   const cardIds = await getRegisteredIds(ds, 'cards');
@@ -424,6 +443,13 @@ async function cleanMockData(
   const linkIds = await getRegisteredIds(ds, 'entity_application_links');
 
   await ds.transaction(async (manager) => {
+    // 0. Mock detected crimes (cascade deletes suspects & evidences)
+    if (detectedCrimeIds.length > 0) {
+      await manager.query(`DELETE FROM detected_crimes WHERE id = ANY($1::uuid[])`, [
+        detectedCrimeIds,
+      ]);
+    }
+
     // 1. Intelligence links
     if (appIds.length > 0) {
       await manager.query(
@@ -519,8 +545,20 @@ async function cleanMockData(
            AND NOT EXISTS (SELECT 1 FROM applications a WHERE a.citizen_id = cz.id)
            AND NOT EXISTS (SELECT 1 FROM application_custom_fields cf WHERE cf.citizen_id = cz.id)
            AND NOT EXISTS (SELECT 1 FROM cards c WHERE c.citizen_id = cz.id)
-           AND NOT EXISTS (SELECT 1 FROM phones p WHERE p.citizen_id = cz.id)`,
+           AND NOT EXISTS (SELECT 1 FROM phones p WHERE p.citizen_id = cz.id)
+           AND NOT EXISTS (SELECT 1 FROM detected_crime_suspects dcs WHERE dcs.citizen_id = cz.id)`,
         [citizenIds],
+      );
+    }
+
+    // 9. Workplaces (faqat ishlatilmayotgan mock ish joylari)
+    if (workplaceIds.length > 0) {
+      await manager.query(
+        `DELETE FROM workplaces w
+         WHERE w.id = ANY($1::uuid[])
+           AND NOT EXISTS (SELECT 1 FROM citizens c WHERE c.workplace_id = w.id)
+           AND NOT EXISTS (SELECT 1 FROM applications a WHERE a.workplace_id = w.id)`,
+        [workplaceIds],
       );
     }
 
@@ -1218,7 +1256,342 @@ async function seedMockData(
     }
   }
 
-  log('4/4: 360° Dosye, Jonli Radar va Bog‘liqliklar indeksi sinxronlanmoqda...');
+  log('4/5: Ish joylari (workplaces) va Aniqlangan jinoyatlar (detected_crimes) yaratilmoqda...');
+
+  const workplaceRepo = ds.getRepository(Workplace);
+  const detectedCrimeRepo = ds.getRepository(DetectedCrime);
+  const dcSuspectRepo = ds.getRepository(DetectedCrimeSuspect);
+  const dcEvidenceRepo = ds.getRepository(DetectedCrimeEvidence);
+  const dcStatusRepo = ds.getRepository(DetectedCrimeStatus);
+  const dcSourceRepo = ds.getRepository(DetectionSource);
+
+  const createdWorkplaceIds: string[] = [];
+  const createdDetectedCrimeIds: string[] = [];
+
+  // 20 ta realistik Qashqadaryo ish joylari
+  const mockWorkplaceDefs = [
+    { name: 'Qarshi shahar 3-son umumiy o‘rta ta’lim maktabi', type: 'TA_LIM' },
+    { name: 'Qarshi davlat universiteti', type: 'TA_LIM' },
+    { name: 'Qashqadaryo viloyat ko‘p tarmoqli tibbiyot markazi', type: 'TIBBIYOT' },
+    { name: 'AT «Xalq banki» Qashqadaryo viloyat filiali', type: 'BANK_MOLIYA' },
+    { name: 'ATB «Agrobank» Qarshi shahar filiali', type: 'BANK_MOLIYA' },
+    { name: 'Shahrisabz shahar 1-son maktab', type: 'TA_LIM' },
+    { name: 'Kitob tumani markaziy shifoxonasi', type: 'TIBBIYOT' },
+    { name: 'Koson tumani 12-son maktab', type: 'TA_LIM' },
+    { name: 'G‘uzor tumani «Sho‘rtangazkimyo» majmuasi', type: 'SANOAT' },
+    { name: 'Muborak gazni qayta ishlash zavodi', type: 'SANOAT' },
+    { name: 'Chiroqchi tumani savdo majmuasi', type: 'SAVDO' },
+    { name: 'Yakkabog‘ tumani 5-son maktab', type: 'TA_LIM' },
+    { name: 'Nishon tumani elektr tarmoqlari korxonasi', type: 'DAVLAT' },
+    { name: 'Qamashi tumani dehqon bozori', type: 'SAVDO' },
+    { name: 'Kasbi tumani 8-son maktab', type: 'TA_LIM' },
+    { name: 'Dehqonobod kaliy zavodi', type: 'SANOAT' },
+    { name: 'Mirishkor tumani tibbiyot birlashmasi', type: 'TIBBIYOT' },
+    { name: 'Qarshi muhandislik-iqtisodiyot instituti', type: 'TA_LIM' },
+    { name: '«Uztelecom» Qashqadaryo filiali', type: 'IT_TELEKOM' },
+    { name: 'Qarshi shahar «Nasaf» logistika markazi', type: 'TRANSPORT' },
+  ];
+
+  const workplacesList: Workplace[] = [];
+  for (let wIdx = 0; wIdx < mockWorkplaceDefs.length; wIdx++) {
+    const def = mockWorkplaceDefs[wIdx];
+    let wp = await workplaceRepo.findOne({ where: { name: ILike(def.name) } });
+    if (!wp) {
+      const d = districts[wIdx % districts.length];
+      wp = await workplaceRepo.save(
+        workplaceRepo.create({
+          name: def.name,
+          district_id: d?.id || null,
+          is_active: true,
+        }),
+      );
+      createdWorkplaceIds.push(wp.id);
+    }
+    workplacesList.push(wp);
+  }
+
+  // Mock fuqarolarning yarmiga ish joyi va lavozim biriktiramiz
+  const mockPositions = [
+    'O‘qituvchi',
+    'Hamshira',
+    'Hisobchi',
+    'Muhandis',
+    'Sotuvchi',
+    'Kassir',
+    'Dasturchi',
+    'Haydovchi',
+    'Bosh mutaxassis',
+    'Operator',
+  ];
+  for (let cIdx = 0; cIdx < createdCitizenIds.length; cIdx += 2) {
+    const wp = workplacesList[cIdx % workplacesList.length];
+    if (wp) {
+      await citizenRepo.update(createdCitizenIds[cIdx], {
+        workplace_id: wp.id,
+        work_position: mockPositions[cIdx % mockPositions.length],
+      });
+    }
+  }
+
+  // Aniqlangan jinoyatlar (35 ta realistik holat)
+  const dcStatuses = await dcStatusRepo.find({ order: { sort_order: 'ASC' } });
+  const dcSources = await dcSourceRepo.find({ order: { sort_order: 'ASC' } });
+
+  const detectedCrimeTemplates: Array<{
+    title: string;
+    qual: DetectedCrimeQualification;
+    mjtk?: string;
+    platform: string;
+    channel: string;
+    desc: string;
+    damage: number;
+    evidenceType: EvidenceType;
+    evidenceTitle: string;
+    measures: Array<{ type: DetectedCrimeMeasure['measure_type']; title: string }>;
+  }> = [
+    {
+      title: 'Telegram kanalda taqiqlangan video materiallar tarqatish holati fosh etildi',
+      qual: DetectedCrimeQualification.CRIMINAL,
+      platform: 'Telegram',
+      channel: '@private_uz_clips_vip',
+      desc: 'Kiber-monitoring jarayonida yopiq Telegram kanal orqali pullik obuna asosida taqiqlangan video materiallar tarqatib kelgan admin shaxsi aniqlandi.',
+      damage: 18_500_000,
+      evidenceType: 'PHONE',
+      evidenceTitle: 'iPhone 14 Pro (Admin akkaunti ochiq)',
+      measures: [
+        { type: 'CHANNEL_BLOCKED', title: 'Telegram kanal / bot / sayt bloklashga yuborildi' },
+        { type: 'DEVICE_SEIZED', title: 'Telefon / kompyuter olib qo‘yildi' },
+        { type: 'EXPERTISE_ORDERED', title: 'Ekspertiza tayinlandi' },
+        { type: 'SENT_TO_INVESTIGATION', title: 'Tergovga yuborildi (JI qo‘zg‘atildi)' },
+      ],
+    },
+    {
+      title: 'Noqonuniy kripto-aktivlar aylanmasi (P2P savdo) aniqlandi',
+      qual: DetectedCrimeQualification.ADMINISTRATIVE,
+      mjtk: 'MJTK 155⁴-modda',
+      platform: 'Telegram / Binance P2P',
+      channel: '@qashqadaryo_usdt_exchange',
+      desc: 'Litsenziyasiz ravishda USDT kripto-aktivlarini plastik kartalar orqali sotib olish va sotish bilan shug‘ullangan shaxs tezkor tadbirda ushlandi.',
+      damage: 42_000_000,
+      evidenceType: 'CRYPTO_WALLET',
+      evidenceTitle: 'TRC-20 Kripto-hamyon (Binance / TrustWallet)',
+      measures: [
+        { type: 'CARD_BLOCKED', title: 'Karta / bank hisobi bloklandi' },
+        { type: 'DEVICE_SEIZED', title: 'Telefon / kompyuter olib qo‘yildi' },
+        { type: 'SENT_TO_COURT', title: 'Sudga yuborildi (MJTK / JK)' },
+      ],
+    },
+    {
+      title: 'Onlayn qimor va tavakkalchilikka asoslangan o‘yinlar targ‘iboti fosh etildi',
+      qual: DetectedCrimeQualification.CRIMINAL,
+      platform: 'Instagram / Telegram',
+      channel: 'https://t.me/uz_bet_bonus_2026',
+      desc: 'Ijtimoiy tarmoqlarda noqonuniy totalizator va onlayn qimor o‘yinlarini reklama qilib, depozit qabul qiluvchi drop-kartalarni boshqargan guruh aniqlandi.',
+      damage: 95_000_000,
+      evidenceType: 'BANK_CARD',
+      evidenceTitle: 'Drop plastik kartalar to‘plami (4 dona)',
+      measures: [
+        { type: 'CARD_BLOCKED', title: 'Karta / bank hisobi bloklandi' },
+        { type: 'CHANNEL_BLOCKED', title: 'Telegram kanal / bot / sayt bloklashga yuborildi' },
+        { type: 'SUSPECT_DETAINED', title: 'Gumonlanuvchi ushlandi' },
+      ],
+    },
+    {
+      title: 'Soxta «Click / Payme» fishing Telegram boti yaratuvchisi aniqlandi',
+      qual: DetectedCrimeQualification.CRIMINAL,
+      platform: 'Telegram Bot',
+      channel: '@yordam_pul_olish_bot',
+      desc: 'Fuqarolarning bank karta raqamlari va SMS-kodlarini qo‘lga kiritishga mo‘ljallangan fishing bot va veb-sahifa muallifi fosh etildi.',
+      damage: 64_000_000,
+      evidenceType: 'LAPTOP_PC',
+      evidenceTitle: 'ASUS VivoBook (Bot manba kodi bilan)',
+      measures: [
+        { type: 'CHANNEL_BLOCKED', title: 'Telegram kanal / bot / sayt bloklashga yuborildi' },
+        { type: 'DEVICE_SEIZED', title: 'Telefon / kompyuter olib qo‘yildi' },
+        { type: 'EXPERTISE_ORDERED', title: 'Ekspertiza tayinlandi' },
+      ],
+    },
+    {
+      title: 'Ijtimoiy tarmoqlarda tuhmat va sha’nni kamsituvchi kanal admini fosh etildi',
+      qual: DetectedCrimeQualification.ADMINISTRATIVE,
+      mjtk: 'MJTK 40, 41-moddalar',
+      platform: 'Telegram / TikTok',
+      channel: '@qashqadaryo_sirlar_24',
+      desc: 'Anonim Telegram kanal orqali fuqarolar haqida yolg‘on ma’lumotlar tarqatib, postni o‘chirish evaziga pul talab qilgan shaxs aniqlandi.',
+      damage: 6_500_000,
+      evidenceType: 'SCREENSHOT_VIDEO',
+      evidenceTitle: 'Kanal yozishmalari va postlar skrinshoti',
+      measures: [
+        { type: 'CHANNEL_BLOCKED', title: 'Telegram kanal / bot / sayt bloklashga yuborildi' },
+        { type: 'SENT_TO_COURT', title: 'Sudga yuborildi (MJTK / JK)' },
+      ],
+    },
+    {
+      title: 'Diniy ekstremistik mazmundagi audio/video materiallar tarqatish holati aniqlandi',
+      qual: DetectedCrimeQualification.CRIMINAL,
+      platform: 'Telegram / YouTube',
+      channel: '@hidden_audio_archive',
+      desc: 'Ochiq tarmoqlarni monitoring qilish davomida taqiqlangan diniy materiallarni guruhlarga ulashib kelgan profil egasi aniqlandi.',
+      damage: 0,
+      evidenceType: 'STORAGE_MEDIA',
+      evidenceTitle: 'Kingston 64GB Fleshka va mobil telefon',
+      measures: [
+        { type: 'DEVICE_SEIZED', title: 'Telefon / kompyuter olib qo‘yildi' },
+        { type: 'EXPERTISE_ORDERED', title: 'Ekspertiza tayinlandi' },
+        { type: 'TRANSFERRED_AGENCY', title: 'Boshqa organga o‘tkazildi' },
+      ],
+    },
+    {
+      title: 'Soxta onlayn do‘kon orqali oldindan to‘lov undirish sxemasi fosh etildi',
+      qual: DetectedCrimeQualification.CRIMINAL,
+      platform: 'Instagram',
+      channel: '@qarshi_elektronika_arzon',
+      desc: 'Instagram sahifasida arzon narxda maishiy texnika va telefonlar taklif qilib, oldindan to‘lov olib g‘oyib bo‘lgan firibgarlar fosh etildi.',
+      damage: 31_200_000,
+      evidenceType: 'SIM_CARD',
+      evidenceTitle: 'Ucell / Beeline SIM-kartalar (6 dona)',
+      measures: [
+        { type: 'CARD_BLOCKED', title: 'Karta / bank hisobi bloklandi' },
+        { type: 'SUSPECT_DETAINED', title: 'Gumonlanuvchi ushlandi' },
+        { type: 'DAMAGE_RECOVERED', title: 'Zarar qoplandi' },
+      ],
+    },
+  ];
+
+  const suspectRoles: SuspectCrimeRole[] = [
+    'TASHKILOTCHI',
+    'ADMIN',
+    'IJROCHI',
+    'VOSITACHI',
+    'KARTA_EGASI',
+  ];
+  const detentionStatuses: DetentionStatus[] = [
+    'USHLANGAN',
+    'TILXATDA',
+    'OZODLIKDA',
+    'ANIQLANMOQDA',
+    'QIDIRUVDA',
+  ];
+
+  // Takroriy shaxslar pooli (bir nechta jinoyatda qatnashadi)
+  const repeatSuspectPool = createdCitizenIds.slice(0, 8);
+
+  for (let i = 0; i < 35; i++) {
+    const tpl = detectedCrimeTemplates[i % detectedCrimeTemplates.length];
+    const dist = districts[i % districts.length];
+    const crime = crimes[i % crimes.length];
+    const status = dcStatuses.length > 0 ? dcStatuses[i % dcStatuses.length] : null;
+    const src = dcSources.length > 0 ? dcSources[i % dcSources.length] : null;
+    const dept = deptServices.length > 0 ? deptServices[i % deptServices.length] : null;
+    const daysAgo = randInt(1, 95);
+    const detectedAt = new Date(Date.now() - daysAgo * 24 * 60 * 60 * 1000);
+    const dateYmd = detectedAt.toISOString().slice(0, 10);
+
+    const dcMeasures: DetectedCrimeMeasure[] = tpl.measures.map((m, mIdx) => ({
+      id: `m-${i}-${mIdx}`,
+      measure_type: m.type,
+      title: m.title,
+      date: dateYmd,
+      reference_number: `CH-${2026}/${100 + i * 3 + mIdx}`,
+      notes: m.type === 'CARD_BLOCKED' ? 'Markaziy bank / bank orqali bloklash so‘rovi' : null,
+    }));
+
+    const savedDc = await detectedCrimeRepo.save(
+      detectedCrimeRepo.create({
+        case_number: `AJ-2026-${String(5001 + i).padStart(4, '0')}`,
+        title: `${tpl.title} (${dist.name})`,
+        description: tpl.desc,
+        report_number: `R-${120 + i}/2026`,
+        report_date: detectedAt,
+        kusp_number: `KUSP-${8800 + i}`,
+        detected_at: detectedAt,
+        qualification_type: tpl.qual,
+        crime_id: tpl.qual === DetectedCrimeQualification.CRIMINAL ? crime?.id || null : null,
+        mjtk_article: tpl.mjtk || null,
+        detection_source_id: src?.id || null,
+        district_id: dist.id,
+        department_service_id: dept?.id || null,
+        platform: tpl.platform,
+        channel_or_source_url: `${tpl.channel}_${i + 1}`,
+        estimated_damage: tpl.damage > 0 ? tpl.damage + randInt(0, 8) * 1_000_000 : null,
+        crime_status_id: status?.id || null,
+        measures: dcMeasures,
+        suspect_tree: [
+          {
+            id: `dc-clue-${i}-1`,
+            field_key: 'telegram_username',
+            label: 'Telegram Kanal / Profil',
+            value: `${tpl.channel}_${i + 1}`,
+            note: 'Monitoringda aniqlangan',
+          },
+          {
+            id: `dc-clue-${i}-2`,
+            field_key: 'ip_address',
+            label: 'IP Manzil',
+            value: `185.139.${randInt(10, 240)}.${randInt(2, 250)}`,
+            note: 'Server logidan olingan',
+          },
+        ] as unknown as SuspectTreeNode[],
+        officer_notes: 'Kiberxavfsizlik bo‘limi nazoratida',
+        is_deleted: false,
+      }),
+    );
+    createdDetectedCrimeIds.push(savedDc.id);
+
+    // 1–2 nafar gumonlanuvchi biriktirish
+    const primarySuspectId =
+      i % 3 === 0 && repeatSuspectPool.length > 0
+        ? repeatSuspectPool[i % repeatSuspectPool.length]
+        : createdCitizenIds[(i * 3 + 10) % createdCitizenIds.length];
+
+    if (primarySuspectId) {
+      await dcSuspectRepo.save(
+        dcSuspectRepo.create({
+          detected_crime_id: savedDc.id,
+          citizen_id: primarySuspectId,
+          role_in_crime: suspectRoles[i % suspectRoles.length],
+          detention_status: detentionStatuses[i % detentionStatuses.length],
+          is_repeat_offender: i % 3 === 0 && i >= 3,
+          notes: 'Asosiy ishtirokchi',
+        }),
+      );
+    }
+
+    if (i % 2 === 0 && createdCitizenIds.length > 20) {
+      const secondSuspectId = createdCitizenIds[(i * 5 + 17) % createdCitizenIds.length];
+      if (secondSuspectId && secondSuspectId !== primarySuspectId) {
+        await dcSuspectRepo.save(
+          dcSuspectRepo.create({
+            detected_crime_id: savedDc.id,
+            citizen_id: secondSuspectId,
+            role_in_crime: 'VOSITACHI',
+            detention_status: 'TILXATDA',
+            is_repeat_offender: false,
+            notes: 'Sherik / karta taqdim etgan',
+          }),
+        );
+      }
+    }
+
+    // 1–2 ta ashyoviy dalil biriktirish
+    await dcEvidenceRepo.save(
+      dcEvidenceRepo.create({
+        detected_crime_id: savedDc.id,
+        evidence_type: tpl.evidenceType,
+        title: tpl.evidenceTitle,
+        identifier_value:
+          tpl.evidenceType === 'PHONE'
+            ? `35${randInt(100000, 999999)}${randInt(1000000, 9999999)}`
+            : tpl.evidenceType === 'CRYPTO_WALLET'
+              ? `TX${randomUUID().replace(/-/g, '').slice(0, 32).toUpperCase()}`
+              : `DL-${2026}-${1000 + i}`,
+        seized_at: detectedAt,
+        notes: 'Bayonnoma bilan olib qo‘yildi',
+      }),
+    );
+  }
+
+  log('5/5: 360° Dosye, Jonli Radar va Bog‘liqliklar indeksi sinxronlanmoqda...');
   await intelligenceSync.syncAllExistingData();
 
   // IntelligenceSync tomonidan yangi yaratilgan telefon, identifikator va bog'liqliklarni aniqlaymiz
@@ -1234,6 +1607,8 @@ async function seedMockData(
     .map((x) => x.id)
     .filter((id) => !preLinkIds.has(id));
 
+  await registerMockIds(ds, 'workplaces', createdWorkplaceIds);
+  await registerMockIds(ds, 'detected_crimes', createdDetectedCrimeIds);
   await registerMockIds(ds, 'citizens', createdCitizenIds);
   await registerMockIds(ds, 'cards', createdCardIds);
   await registerMockIds(ds, 'transfers', createdTransferIds);
@@ -1246,6 +1621,8 @@ async function seedMockData(
   log('==============================================================');
   log('MOCK MA‘LUMOTLAR MUVAFFAQIYATLI KIRITILDI!');
   log(`- Arizalar:               ${createdAppIds.length} ta`);
+  log(`- Aniqlangan jinoyatlar:  ${createdDetectedCrimeIds.length} ta`);
+  log(`- Ish joylari:            ${createdWorkplaceIds.length} ta`);
   log(`- Pul o‘tkazmalari:       ${createdTransferIds.length} ta`);
   log(`- Fuqarolar:              ${createdCitizenIds.length} ta`);
   log(`- Plastik kartalar:       ${createdCardIds.length} ta`);

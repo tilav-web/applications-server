@@ -2,6 +2,7 @@ import { Module } from '@nestjs/common';
 import { TypeOrmModule } from '@nestjs/typeorm';
 
 import { Citizen } from '../applications/citizens/citizen.entity';
+import { District } from '../applications/districts/district.entity';
 import { ApplicationStatus } from '../applications/statuses/application-status.entity';
 import { AuthModule } from '../auth/auth.module';
 import { User } from '../users/user.entity';
@@ -28,6 +29,7 @@ import { DetectionSource } from './entities/detection-source.entity';
       DetectedCrimeSuspect,
       DetectedCrimeEvidence,
       ApplicationStatus,
+      District,
       Citizen,
       User,
     ]),

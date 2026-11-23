@@ -152,6 +152,16 @@ export class DetectedCrimesController {
     return this.service.getStats(currentUser);
   }
 
+  @Get('map-stats')
+  getMapStats(
+    @Query('period') period?: string,
+    @Query('startDate') startDate?: string,
+    @Query('endDate') endDate?: string,
+    @CurrentUser() currentUser?: JwtAccessPayload,
+  ) {
+    return this.service.getMapStats({ period, startDate, endDate }, currentUser);
+  }
+
   @Get('citizen/:citizenId')
   getByCitizen(@Param('citizenId', ParseUUIDPipe) citizenId: string) {
     return this.service.findByCitizenId(citizenId);
