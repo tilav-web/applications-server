@@ -10,7 +10,11 @@ import { Auth } from './auth.entity';
 import { AuthService } from './auth.service';
 
 @Module({
-  imports: [TypeOrmModule.forFeature([Auth, User]), JwtModule.register({}), ConfigModule],
+  imports: [
+    TypeOrmModule.forFeature([Auth, User]),
+    JwtModule.register({ global: true }),
+    ConfigModule,
+  ],
   controllers: [AuthController],
   providers: [AuthService, JwtAuthGuard],
   exports: [AuthService, JwtAuthGuard, JwtModule],
