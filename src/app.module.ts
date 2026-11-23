@@ -38,6 +38,7 @@ import { AuthModule } from './modules/auth/auth.module';
 import { DetectedCrimesModule } from './modules/detected-crimes/detected-crimes.module';
 import { DetectedCrime } from './modules/detected-crimes/entities/detected-crime.entity';
 import { DetectedCrimeEvidence } from './modules/detected-crimes/entities/detected-crime-evidence.entity';
+import { DetectedCrimeStatus } from './modules/detected-crimes/entities/detected-crime-status.entity';
 import { DetectedCrimeSuspect } from './modules/detected-crimes/entities/detected-crime-suspect.entity';
 import { DetectionSource } from './modules/detected-crimes/entities/detection-source.entity';
 import { FinancialFlowModule } from './modules/financial-flow/financial-flow.module';
@@ -111,6 +112,7 @@ import { UsersModule } from './modules/users/users.module';
             EntityApplicationLink,
             Notification,
             DetectionSource,
+            DetectedCrimeStatus,
             DetectedCrime,
             DetectedCrimeSuspect,
             DetectedCrimeEvidence,
