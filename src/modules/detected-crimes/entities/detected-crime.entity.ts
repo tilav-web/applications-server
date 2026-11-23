@@ -10,8 +10,30 @@ import { District } from '../../applications/districts/district.entity';
 import { ApplicationStatus } from '../../applications/statuses/application-status.entity';
 import { User } from '../../users/user.entity';
 import { DetectedCrimeEvidence } from './detected-crime-evidence.entity';
+import { DetectedCrimeStatus } from './detected-crime-status.entity';
 import { DetectedCrimeSuspect } from './detected-crime-suspect.entity';
 import { DetectionSource } from './detection-source.entity';
+
+export type DetectedCrimeMeasureType =
+  | 'CARD_BLOCKED'
+  | 'CHANNEL_BLOCKED'
+  | 'DEVICE_SEIZED'
+  | 'EXPERTISE_ORDERED'
+  | 'SUSPECT_DETAINED'
+  | 'SENT_TO_INVESTIGATION'
+  | 'SENT_TO_COURT'
+  | 'DAMAGE_RECOVERED'
+  | 'TRANSFERRED_AGENCY'
+  | 'OTHER';
+
+export interface DetectedCrimeMeasure {
+  id: string;
+  measure_type: DetectedCrimeMeasureType;
+  title: string;
+  date?: string | null;
+  reference_number?: string | null;
+  notes?: string | null;
+}
 
 export enum DetectedCrimeQualification {
   PRE_INVESTIGATION = 'PRE_INVESTIGATION',
@@ -117,7 +139,18 @@ export class DetectedCrime extends BaseEntity {
   @Column({ name: 'officer_notes', type: 'text', nullable: true })
   officer_notes: string | null;
 
-  // Status, Protsessual muddat (JPK 329-m.) va Yakuniy qaror
+  // Aniqlangan jinoyatning o'z alohida statusi va ko'rilgan choralar
+  @Column({ name: 'crime_status_id', type: 'uuid', nullable: true })
+  crime_status_id: string | null;
+
+  @ManyToOne(() => DetectedCrimeStatus, { nullable: true, onDelete: 'SET NULL' })
+  @JoinColumn({ name: 'crime_status_id' })
+  crime_status: DetectedCrimeStatus | null;
+
+  @Column({ name: 'measures', type: 'jsonb', default: () => "'[]'" })
+  measures: DetectedCrimeMeasure[];
+
+  // Eski legacy ustunlar (orqaga moslik uchun saqlanadi)
   @Column({ name: 'status_id', type: 'uuid', nullable: true })
   status_id: string | null;
 

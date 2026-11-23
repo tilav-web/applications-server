@@ -18,14 +18,17 @@ import {
   ApplicationStatus,
   ApplicationStatusCategory,
 } from '../applications/statuses/application-status.entity';
-import { NotificationsService } from '../notifications/notifications.service';
-import { SlaQueueService } from '../notifications/sla-queue.service';
 import { User } from '../users/user.entity';
-import { DetectedCrime, DetectedCrimeQualification } from './entities/detected-crime.entity';
+import {
+  DetectedCrime,
+  type DetectedCrimeMeasure,
+  DetectedCrimeQualification,
+} from './entities/detected-crime.entity';
 import {
   DetectedCrimeEvidence,
   type EvidenceType,
 } from './entities/detected-crime-evidence.entity';
+import { DetectedCrimeStatus } from './entities/detected-crime-status.entity';
 import {
   DetectedCrimeSuspect,
   type DetentionStatus,
@@ -52,13 +55,13 @@ export interface SaveDetectedCrimeInput {
   suspect_tree?: SuspectTreeNode[] | null;
   estimated_damage?: number | null;
   officer_notes?: string | null;
+  crime_status_id?: string | null;
   status_id?: string | null;
+  measures?: DetectedCrimeMeasure[] | null;
   decision_type_id?: string | null;
   decision_number?: string | null;
   decision_date?: string | null;
   decision_note?: string | null;
-  sla_days?: number | null;
-  deadline_at?: string | null;
   suspects?: Array<{
     citizen_id: string;
     role_in_crime?: SuspectCrimeRole;
@@ -89,12 +92,12 @@ export class DetectedCrimesService {
     private readonly evidenceRepo: Repository<DetectedCrimeEvidence>,
     @InjectRepository(ApplicationStatus)
     private readonly statusRepo: Repository<ApplicationStatus>,
+    @InjectRepository(DetectedCrimeStatus)
+    private readonly crimeStatusRepo: Repository<DetectedCrimeStatus>,
     @InjectRepository(Citizen)
     private readonly citizenRepo: Repository<Citizen>,
     @InjectRepository(User)
     private readonly userRepo: Repository<User>,
-    private readonly slaQueueService: SlaQueueService,
-    private readonly notificationsService: NotificationsService,
   ) {}
 
   private async getUserWithDistricts(currentUser?: JwtAccessPayload): Promise<User | null> {
@@ -152,6 +155,7 @@ export class DetectedCrimesService {
       .innerJoinAndSelect('s.detected_crime', 'dc')
       .leftJoinAndSelect('dc.crime', 'crime')
       .leftJoinAndSelect('dc.district', 'district')
+      .leftJoinAndSelect('dc.crime_status', 'cst')
       .leftJoinAndSelect('dc.application_status', 'st')
       .leftJoinAndSelect('dc.detection_source', 'src')
       .where('s.citizen_id = :citizenId', { citizenId })
@@ -168,8 +172,12 @@ export class DetectedCrimesService {
       mjtk_article: r.detected_crime.mjtk_article || null,
       district_name: r.detected_crime.district?.name || null,
       source_name: r.detected_crime.detection_source?.name || null,
-      status_name: r.detected_crime.application_status?.name || null,
-      status_color: r.detected_crime.application_status?.color || 'blue',
+      status_name:
+        r.detected_crime.crime_status?.name || r.detected_crime.application_status?.name || null,
+      status_color:
+        r.detected_crime.crime_status?.color ||
+        r.detected_crime.application_status?.color ||
+        'rose',
       role_in_crime: r.role_in_crime,
       detention_status: r.detention_status,
       detected_at: r.detected_crime.detected_at,
@@ -197,28 +205,21 @@ export class DetectedCrimesService {
       }
     }
 
-    let statusId = dto.status_id || null;
-    let statusObj: ApplicationStatus | null = null;
-    if (statusId) {
-      statusObj = await this.statusRepo.findOne({ where: { id: statusId } });
+    let crimeStatusId = dto.crime_status_id || null;
+    let crimeStatusObj: DetectedCrimeStatus | null = null;
+    if (crimeStatusId) {
+      crimeStatusObj = await this.crimeStatusRepo.findOne({ where: { id: crimeStatusId } });
     } else {
-      statusObj = await this.statusRepo.findOne({
-        where: [{ is_default: true }, { code: 'YANGI' }],
+      crimeStatusObj = await this.crimeStatusRepo.findOne({
+        where: [{ is_default: true }, { code: 'FOSH_ETILDI' }],
         order: { sort_order: 'ASC' },
       });
-      statusId = statusObj?.id || null;
+      crimeStatusId = crimeStatusObj?.id || null;
     }
 
     const detectedAt = dto.detected_at ? new Date(dto.detected_at) : new Date();
-    const slaDays = dto.sla_days ?? statusObj?.default_sla_days ?? 10;
-    const deadlineAt = dto.deadline_at
-      ? new Date(dto.deadline_at)
-      : !statusObj || statusObj.tracks_sla
-        ? new Date(detectedAt.getTime() + slaDays * 24 * 60 * 60 * 1000)
-        : null;
-
     const caseNumber = dto.case_number?.trim() || (await this.generateCaseNumber());
-    const isClosed = statusObj?.category === ApplicationStatusCategory.CLOSED;
+    const isFinal = Boolean(crimeStatusObj?.is_final);
 
     const entity = this.repo.create({
       case_number: caseNumber,
@@ -228,7 +229,7 @@ export class DetectedCrimesService {
       report_date: dto.report_date ? new Date(dto.report_date) : null,
       kusp_number: dto.kusp_number?.trim() || null,
       detected_at: detectedAt,
-      qualification_type: dto.qualification_type || DetectedCrimeQualification.PRE_INVESTIGATION,
+      qualification_type: dto.qualification_type || DetectedCrimeQualification.CRIMINAL,
       crime_id: dto.crime_id || null,
       crime_method_id: dto.crime_method_id || null,
       mjtk_article: dto.mjtk_article?.trim() || null,
@@ -238,19 +239,20 @@ export class DetectedCrimesService {
       platform: dto.platform?.trim() || null,
       channel_or_source_url: dto.channel_or_source_url?.trim() || null,
       suspect_tree: dto.suspect_tree || [],
+      measures: Array.isArray(dto.measures) ? dto.measures : [],
       estimated_damage:
         dto.estimated_damage !== undefined && dto.estimated_damage !== null
           ? Number(dto.estimated_damage)
           : null,
       officer_notes: dto.officer_notes?.trim() || null,
-      status_id: statusId,
+      crime_status_id: crimeStatusId,
       decision_type_id: dto.decision_type_id || null,
       decision_number: dto.decision_number?.trim() || null,
       decision_date: dto.decision_date ? new Date(dto.decision_date) : null,
       decision_note: dto.decision_note?.trim() || null,
-      sla_days: slaDays,
-      deadline_at: deadlineAt,
-      closed_at: isClosed ? new Date() : null,
+      deadline_at: null,
+      sla_days: null,
+      closed_at: isFinal ? new Date() : null,
       detected_by_id: user?.id || null,
       created_by_id: user?.id || null,
       is_deleted: false,
@@ -265,8 +267,6 @@ export class DetectedCrimesService {
     if (Array.isArray(dto.evidences) && dto.evidences.length > 0) {
       await this.syncEvidences(saved.id, dto.evidences);
     }
-
-    void this.slaQueueService.scheduleForDetectedCrime(saved.id);
 
     return this.findOne(saved.id, currentUser);
   }
@@ -333,9 +333,9 @@ export class DetectedCrimesService {
       district_id?: string;
       crime_id?: string;
       detection_source_id?: string;
+      crime_status_id?: string;
       status_id?: string;
       qualification_type?: string;
-      sla_filter?: string;
     },
     currentUser?: JwtAccessPayload,
   ): Promise<PaginatedResult<DetectedCrime>> {
@@ -348,6 +348,7 @@ export class DetectedCrimesService {
       .leftJoinAndSelect('dc.district', 'district')
       .leftJoinAndSelect('dc.crime', 'crime')
       .leftJoinAndSelect('dc.detection_source', 'source')
+      .leftJoinAndSelect('dc.crime_status', 'cst')
       .leftJoinAndSelect('dc.application_status', 'st')
       .leftJoinAndSelect('dc.suspects', 'suspects')
       .leftJoinAndSelect('suspects.citizen', 'suspect_citizen')
@@ -376,24 +377,12 @@ export class DetectedCrimesService {
     if (params.detection_source_id) {
       qb.andWhere('dc.detection_source_id = :srcId', { srcId: params.detection_source_id });
     }
-    if (params.status_id) qb.andWhere('dc.status_id = :stId', { stId: params.status_id });
+    const filterStatusId = params.crime_status_id || params.status_id;
+    if (filterStatusId) {
+      qb.andWhere('dc.crime_status_id = :cstId', { cstId: filterStatusId });
+    }
     if (params.qualification_type) {
       qb.andWhere('dc.qualification_type = :qt', { qt: params.qualification_type });
-    }
-
-    if (params.sla_filter) {
-      const now = new Date();
-      if (params.sla_filter === 'overdue') {
-        qb.andWhere('(st.tracks_sla = true OR st.id IS NULL) AND dc.deadline_at < :now', { now });
-      } else if (params.sla_filter === 'due_72h') {
-        const in72h = new Date(now.getTime() + 72 * 3600 * 1000);
-        qb.andWhere(
-          '(st.tracks_sla = true OR st.id IS NULL) AND dc.deadline_at >= :now AND dc.deadline_at <= :in72h',
-          { now, in72h },
-        );
-      } else if (params.sla_filter === 'extended') {
-        qb.andWhere("dc.extended_until IS NOT NULL OR st.category = 'EXTENDED'");
-      }
     }
 
     qb.orderBy('dc.detected_at', 'DESC').skip(skip).take(limit);
@@ -423,6 +412,7 @@ export class DetectedCrimesService {
         crime_method: true,
         detection_source: true,
         department_service: true,
+        crime_status: true,
         application_status: true,
         decision_type: true,
         detected_by: true,
@@ -463,6 +453,7 @@ export class DetectedCrimesService {
     delete (item as unknown as Record<string, unknown>).crime_method;
     delete (item as unknown as Record<string, unknown>).detection_source;
     delete (item as unknown as Record<string, unknown>).department_service;
+    delete (item as unknown as Record<string, unknown>).crime_status;
     delete (item as unknown as Record<string, unknown>).application_status;
     delete (item as unknown as Record<string, unknown>).decision_type;
     delete (item as unknown as Record<string, unknown>).suspects;
@@ -497,22 +488,20 @@ export class DetectedCrimesService {
       item.channel_or_source_url = fields.channel_or_source_url?.trim() || null;
     }
     if (fields.suspect_tree !== undefined) item.suspect_tree = fields.suspect_tree || [];
+    if (fields.measures !== undefined)
+      item.measures = Array.isArray(fields.measures) ? fields.measures : [];
     if (fields.estimated_damage !== undefined) {
       item.estimated_damage =
         fields.estimated_damage !== null ? Number(fields.estimated_damage) : null;
     }
     if (fields.officer_notes !== undefined)
       item.officer_notes = fields.officer_notes?.trim() || null;
-    if (fields.status_id !== undefined) {
-      item.status_id = fields.status_id || null;
-      const st = item.status_id
-        ? await this.statusRepo.findOne({ where: { id: item.status_id } })
+    if (fields.crime_status_id !== undefined) {
+      item.crime_status_id = fields.crime_status_id || null;
+      const cst = item.crime_status_id
+        ? await this.crimeStatusRepo.findOne({ where: { id: item.crime_status_id } })
         : null;
-      if (st?.category === ApplicationStatusCategory.CLOSED) {
-        item.closed_at = item.closed_at || new Date();
-      } else {
-        item.closed_at = null;
-      }
+      item.closed_at = cst?.is_final ? item.closed_at || new Date() : null;
     }
     if (fields.decision_type_id !== undefined)
       item.decision_type_id = fields.decision_type_id || null;
@@ -524,9 +513,6 @@ export class DetectedCrimesService {
     }
     if (fields.decision_note !== undefined)
       item.decision_note = fields.decision_note?.trim() || null;
-    if (fields.deadline_at !== undefined) {
-      item.deadline_at = fields.deadline_at ? new Date(fields.deadline_at) : null;
-    }
 
     await this.repo.save(item);
 
@@ -536,8 +522,6 @@ export class DetectedCrimesService {
     if (evidences !== undefined) {
       await this.syncEvidences(id, evidences);
     }
-
-    void this.slaQueueService.scheduleForDetectedCrime(id);
 
     return this.findOne(id, currentUser);
   }
@@ -572,16 +556,7 @@ export class DetectedCrimesService {
       ...(extStatus ? { status_id: extStatus.id } : {}),
     });
 
-    void this.slaQueueService.scheduleForDetectedCrime(id);
-    const updated = await this.findOne(id, currentUser);
-    void this.notificationsService.onDetectedCrimeDeadlineExtended(
-      updated,
-      newDeadline,
-      dto.reason.trim(),
-      currentUser?.sub,
-    );
-
-    return updated;
+    return this.findOne(id, currentUser);
   }
 
   async remove(id: string, currentUser?: JwtAccessPayload) {
@@ -594,14 +569,13 @@ export class DetectedCrimesService {
       deleted_at: new Date(),
       deleted_by_id: currentUser?.sub || null,
     });
-    void this.slaQueueService.cancelForDetectedCrime(item.id);
     return { success: true, message: "Aniqlangan jinoyat o'chirildi" };
   }
 
   async getStats(currentUser?: JwtAccessPayload) {
     const qb = this.repo
       .createQueryBuilder('dc')
-      .leftJoin('dc.application_status', 'st')
+      .leftJoin('dc.crime_status', 'cst')
       .where('dc.is_deleted = false');
 
     if (currentUser?.role === Role.DISTRICT_OFFICER) {
@@ -615,23 +589,21 @@ export class DetectedCrimesService {
     }
 
     const rows = await qb
-      .select(['dc.id', 'dc.qualification_type', 'dc.deadline_at', 'st.tracks_sla', 'st.category'])
+      .select(['dc.id', 'dc.qualification_type', 'cst.is_final', 'cst.code'])
       .getMany();
 
-    const nowMs = Date.now();
     let criminalCount = 0;
     let adminCount = 0;
     let preInvCount = 0;
-    let overdueCount = 0;
+    let finalCount = 0;
 
     for (const r of rows) {
       if (r.qualification_type === DetectedCrimeQualification.CRIMINAL) criminalCount++;
       else if (r.qualification_type === DetectedCrimeQualification.ADMINISTRATIVE) adminCount++;
       else preInvCount++;
 
-      const tracks = r.application_status ? r.application_status.tracks_sla : true;
-      if (tracks && r.deadline_at && new Date(r.deadline_at).getTime() < nowMs) {
-        overdueCount++;
+      if (r.crime_status?.is_final) {
+        finalCount++;
       }
     }
 
@@ -640,7 +612,9 @@ export class DetectedCrimesService {
       criminalCount,
       adminCount,
       preInvCount,
-      overdueCount,
+      finalCount,
+      inProgressCount: rows.length - finalCount,
+      overdueCount: 0,
     };
   }
 
@@ -655,6 +629,7 @@ export class DetectedCrimesService {
       .leftJoinAndSelect('dc.crime', 'crime')
       .leftJoinAndSelect('dc.detection_source', 'source')
       .leftJoinAndSelect('dc.department_service', 'dept')
+      .leftJoinAndSelect('dc.crime_status', 'cst')
       .leftJoinAndSelect('dc.application_status', 'st')
       .leftJoinAndSelect('dc.decision_type', 'decision')
       .leftJoinAndSelect('dc.suspects', 'suspects')
@@ -685,7 +660,11 @@ export class DetectedCrimesService {
     if (params.detection_source_id) {
       qb.andWhere('dc.detection_source_id = :srcId', { srcId: params.detection_source_id });
     }
-    if (params.status_id) qb.andWhere('dc.status_id = :stId', { stId: params.status_id });
+    if (params.crime_status_id || params.status_id) {
+      qb.andWhere('dc.crime_status_id = :cstId', {
+        cstId: params.crime_status_id || params.status_id,
+      });
+    }
     if (params.qualification_type) {
       qb.andWhere('dc.qualification_type = :qt', { qt: params.qualification_type });
     }
@@ -765,19 +744,18 @@ export class DetectedCrimesService {
       { header: 'Gumonlanuvchilar', key: 'suspects_count', width: 16 },
       { header: 'Ashyoviy dalillar', key: 'evidences_count', width: 16 },
       { header: 'Zarar / Aylanma (UZS)', key: 'damage', width: 22 },
-      { header: 'Holati', key: 'status', width: 22 },
-      { header: 'Protsessual muddat', key: 'deadline', width: 20 },
+      { header: 'Holati', key: 'status', width: 26 },
+      { header: 'Ko‘rilgan choralar', key: 'measures', width: 36 },
       { header: 'Yakuniy qaror / Raqami', key: 'decision', width: 28 },
       { header: 'Fabula', key: 'description', width: 45 },
     ];
     styleHeader(ws1.getRow(1));
 
     items.forEach((item, idx) => {
-      const deadlineStr = item.deadline_at
-        ? `${new Date(item.deadline_at).toISOString().slice(0, 10)}${
-            item.extended_until ? ` (${item.sla_days || 30} kun)` : ''
-          }`
-        : '—';
+      const measuresStr =
+        Array.isArray(item.measures) && item.measures.length > 0
+          ? item.measures.map((m) => `${m.title}${m.date ? ` (${m.date})` : ''}`).join('; ')
+          : '—';
       const decisionStr = item.decision_type?.name
         ? `${item.decision_type.name}${item.decision_number ? ` (№ ${item.decision_number})` : ''}`
         : item.decision_number
@@ -799,8 +777,8 @@ export class DetectedCrimesService {
         suspects_count: item.suspects?.length || 0,
         evidences_count: item.evidences?.length || 0,
         damage: Number(item.estimated_damage) || 0,
-        status: item.application_status?.name || '—',
-        deadline: deadlineStr,
+        status: item.crime_status?.name || item.application_status?.name || 'Fosh etildi',
+        measures: measuresStr,
         decision: decisionStr,
         description: item.description || '—',
       });

@@ -302,25 +302,8 @@ export class SlaQueueService implements OnModuleInit, OnModuleDestroy {
         scheduled++;
       }
 
-      const openCrimes = await this.detectedCrimeRepo
-        .createQueryBuilder('dc')
-        .leftJoinAndSelect('dc.application_status', 'st')
-        .where('dc.is_deleted = false')
-        .andWhere('dc.deadline_at IS NOT NULL')
-        .andWhere('(st.tracks_sla = true OR st.id IS NULL)')
-        .select(['dc.id', 'dc.deadline_at', 'st.id', 'st.tracks_sla'])
-        .getMany();
-
-      let scheduledCrimes = 0;
-      for (const dc of openCrimes) {
-        await this.scheduleForDetectedCrime(dc.id);
-        scheduledCrimes++;
-      }
-
-      this.logger.log(
-        `BullMQ SLA sinxronizatsiyasi tugadi: ${scheduled} ta faol ariza, ${scheduledCrimes} ta aniqlangan jinoyat`,
-      );
-      return { scheduled: scheduled + scheduledCrimes };
+      this.logger.log(`BullMQ SLA sinxronizatsiyasi tugadi: ${scheduled} ta faol ariza`);
+      return { scheduled };
     } catch (err) {
       this.logger.warn(`SLA reconcile xatosi: ${(err as Error).message}`);
       return { scheduled: 0 };

@@ -5,11 +5,17 @@ import { Citizen } from '../applications/citizens/citizen.entity';
 import { ApplicationStatus } from '../applications/statuses/application-status.entity';
 import { AuthModule } from '../auth/auth.module';
 import { User } from '../users/user.entity';
-import { DetectedCrimesController, DetectionSourcesController } from './detected-crimes.controller';
+import { DetectedCrimeStatusesService } from './detected-crime-statuses.service';
+import {
+  DetectedCrimesController,
+  DetectedCrimeStatusesController,
+  DetectionSourcesController,
+} from './detected-crimes.controller';
 import { DetectedCrimesService } from './detected-crimes.service';
 import { DetectionSourcesService } from './detection-sources.service';
 import { DetectedCrime } from './entities/detected-crime.entity';
 import { DetectedCrimeEvidence } from './entities/detected-crime-evidence.entity';
+import { DetectedCrimeStatus } from './entities/detected-crime-status.entity';
 import { DetectedCrimeSuspect } from './entities/detected-crime-suspect.entity';
 import { DetectionSource } from './entities/detection-source.entity';
 
@@ -17,6 +23,7 @@ import { DetectionSource } from './entities/detection-source.entity';
   imports: [
     TypeOrmModule.forFeature([
       DetectionSource,
+      DetectedCrimeStatus,
       DetectedCrime,
       DetectedCrimeSuspect,
       DetectedCrimeEvidence,
@@ -26,8 +33,12 @@ import { DetectionSource } from './entities/detection-source.entity';
     ]),
     AuthModule,
   ],
-  controllers: [DetectionSourcesController, DetectedCrimesController],
-  providers: [DetectionSourcesService, DetectedCrimesService],
-  exports: [DetectionSourcesService, DetectedCrimesService],
+  controllers: [
+    DetectionSourcesController,
+    DetectedCrimeStatusesController,
+    DetectedCrimesController,
+  ],
+  providers: [DetectionSourcesService, DetectedCrimeStatusesService, DetectedCrimesService],
+  exports: [DetectionSourcesService, DetectedCrimeStatusesService, DetectedCrimesService],
 })
 export class DetectedCrimesModule {}

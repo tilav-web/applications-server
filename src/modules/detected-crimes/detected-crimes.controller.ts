@@ -16,8 +16,58 @@ import type { Response } from 'express';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
 import type { JwtAccessPayload } from '../../common/types/jwt-payload.interface';
+import { DetectedCrimeStatusesService } from './detected-crime-statuses.service';
 import { DetectedCrimesService, type SaveDetectedCrimeInput } from './detected-crimes.service';
 import { DetectionSourcesService } from './detection-sources.service';
+
+@Controller('detected-crime-statuses')
+@UseGuards(JwtAuthGuard)
+export class DetectedCrimeStatusesController {
+  constructor(private readonly service: DetectedCrimeStatusesService) {}
+
+  @Get()
+  findAll(@Query('include_inactive') includeInactive?: string) {
+    return this.service.findAll(includeInactive === 'true');
+  }
+
+  @Post()
+  create(
+    @Body()
+    body: {
+      name: string;
+      code?: string;
+      color?: string;
+      is_default?: boolean;
+      is_final?: boolean;
+      sort_order?: number;
+      is_active?: boolean;
+    },
+  ) {
+    return this.service.create(body);
+  }
+
+  @Patch(':id')
+  update(
+    @Param('id', ParseUUIDPipe) id: string,
+    @Body()
+    body: {
+      name?: string;
+      code?: string;
+      color?: string;
+      is_default?: boolean;
+      is_final?: boolean;
+      sort_order?: number;
+      is_active?: boolean;
+    },
+  ) {
+    return this.service.update(id, body);
+  }
+
+  @Delete(':id')
+  remove(@Param('id', ParseUUIDPipe) id: string) {
+    return this.service.remove(id);
+  }
+}
 
 @Controller('detection-sources')
 @UseGuards(JwtAuthGuard)
@@ -77,9 +127,9 @@ export class DetectedCrimesController {
     @Query('district_id') district_id?: string,
     @Query('crime_id') crime_id?: string,
     @Query('detection_source_id') detection_source_id?: string,
+    @Query('crime_status_id') crime_status_id?: string,
     @Query('status_id') status_id?: string,
     @Query('qualification_type') qualification_type?: string,
-    @Query('sla_filter') sla_filter?: string,
     @CurrentUser() currentUser?: JwtAccessPayload,
   ) {
     return this.service.findAll(
@@ -90,9 +140,8 @@ export class DetectedCrimesController {
         district_id,
         crime_id,
         detection_source_id,
-        status_id,
+        crime_status_id: crime_status_id || status_id,
         qualification_type,
-        sla_filter,
       },
       currentUser,
     );
@@ -123,9 +172,9 @@ export class DetectedCrimesController {
     @Query('district_id') district_id?: string,
     @Query('crime_id') crime_id?: string,
     @Query('detection_source_id') detection_source_id?: string,
+    @Query('crime_status_id') crime_status_id?: string,
     @Query('status_id') status_id?: string,
     @Query('qualification_type') qualification_type?: string,
-    @Query('sla_filter') sla_filter?: string,
     @CurrentUser() currentUser?: JwtAccessPayload,
   ) {
     return this.service.exportExcel(
@@ -134,9 +183,8 @@ export class DetectedCrimesController {
         district_id,
         crime_id,
         detection_source_id,
-        status_id,
+        crime_status_id: crime_status_id || status_id,
         qualification_type,
-        sla_filter,
       },
       res,
       currentUser,
