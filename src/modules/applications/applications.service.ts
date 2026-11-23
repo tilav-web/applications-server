@@ -1288,7 +1288,10 @@ export class ApplicationsService {
       } else if (sf === 'extended') {
         qb.andWhere("(app.extended_until IS NOT NULL OR application_status.category = 'EXTENDED')");
       } else if (sf === 'active') {
-        qb.andWhere('(application_status.tracks_sla = true OR application_status.id IS NULL)');
+        qb.andWhere(
+          "(application_status.tracks_sla = true OR application_status.id IS NULL) AND app.deadline_at IS NOT NULL AND app.deadline_at >= :slaNow AND app.extended_until IS NULL AND (application_status.category IS NULL OR application_status.category != 'EXTENDED')",
+          { slaNow: now },
+        );
       }
     }
 
