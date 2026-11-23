@@ -20,7 +20,11 @@ import { Occupation } from '../modules/applications/occupations/occupation.entit
 import { OccupationCategory } from '../modules/applications/occupations/occupation-category.entity';
 import { RejectionReason } from '../modules/applications/rejection-reasons/rejection-reason.entity';
 import { ApplicationSource } from '../modules/applications/sources/application-source.entity';
-import { ApplicationStatus as ApplicationStatusEntity } from '../modules/applications/statuses/application-status.entity';
+import {
+  ApplicationStatus as ApplicationStatusEntity,
+  ApplicationStatusCategory,
+} from '../modules/applications/statuses/application-status.entity';
+import { DEFAULT_JPK_STATUSES } from '../modules/applications/statuses/application-statuses.service';
 import { Bank } from '../modules/applications/transfers/banks/bank.entity';
 import { Card } from '../modules/applications/transfers/cards/card.entity';
 import { PaymentProvider } from '../modules/applications/transfers/payment_providers/payment_provider.entity';
@@ -1059,6 +1063,9 @@ async function seedMockData(
     dropperInflowTotals.set(dropperCard.id, prevDrop);
 
     // 2. Arizani saqlaymiz
+    const mockSlaDays = chosenStatusEntity?.default_sla_days ?? 10;
+    const mockDeadline = new Date(appDate.getTime() + mockSlaDays * 24 * 60 * 60 * 1000);
+    const mockIsClosed = chosenStatusEntity?.category === ApplicationStatusCategory.CLOSED;
     const savedApp = await appRepo.save(
       appRepo.create({
         application_number: appNumber,
@@ -1068,6 +1075,9 @@ async function seedMockData(
         status: chosenStatusCode,
         status_id: chosenStatusEntity?.id || null,
         date: appDate,
+        sla_days: mockSlaDays,
+        deadline_at: mockDeadline,
+        closed_at: mockIsClosed ? new Date(appDate.getTime() + 5 * 24 * 60 * 60 * 1000) : null,
         citizen_id: victim.id,
         district_id: appDistrict.id,
         crime_id: crime.id,
@@ -1257,6 +1267,18 @@ async function bootstrap() {
 
     if (action === 'clean' || action === 'clear' || action === 'remove') {
       await cleanMockData(ds, intelligenceSync);
+    } else if (action === 'statuses:sync') {
+      const statusRepo = ds.getRepository(ApplicationStatusEntity);
+      for (const dsItem of DEFAULT_JPK_STATUSES) {
+        const existing = await statusRepo.findOne({ where: { code: dsItem.code } });
+        if (existing) {
+          Object.assign(existing, dsItem);
+          await statusRepo.save(existing);
+        } else {
+          await statusRepo.save(statusRepo.create(dsItem));
+        }
+      }
+      log(`JPK default statuslari (${DEFAULT_JPK_STATUSES.length} ta) bazaga sinxronlandi.`);
     } else {
       await seedMockData(ds, intelligenceSync);
     }

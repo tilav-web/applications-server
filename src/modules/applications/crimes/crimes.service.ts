@@ -2,6 +2,7 @@ import { Injectable, NotFoundException, OnModuleInit } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { FindOptionsWhere, ILike, Repository } from 'typeorm';
 
+import { assertNoDependencies } from '../../../common/database/dependency-guard.util';
 import type { PaginatedResult } from '../../../common/interfaces/pagination.interface';
 import { formatTitleCase } from '../../../common/utils/name-formatter.util';
 import { Crime } from './crime.entity';
@@ -112,6 +113,19 @@ export class CrimesService implements OnModuleInit {
 
   async remove(id: string): Promise<{ success: boolean; message: string }> {
     const crime = await this.findOne(id);
+    await assertNoDependencies(
+      this.crimeRepo.manager,
+      `«${crime.article}» jinoyat moddasi`,
+      crime.id,
+      [
+        {
+          table: 'applications',
+          column: 'crime_id',
+          label: 'ariza',
+          extraWhere: 'is_deleted = false',
+        },
+      ],
+    );
     await this.crimeRepo.remove(crime);
     return {
       success: true,

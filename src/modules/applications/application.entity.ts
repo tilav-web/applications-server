@@ -11,6 +11,7 @@ import {
 
 import { BaseEntity } from '../../common/database/base.entity';
 import { User } from '../users/user.entity';
+import { ApplicationStatusHistory } from './application-status-history.entity';
 import { Citizen } from './citizens/citizen.entity';
 import { Crime } from './crimes/crime.entity';
 import { CrimeMethod } from './crimes/methods/crime-method.entity';
@@ -41,6 +42,7 @@ export interface SuspectTreeNode {
 @Index('IDX_applications_card_id', ['card_id'])
 @Index('IDX_applications_transfer_id', ['transfer_id'])
 @Index('IDX_applications_created_by_id', ['created_by_id'])
+@Index('IDX_applications_deadline_at', ['deadline_at'])
 export class Application extends BaseEntity {
   /**
    * Arizaning rasmiy qayd raqami.
@@ -93,6 +95,42 @@ export class Application extends BaseEntity {
     nullable: true,
   })
   date: Date | null;
+
+  // ==========================================================================
+  // PROTSESSUAL MUDDATLAR (JPK 329-modda: 3 / 10 / 30 kun) VA YAKUNIY QAROR
+  // ==========================================================================
+  @Column({ name: 'deadline_at', type: 'timestamp with time zone', nullable: true })
+  deadline_at: Date | null;
+
+  @Column({ name: 'sla_days', type: 'int', nullable: true })
+  sla_days: number | null;
+
+  @Column({ name: 'extended_until', type: 'timestamp with time zone', nullable: true })
+  extended_until: Date | null;
+
+  @Column({ name: 'extension_reason', type: 'text', nullable: true })
+  extension_reason: string | null;
+
+  @Column({ name: 'prosecutor_approval_number', type: 'varchar', length: 120, nullable: true })
+  prosecutor_approval_number: string | null;
+
+  @Column({ name: 'prosecutor_approval_date', type: 'timestamp with time zone', nullable: true })
+  prosecutor_approval_date: Date | null;
+
+  @Column({ name: 'decision_number', type: 'varchar', length: 120, nullable: true })
+  decision_number: string | null;
+
+  @Column({ name: 'decision_date', type: 'timestamp with time zone', nullable: true })
+  decision_date: Date | null;
+
+  @Column({ name: 'decision_note', type: 'text', nullable: true })
+  decision_note: string | null;
+
+  @Column({ name: 'closed_at', type: 'timestamp with time zone', nullable: true })
+  closed_at: Date | null;
+
+  @OneToMany(() => ApplicationStatusHistory, (h: ApplicationStatusHistory) => h.application)
+  status_history: ApplicationStatusHistory[];
 
   // ==========================================================================
   // 1. DINAMIK MAYDONLAR (Yagona dinamik massiv - Universal Custom Fields)

@@ -416,6 +416,127 @@ export class NotificationsService implements OnModuleInit, OnModuleDestroy {
     return { sentCount };
   }
 
+  /**
+   * 5. BullMQ SLA bosqichi ishga tushganda bosqichma-bosqich eskalatsiya yuborish
+   */
+  async dispatchSlaStageNotification(
+    app: Application,
+    stage: 'WARN_72H' | 'URGENT_24H' | 'OVERDUE_0H' | 'ESCALATE_24H',
+  ): Promise<void> {
+    try {
+      const appNum = app.application_number || 'Raqamsiz';
+      const districtName = app.district?.name || 'Noma‘lum tuman';
+      const statusName = app.application_status?.name || app.status || 'Jarayonda';
+      const deadlineStr = app.deadline_at
+        ? new Date(app.deadline_at).toLocaleString('uz-UZ', {
+            day: '2-digit',
+            month: '2-digit',
+            year: 'numeric',
+            hour: '2-digit',
+            minute: '2-digit',
+          })
+        : '—';
+
+      const recipientMap = new Map<string, User>();
+      const addUsers = (list: User[]) => {
+        for (const u of list) recipientMap.set(u.id, u);
+      };
+
+      const districtOfficers = app.district_id
+        ? await this.findUsersByRoles([Role.DISTRICT_OFFICER], app.district_id)
+        : [];
+      const creatorUser = app.created_by_id
+        ? await this.userRepo.findOne({ where: { id: app.created_by_id } })
+        : null;
+
+      let type: NotificationType = 'SLA_WARNING';
+      let priority: NotificationPriority = 'WARNING';
+      let title = '';
+      let message = '';
+
+      if (stage === 'WARN_72H') {
+        addUsers(districtOfficers);
+        if (creatorUser) addUsers([creatorUser]);
+        type = 'SLA_WARNING';
+        priority = 'WARNING';
+        title = `Muddat yaqinlashmoqda: Ariza № ${appNum}`;
+        message = `Hudud: ${districtName}\nHolat: ${statusName}\nProtsessual muddat: ${deadlineStr}\nMuddat tugashidan oldin qaror qabul qiling yoki JPK 329-m. bo‘yicha uzaytiring.`;
+      } else if (stage === 'URGENT_24H') {
+        addUsers(districtOfficers);
+        if (creatorUser) addUsers([creatorUser]);
+        type = 'SLA_WARNING';
+        priority = 'WARNING';
+        title = `Shoshilinch! 24 soat qoldi: Ariza № ${appNum}`;
+        message = `Hudud: ${districtName}\nHolat: ${statusName}\nMuddat tugash vaqti: ${deadlineStr}\nIltimos, zudlik bilan choralar ko‘ring.`;
+      } else if (stage === 'OVERDUE_0H') {
+        addUsers(districtOfficers);
+        if (creatorUser) addUsers([creatorUser]);
+        addUsers(await this.findUsersByRoles([Role.BOSS]));
+        type = 'SLA_OVERDUE';
+        priority = 'CRITICAL';
+        title = `Muddat tugadi (Kechikish): Ariza № ${appNum}`;
+        message = `Hudud: ${districtName}\nHolat: ${statusName}\nBelgilangan muddat (${deadlineStr}) yakunlandi! Rahbar nazoratiga o‘tkazildi.`;
+      } else {
+        addUsers(await this.findUsersByRoles([Role.BOSS, Role.SUPER_ADMIN]));
+        type = 'SLA_OVERDUE';
+        priority = 'CRITICAL';
+        title = `ESKALATSIYA (Muddati o‘tgan): Ariza № ${appNum}`;
+        message = `Hudud: ${districtName}\nHolat: ${statusName}\nMuddat: ${deadlineStr} dan beri yopilmagan! Zudlik bilan rahbar va administrator nazorati talab etiladi.`;
+      }
+
+      for (const u of recipientMap.values()) {
+        await this.notifyUser(u, {
+          type,
+          priority,
+          title,
+          message,
+          link_url: `/applications/${app.id}`,
+          metadata: { application_id: app.id, stage, deadline_at: app.deadline_at },
+        });
+      }
+    } catch (err) {
+      this.logger.warn(`dispatchSlaStageNotification xatosi: ${(err as Error).message}`);
+    }
+  }
+
+  /**
+   * 6. Muddat uzaytirilganda BOSS va tuman mas'ullariga xabar
+   */
+  async onDeadlineExtended(
+    app: Application,
+    newDeadline: Date,
+    reason: string,
+    actorAuthId?: string,
+  ): Promise<void> {
+    try {
+      const appNum = app.application_number || 'Raqamsiz';
+      const districtName = app.district?.name || 'Noma‘lum tuman';
+      const dateStr = newDeadline.toLocaleDateString('uz-UZ');
+      const bosses = await this.findUsersByRoles([Role.BOSS]);
+      const officers = app.district_id
+        ? await this.findUsersByRoles([Role.DISTRICT_OFFICER], app.district_id)
+        : [];
+
+      const unique = new Map<string, User>();
+      [...bosses, ...officers].forEach((u) => {
+        if (!actorAuthId || u.auth_id !== actorAuthId) unique.set(u.id, u);
+      });
+
+      for (const u of unique.values()) {
+        await this.notifyUser(u, {
+          type: 'STATUS_CHANGED',
+          priority: 'INFO',
+          title: `Muddat uzaytirildi: Ariza № ${appNum}`,
+          message: `Hudud: ${districtName}\nYangi muddat: ${dateStr}\nAsos: ${reason}`,
+          link_url: `/applications/${app.id}`,
+          metadata: { application_id: app.id, new_deadline: newDeadline.toISOString() },
+        });
+      }
+    } catch (err) {
+      this.logger.warn(`onDeadlineExtended xatosi: ${(err as Error).message}`);
+    }
+  }
+
   private async runScheduledChecks(): Promise<void> {
     try {
       const now = new Date();
@@ -429,11 +550,7 @@ export class NotificationsService implements OnModuleInit, OnModuleDestroy {
         await this.sendDailyDigest();
       }
 
-      // 2. SLA muddat nazorati (kuniga 1 marta, soat 09:00 da)
-      if (now.getHours() === 9 && this.lastSlaCheckDate !== todayKey) {
-        this.lastSlaCheckDate = todayKey;
-        await this.checkSlaDeadlines();
-      }
+      // 2. SLA muddat nazorati endi BullMQ (SlaQueueService) delayed joblari orqali sekundigacha aniq ishlaydi
     } catch (err) {
       this.logger.warn(`Scheduled notification check xatosi: ${(err as Error).message}`);
     }
@@ -637,6 +754,10 @@ export class NotificationsService implements OnModuleInit, OnModuleDestroy {
       50_000_000,
     );
     const slaDays = await this.getSettingNumber('notif_sla_days', 10);
+    const slaWarnHoursBefore = await this.getSettingNumber('sla_warn_hours_before', 72);
+    const slaUrgentHoursBefore = await this.getSettingNumber('sla_urgent_hours_before', 24);
+    const slaEscalateHoursAfter = await this.getSettingNumber('sla_escalate_hours_after', 24);
+    const slaMaxExtensionDays = await this.getSettingNumber('sla_max_extension_days', 30);
     const dailyDigestEnabled = await this.getSettingBool('notif_daily_digest_enabled', true);
     const dailyDigestHour = await this.getSettingNumber('notif_daily_digest_hour', 18);
 
@@ -651,6 +772,10 @@ export class NotificationsService implements OnModuleInit, OnModuleDestroy {
       rules: {
         high_value_threshold: highValueThreshold,
         sla_days: slaDays,
+        sla_warn_hours_before: slaWarnHoursBefore,
+        sla_urgent_hours_before: slaUrgentHoursBefore,
+        sla_escalate_hours_after: slaEscalateHoursAfter,
+        sla_max_extension_days: slaMaxExtensionDays,
         daily_digest_enabled: dailyDigestEnabled,
         daily_digest_hour: dailyDigestHour,
       },
@@ -660,6 +785,10 @@ export class NotificationsService implements OnModuleInit, OnModuleDestroy {
   async updateAdminRules(dto: {
     high_value_threshold?: number;
     sla_days?: number;
+    sla_warn_hours_before?: number;
+    sla_urgent_hours_before?: number;
+    sla_escalate_hours_after?: number;
+    sla_max_extension_days?: number;
     daily_digest_enabled?: boolean;
     daily_digest_hour?: number;
   }) {
@@ -671,6 +800,30 @@ export class NotificationsService implements OnModuleInit, OnModuleDestroy {
     }
     if (dto.sla_days !== undefined) {
       await this.setSetting('notif_sla_days', String(Math.max(1, Math.min(365, dto.sla_days))));
+    }
+    if (dto.sla_warn_hours_before !== undefined) {
+      await this.setSetting(
+        'sla_warn_hours_before',
+        String(Math.max(0, Math.min(720, Math.round(dto.sla_warn_hours_before)))),
+      );
+    }
+    if (dto.sla_urgent_hours_before !== undefined) {
+      await this.setSetting(
+        'sla_urgent_hours_before',
+        String(Math.max(0, Math.min(720, Math.round(dto.sla_urgent_hours_before)))),
+      );
+    }
+    if (dto.sla_escalate_hours_after !== undefined) {
+      await this.setSetting(
+        'sla_escalate_hours_after',
+        String(Math.max(0, Math.min(720, Math.round(dto.sla_escalate_hours_after)))),
+      );
+    }
+    if (dto.sla_max_extension_days !== undefined) {
+      await this.setSetting(
+        'sla_max_extension_days',
+        String(Math.max(1, Math.min(365, Math.round(dto.sla_max_extension_days)))),
+      );
     }
     if (dto.daily_digest_enabled !== undefined) {
       await this.setSetting(

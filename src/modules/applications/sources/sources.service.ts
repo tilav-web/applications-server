@@ -2,6 +2,7 @@ import { BadRequestException, Injectable, NotFoundException, OnModuleInit } from
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 
+import { assertNoDependencies } from '../../../common/database/dependency-guard.util';
 import { ApplicationSource } from './application-source.entity';
 
 @Injectable()
@@ -75,6 +76,14 @@ export class ApplicationSourcesService implements OnModuleInit {
 
   async remove(id: string): Promise<{ success: boolean; message: string }> {
     const source = await this.findOne(id);
+    await assertNoDependencies(this.repo.manager, `«${source.name}» murojaat manbasi`, source.id, [
+      {
+        table: 'applications',
+        column: 'source_id',
+        label: 'ariza',
+        extraWhere: 'is_deleted = false',
+      },
+    ]);
     await this.repo.remove(source);
     return { success: true, message: "Murojaat manbasi o'chirildi" };
   }

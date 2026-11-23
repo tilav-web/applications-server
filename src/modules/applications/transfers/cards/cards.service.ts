@@ -3,6 +3,7 @@ import { InjectRepository } from '@nestjs/typeorm';
 import type { Response } from 'express';
 import { In, Repository } from 'typeorm';
 
+import { assertNoDependencies } from '../../../../common/database/dependency-guard.util';
 import type { PaginatedResult } from '../../../../common/interfaces/pagination.interface';
 import { formatUzbekName } from '../../../../common/utils/name-formatter.util';
 import { Card } from './card.entity';
@@ -214,6 +215,17 @@ export class CardsService {
 
   async remove(id: string): Promise<{ success: boolean; message: string }> {
     const card = await this.findOne(id);
+    const cardLabel = card.card_number || card.masked_number || 'Plastik karta';
+    await assertNoDependencies(this.cardRepo.manager, `«${cardLabel}» kartasi`, card.id, [
+      {
+        table: 'applications',
+        column: 'card_id',
+        label: 'ariza',
+        extraWhere: 'is_deleted = false',
+      },
+      { table: 'transfers', column: 'sender_card_id', label: "yuboruvchi o'tkazma" },
+      { table: 'transfers', column: 'receiver_card_id', label: "qabul qiluvchi o'tkazma" },
+    ]);
     await this.cardRepo.remove(card);
     return { success: true, message: "Karta muvaffaqiyatli o'chirildi" };
   }

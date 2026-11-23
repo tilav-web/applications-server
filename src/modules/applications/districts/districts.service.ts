@@ -2,6 +2,7 @@ import { Injectable, Logger, NotFoundException, OnApplicationBootstrap } from '@
 import { InjectRepository } from '@nestjs/typeorm';
 import { FindOptionsWhere, ILike, Repository } from 'typeorm';
 
+import { assertNoDependencies } from '../../../common/database/dependency-guard.util';
 import type { PaginatedResult } from '../../../common/interfaces/pagination.interface';
 import { DEFAULT_QASHQADARYO_DISTRICTS } from '../seeds/qashqadaryo-data';
 import { District } from './district.entity';
@@ -100,6 +101,22 @@ export class DistrictsService implements OnApplicationBootstrap {
 
   async remove(id: string): Promise<{ success: boolean; message: string }> {
     const district = await this.findOne(id);
+    await assertNoDependencies(
+      this.districtRepo.manager,
+      `«${district.name}» tumani`,
+      district.id,
+      [
+        {
+          table: 'applications',
+          column: 'district_id',
+          label: 'ariza',
+          extraWhere: 'is_deleted = false',
+        },
+        { table: 'citizens', column: 'district_id', label: 'fuqaro' },
+        { table: 'mahallas', column: 'district_id', label: 'mahalla' },
+        { table: 'user_assigned_districts', column: 'district_id', label: 'biriktirilgan xodim' },
+      ],
+    );
     await this.districtRepo.remove(district);
     return {
       success: true,

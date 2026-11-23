@@ -2,6 +2,7 @@ import { Injectable, Logger, NotFoundException, OnApplicationBootstrap } from '@
 import { InjectRepository } from '@nestjs/typeorm';
 import { FindOptionsWhere, ILike, Repository } from 'typeorm';
 
+import { assertNoDependencies } from '../../../common/database/dependency-guard.util';
 import type { PaginatedResult } from '../../../common/interfaces/pagination.interface';
 import { District } from '../districts/district.entity';
 import { DEFAULT_QASHQADARYO_MAHALLAS } from '../seeds/qashqadaryo-data';
@@ -171,6 +172,12 @@ export class MahallasService implements OnApplicationBootstrap {
 
   async remove(id: string): Promise<{ success: boolean; message: string }> {
     const mahalla = await this.findOne(id);
+    await assertNoDependencies(
+      this.mahallaRepo.manager,
+      `«${mahalla.name}» mahallasi`,
+      mahalla.id,
+      [{ table: 'citizens', column: 'mahalla_id', label: 'fuqaro' }],
+    );
     await this.mahallaRepo.remove(mahalla);
     return { success: true, message: "Mahalla muvaffaqiyatli o'chirildi" };
   }

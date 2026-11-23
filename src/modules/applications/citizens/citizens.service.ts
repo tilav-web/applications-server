@@ -3,6 +3,7 @@ import { InjectRepository } from '@nestjs/typeorm';
 import type { Response } from 'express';
 import { In, Repository } from 'typeorm';
 
+import { assertNoDependencies } from '../../../common/database/dependency-guard.util';
 import type { PaginatedResult } from '../../../common/interfaces/pagination.interface';
 import { formatUzbekName } from '../../../common/utils/name-formatter.util';
 import { IntelligenceSyncService } from '../../intelligence/intelligence-sync.service';
@@ -280,6 +281,16 @@ export class CitizensService {
 
   async remove(id: string): Promise<{ success: boolean; message: string }> {
     const citizen = await this.findOne(id);
+    const fullName = `${citizen.last_name || ''} ${citizen.first_name || ''}`.trim() || 'Fuqaro';
+    await assertNoDependencies(this.citizenRepo.manager, `«${fullName}»`, citizen.id, [
+      {
+        table: 'applications',
+        column: 'citizen_id',
+        label: 'ariza',
+        extraWhere: 'is_deleted = false',
+      },
+      { table: 'cards', column: 'citizen_id', label: 'plastik karta' },
+    ]);
     await this.citizenRepo.remove(citizen);
     return { success: true, message: "Fuqaro muvaffaqiyatli o'chirildi" };
   }

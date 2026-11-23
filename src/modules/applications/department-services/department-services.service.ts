@@ -2,6 +2,7 @@ import { BadRequestException, Injectable, NotFoundException, OnModuleInit } from
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 
+import { assertNoDependencies } from '../../../common/database/dependency-guard.util';
 import { DepartmentService } from './department-service.entity';
 
 @Injectable()
@@ -75,6 +76,14 @@ export class DepartmentServicesService implements OnModuleInit {
 
   async remove(id: string): Promise<{ success: boolean; message: string }> {
     const ds = await this.findOne(id);
+    await assertNoDependencies(this.repo.manager, `«${ds.name}» sohaviy xizmati`, ds.id, [
+      {
+        table: 'applications',
+        column: 'department_service_id',
+        label: 'ariza',
+        extraWhere: 'is_deleted = false',
+      },
+    ]);
     await this.repo.remove(ds);
     return { success: true, message: "Sohaviy xizmat o'chirildi" };
   }

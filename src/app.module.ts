@@ -6,6 +6,7 @@ import { TypeOrmModule } from '@nestjs/typeorm';
 
 import { AppThrottlerGuard } from './common/guards/app-throttler.guard';
 import { Application } from './modules/applications/application.entity';
+import { ApplicationStatusHistory } from './modules/applications/application-status-history.entity';
 import { ApplicationsModule } from './modules/applications/applications.module';
 import { Citizen } from './modules/applications/citizens/citizen.entity';
 import { Crime } from './modules/applications/crimes/crime.entity';
@@ -77,6 +78,7 @@ import { UsersModule } from './modules/users/users.module';
             AuditLog,
             SystemSetting,
             Application,
+            ApplicationStatusHistory,
             ApplicationCustomField,
             Citizen,
             Crime,

@@ -4,6 +4,7 @@ import { TypeOrmModule } from '@nestjs/typeorm';
 import { AuthModule } from '../auth/auth.module';
 import { User } from '../users/user.entity';
 import { Application } from './application.entity';
+import { ApplicationStatusHistory } from './application-status-history.entity';
 import { ApplicationsController } from './applications.controller';
 import { ApplicationsService } from './applications.service';
 import { Citizen } from './citizens/citizen.entity';
@@ -53,6 +54,7 @@ import { TransfersModule } from './transfers/transfers.module';
   imports: [
     TypeOrmModule.forFeature([
       Application,
+      ApplicationStatusHistory,
       ApplicationCustomField,
       Citizen,
       Crime,

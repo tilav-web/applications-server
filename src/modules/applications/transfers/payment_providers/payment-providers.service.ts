@@ -2,6 +2,7 @@ import { Injectable, NotFoundException } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { FindOptionsWhere, ILike, Repository } from 'typeorm';
 
+import { assertNoDependencies } from '../../../../common/database/dependency-guard.util';
 import type { PaginatedResult } from '../../../../common/interfaces/pagination.interface';
 import type { CreatePaymentProviderDto } from './dto/create-payment-provider.dto';
 import type { UpdatePaymentProviderDto } from './dto/update-payment-provider.dto';
@@ -71,6 +72,12 @@ export class PaymentProvidersService {
 
   async remove(id: string): Promise<{ success: boolean; message: string }> {
     const provider = await this.findOne(id);
+    await assertNoDependencies(
+      this.providerRepo.manager,
+      `«${provider.name}» to'lov provayderi`,
+      provider.id,
+      [{ table: 'transfers', column: 'payment_provider_id', label: "o'tkazma" }],
+    );
     await this.providerRepo.remove(provider);
     return {
       success: true,

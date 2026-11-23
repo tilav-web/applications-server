@@ -18,6 +18,7 @@ import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
 import { RolesGuard } from '../../common/guards/roles.guard';
 import type { JwtAccessPayload } from '../../common/types/jwt-payload.interface';
 import { type NotificationPrefs, NotificationsService } from './notifications.service';
+import { SlaQueueService } from './sla-queue.service';
 import { TelegramBotService } from './telegram-bot.service';
 
 @Controller('notifications')
@@ -26,6 +27,7 @@ export class NotificationsController {
   constructor(
     private readonly notificationsService: NotificationsService,
     private readonly telegramBotService: TelegramBotService,
+    private readonly slaQueueService: SlaQueueService,
   ) {}
 
   @Get()
@@ -83,22 +85,45 @@ export class NotificationsController {
 
   @Get('admin/settings')
   @Roles(Role.SUPER_ADMIN)
-  getAdminSettings() {
-    return this.notificationsService.getAdminSettings();
+  async getAdminSettings() {
+    const [settings, queue] = await Promise.all([
+      this.notificationsService.getAdminSettings(),
+      this.slaQueueService.getQueueHealth(),
+    ]);
+    return { ...settings, queue };
   }
 
   @Patch('admin/settings')
   @Roles(Role.SUPER_ADMIN)
-  updateAdminRules(
+  async updateAdminRules(
     @Body()
     body: {
       high_value_threshold?: number;
       sla_days?: number;
+      sla_warn_hours_before?: number;
+      sla_urgent_hours_before?: number;
+      sla_escalate_hours_after?: number;
+      sla_max_extension_days?: number;
       daily_digest_enabled?: boolean;
       daily_digest_hour?: number;
     },
   ) {
-    return this.notificationsService.updateAdminRules(body);
+    const updated = await this.notificationsService.updateAdminRules(body);
+    if (
+      body.sla_warn_hours_before !== undefined ||
+      body.sla_urgent_hours_before !== undefined ||
+      body.sla_escalate_hours_after !== undefined
+    ) {
+      void this.slaQueueService.reconcileAllOpenApplications();
+    }
+    const queue = await this.slaQueueService.getQueueHealth();
+    return { ...updated, queue };
+  }
+
+  @Post('admin/sla/reconcile')
+  @Roles(Role.SUPER_ADMIN)
+  reconcileSlaQueue() {
+    return this.slaQueueService.reconcileAllOpenApplications();
   }
 
   @Post('admin/telegram/configure')

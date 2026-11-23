@@ -109,6 +109,42 @@ export class CreateApplicationDto {
   @IsDateString()
   date?: string;
 
+  @IsOptional()
+  @IsDateString()
+  deadline_at?: string | null;
+
+  @IsOptional()
+  @IsNumber()
+  sla_days?: number | null;
+
+  @IsOptional()
+  @IsString()
+  extension_reason?: string | null;
+
+  @IsOptional()
+  @IsString()
+  prosecutor_approval_number?: string | null;
+
+  @IsOptional()
+  @IsDateString()
+  prosecutor_approval_date?: string | null;
+
+  @IsOptional()
+  @IsString()
+  decision_number?: string | null;
+
+  @IsOptional()
+  @IsDateString()
+  decision_date?: string | null;
+
+  @IsOptional()
+  @IsString()
+  decision_note?: string | null;
+
+  @IsOptional()
+  @IsString()
+  status_change_note?: string | null;
+
   // Birlamchi Asosiy Modellar (Har biridan bittadan ManyToOne)
   @IsOptional()
   @IsUUID('4')

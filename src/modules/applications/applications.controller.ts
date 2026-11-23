@@ -53,6 +53,7 @@ export class ApplicationsController {
     @Query('min_amount') min_amount?: string,
     @Query('max_amount') max_amount?: string,
     @Query('relations_filter') relations_filter?: string,
+    @Query('sla_filter') sla_filter?: string,
     @CurrentUser() currentUser?: JwtAccessPayload,
   ) {
     const pagination = normalizePagination(page, limit, 10);
@@ -77,12 +78,35 @@ export class ApplicationsController {
         min_amount,
         max_amount,
         relations_filter,
+        sla_filter,
       },
       10,
       undefined,
       undefined,
       currentUser,
     );
+  }
+
+  @Get('sla/overview')
+  getSlaOverview(@CurrentUser() currentUser?: JwtAccessPayload) {
+    return this.applicationsService.getSlaOverview(currentUser);
+  }
+
+  @Post(':id/extend-deadline')
+  extendDeadline(
+    @Param('id') id: string,
+    @Body()
+    body: {
+      new_deadline_at?: string;
+      extend_days?: number;
+      reason: string;
+      prosecutor_approval_number?: string;
+      prosecutor_approval_date?: string;
+      switch_to_extended_status?: boolean;
+    },
+    @CurrentUser() currentUser?: JwtAccessPayload,
+  ) {
+    return this.applicationsService.extendDeadline(id, body, currentUser);
   }
 
   /**

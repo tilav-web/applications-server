@@ -2,6 +2,7 @@ import { Injectable, NotFoundException } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { FindOptionsWhere, ILike, Repository } from 'typeorm';
 
+import { assertNoDependencies } from '../../../../common/database/dependency-guard.util';
 import type { PaginatedResult } from '../../../../common/interfaces/pagination.interface';
 import { formatTitleCase } from '../../../../common/utils/name-formatter.util';
 import { Bank } from './bank.entity';
@@ -80,6 +81,9 @@ export class BanksService {
 
   async remove(id: string): Promise<{ success: boolean; message: string }> {
     const bank = await this.findOne(id);
+    await assertNoDependencies(this.bankRepo.manager, `«${bank.name}» banki`, bank.id, [
+      { table: 'cards', column: 'bank_id', label: 'plastik karta' },
+    ]);
     await this.bankRepo.remove(bank);
     return { success: true, message: "Bank muvaffaqiyatli o'chirildi" };
   }

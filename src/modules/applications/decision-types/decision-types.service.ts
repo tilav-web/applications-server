@@ -2,6 +2,7 @@ import { BadRequestException, Injectable, NotFoundException, OnModuleInit } from
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 
+import { assertNoDependencies } from '../../../common/database/dependency-guard.util';
 import { DecisionType } from './decision-type.entity';
 
 @Injectable()
@@ -66,6 +67,14 @@ export class DecisionTypesService implements OnModuleInit {
 
   async remove(id: string): Promise<{ success: boolean; message: string }> {
     const dt = await this.findOne(id);
+    await assertNoDependencies(this.repo.manager, `«${dt.name}» qaror turi`, dt.id, [
+      {
+        table: 'applications',
+        column: 'decision_type_id',
+        label: 'ariza',
+        extraWhere: 'is_deleted = false',
+      },
+    ]);
     await this.repo.remove(dt);
     return { success: true, message: "Qaror turi o'chirildi" };
   }

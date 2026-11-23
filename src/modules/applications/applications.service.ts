@@ -1,4 +1,9 @@
-import { ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
+import {
+  BadRequestException,
+  ForbiddenException,
+  Injectable,
+  NotFoundException,
+} from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import type { Response } from 'express';
 import { ILike, In, Not, Repository } from 'typeorm';
@@ -12,8 +17,10 @@ import { formatTitleCase, formatUzbekName } from '../../common/utils/name-format
 import { IntelligenceService } from '../intelligence/intelligence.service';
 import { IntelligenceSyncService } from '../intelligence/intelligence-sync.service';
 import { NotificationsService } from '../notifications/notifications.service';
+import { SlaQueueService } from '../notifications/sla-queue.service';
 import { User } from '../users/user.entity';
 import { Application, SuspectTreeNode } from './application.entity';
+import { ApplicationStatusHistory } from './application-status-history.entity';
 import { Citizen } from './citizens/citizen.entity';
 import { Crime } from './crimes/crime.entity';
 import { ApplicationCustomField } from './custom-fields/application-custom-field.entity';
@@ -23,7 +30,10 @@ import type { UpdateApplicationDto } from './dto/update-application.dto';
 import { ApplicationsExcelService } from './export/applications-excel.service';
 import { CyberControlShablonExcelService } from './export/cybercontrol-shablon-excel.service';
 import { Mahalla } from './mahallas/mahalla.entity';
-import { ApplicationStatus as ApplicationStatusEntity } from './statuses/application-status.entity';
+import {
+  ApplicationStatus as ApplicationStatusEntity,
+  ApplicationStatusCategory,
+} from './statuses/application-status.entity';
 import { Bank } from './transfers/banks/bank.entity';
 import { Card } from './transfers/cards/card.entity';
 import { TransferCustomField } from './transfers/custom-fields/transfer-custom-field.entity';
@@ -57,6 +67,8 @@ export class ApplicationsService {
     private readonly transferCustomFieldRepo: Repository<TransferCustomField>,
     @InjectRepository(ApplicationStatusEntity)
     private readonly statusRepo: Repository<ApplicationStatusEntity>,
+    @InjectRepository(ApplicationStatusHistory)
+    private readonly statusHistoryRepo: Repository<ApplicationStatusHistory>,
     @InjectRepository(User)
     private readonly userRepo: Repository<User>,
     private readonly excelService: ApplicationsExcelService,
@@ -64,6 +76,7 @@ export class ApplicationsService {
     private readonly intelligenceSync: IntelligenceSyncService,
     private readonly intelligenceService: IntelligenceService,
     private readonly notificationsService: NotificationsService,
+    private readonly slaQueueService: SlaQueueService,
   ) {}
 
   private async processCustomFields(
@@ -923,6 +936,11 @@ export class ApplicationsService {
     const {
       custom_fields,
       date,
+      deadline_at,
+      sla_days,
+      prosecutor_approval_date,
+      decision_date,
+      status_change_note: _status_change_note,
       citizen_data: _citizen_data,
       district_data: _district_data,
       crime_data: _crime_data,
@@ -935,6 +953,21 @@ export class ApplicationsService {
     const appNumber = applicationData.application_number?.trim() || null;
 
     const resolved = await this.resolvePrimaryModels(dto);
+
+    // Status obyektini yuklab, SLA muddatini dinamik hisoblaymiz
+    const statusObj = resolved.status_id
+      ? await this.statusRepo.findOne({ where: { id: resolved.status_id } })
+      : null;
+
+    const baseDate = date ? new Date(date) : new Date();
+    const effectiveSlaDays = sla_days ?? statusObj?.default_sla_days ?? 10;
+    let computedDeadline: Date | null = null;
+    if (deadline_at) {
+      computedDeadline = new Date(deadline_at);
+    } else if (!statusObj || statusObj.tracks_sla) {
+      computedDeadline = new Date(baseDate.getTime() + effectiveSlaDays * 24 * 60 * 60 * 1000);
+    }
+    const isClosedStatus = statusObj?.category === ApplicationStatusCategory.CLOSED;
 
     // Hududiy xodim (DISTRICT_OFFICER) o'ziga biriktirilgan tuman bo'yicha tekshirish
     let creatorUserId: string | null = null;
@@ -962,7 +995,14 @@ export class ApplicationsService {
       created_by_id: creatorUserId,
       is_deleted: false,
       application_number: appNumber,
-      date: date ? new Date(date) : new Date(),
+      date: baseDate,
+      sla_days: effectiveSlaDays,
+      deadline_at: computedDeadline,
+      prosecutor_approval_date: prosecutor_approval_date
+        ? new Date(prosecutor_approval_date)
+        : null,
+      decision_date: decision_date ? new Date(decision_date) : null,
+      closed_at: isClosedStatus ? new Date() : null,
     });
 
     const saved = await this.applicationRepo.save(application);
@@ -971,6 +1011,19 @@ export class ApplicationsService {
       await this.transferRepo.update(resolved.transfer_id, { application_id: saved.id });
     }
 
+    // Status tarixiga dastlabki yozuvni kiritish
+    await this.statusHistoryRepo.save(
+      this.statusHistoryRepo.create({
+        application_id: saved.id,
+        action: 'CREATED',
+        to_status_id: statusObj?.id || resolved.status_id || null,
+        to_status_name: statusObj?.name || saved.status || 'Yangi',
+        new_deadline_at: computedDeadline,
+        note: 'Ariza ro‘yxatga olindi',
+        changed_by_id: creatorUserId,
+      }),
+    );
+
     // 2. Dinamik maydonlar (Custom Fields) ni saqlaymiz
     if (custom_fields && custom_fields.length > 0) {
       const fieldEntities = await this.processCustomFields(custom_fields, saved.id);
@@ -978,6 +1031,7 @@ export class ApplicationsService {
     }
 
     await this.intelligenceSync.syncApplicationById(saved.id);
+    void this.slaQueueService.scheduleForApplication(saved.id);
     void this.notificationsService.onApplicationCreated(saved.id, currentUser?.sub);
     return this.findOne(saved.id);
   }
@@ -1005,6 +1059,7 @@ export class ApplicationsService {
           min_amount?: string | number;
           max_amount?: string | number;
           relations_filter?: string;
+          sla_filter?: string;
         } = 1,
     limitParam = 10,
     searchParam?: string,
@@ -1030,6 +1085,7 @@ export class ApplicationsService {
     let min_amount: string | number | undefined;
     let max_amount: string | number | undefined;
     let relations_filter: string | undefined;
+    let sla_filter: string | undefined;
 
     if (typeof pageOrParams === 'object') {
       page = Number(pageOrParams.page) || 1;
@@ -1051,6 +1107,7 @@ export class ApplicationsService {
       min_amount = pageOrParams.min_amount;
       max_amount = pageOrParams.max_amount;
       relations_filter = pageOrParams.relations_filter;
+      sla_filter = pageOrParams.sla_filter;
     } else {
       page = Number(pageOrParams) || 1;
       limit = Number(limitParam) || 10;
@@ -1100,6 +1157,34 @@ export class ApplicationsService {
 
     if (district_id && district_id.trim()) {
       qb.andWhere('app.district_id = :district_id', { district_id: district_id.trim() });
+    }
+
+    // SLA muddat nazorati filtri
+    if (sla_filter && sla_filter.trim()) {
+      const sf = sla_filter.trim().toLowerCase();
+      const now = new Date();
+      if (sf === 'overdue') {
+        qb.andWhere(
+          '(application_status.tracks_sla = true OR application_status.id IS NULL) AND app.deadline_at IS NOT NULL AND app.deadline_at < :slaNow',
+          { slaNow: now },
+        );
+      } else if (sf === 'due_24h') {
+        const in24h = new Date(now.getTime() + 24 * 60 * 60 * 1000);
+        qb.andWhere(
+          '(application_status.tracks_sla = true OR application_status.id IS NULL) AND app.deadline_at >= :slaNow AND app.deadline_at <= :slaIn24h',
+          { slaNow: now, slaIn24h: in24h },
+        );
+      } else if (sf === 'due_72h') {
+        const in72h = new Date(now.getTime() + 72 * 60 * 60 * 1000);
+        qb.andWhere(
+          '(application_status.tracks_sla = true OR application_status.id IS NULL) AND app.deadline_at >= :slaNow AND app.deadline_at <= :slaIn72h',
+          { slaNow: now, slaIn72h: in72h },
+        );
+      } else if (sf === 'extended') {
+        qb.andWhere("(app.extended_until IS NOT NULL OR application_status.category = 'EXTENDED')");
+      } else if (sf === 'active') {
+        qb.andWhere('(application_status.tracks_sla = true OR application_status.id IS NULL)');
+      }
     }
 
     if (crime_id && crime_id.trim()) {
@@ -2505,6 +2590,7 @@ export class ApplicationsService {
       where: { id },
       relations: {
         application_status: true,
+        status_history: { changed_by: true },
         documents: true,
         source: true,
         department_service: true,
@@ -2568,7 +2654,201 @@ export class ApplicationsService {
       }
     }
 
+    if (application.status_history && application.status_history.length > 1) {
+      application.status_history.sort(
+        (a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime(),
+      );
+    }
+
     return application;
+  }
+
+  async extendDeadline(
+    id: string,
+    dto: {
+      new_deadline_at?: string;
+      extend_days?: number;
+      reason: string;
+      prosecutor_approval_number?: string;
+      prosecutor_approval_date?: string;
+      switch_to_extended_status?: boolean;
+    },
+    currentUser?: JwtAccessPayload,
+  ): Promise<Application> {
+    const application = await this.findOne(id, currentUser);
+
+    if (currentUser?.role === Role.BOSS) {
+      throw new ForbiddenException(
+        "Rahbar (Boss) hisobi faqat ma'lumotlarni ko'rish (read-only) rejimida ishlaydi",
+      );
+    }
+
+    const reason = dto.reason?.trim();
+    if (!reason) {
+      throw new BadRequestException('Muddatni uzaytirish sababi kiritilishi shart');
+    }
+
+    const baseDate = application.date || application.created_at || new Date();
+    const oldDeadline = application.deadline_at;
+    let newDeadline: Date;
+
+    if (dto.new_deadline_at) {
+      newDeadline = new Date(dto.new_deadline_at);
+    } else {
+      const days = Math.max(1, Math.min(365, Number(dto.extend_days) || 30));
+      newDeadline = new Date(new Date(baseDate).getTime() + days * 24 * 60 * 60 * 1000);
+    }
+
+    if (Number.isNaN(newDeadline.getTime())) {
+      throw new BadRequestException('Yangi muddat sanasi noto‘g‘ri');
+    }
+
+    const actorUser = currentUser
+      ? await this.userRepo.findOne({ where: { auth_id: currentUser.sub } })
+      : null;
+
+    const oldStatusId = application.status_id;
+    const oldStatusName = application.application_status?.name || application.status || null;
+    let targetStatus = application.application_status;
+
+    if (dto.switch_to_extended_status !== false) {
+      const extendedStatus = await this.statusRepo.findOne({
+        where: [{ code: 'MUDDATI_UZAYTIRILGAN' }, { category: ApplicationStatusCategory.EXTENDED }],
+      });
+      if (extendedStatus) {
+        targetStatus = extendedStatus;
+        application.status_id = extendedStatus.id;
+        application.status = extendedStatus.code || extendedStatus.name;
+      }
+    }
+
+    const totalDays = Math.max(
+      1,
+      Math.round((newDeadline.getTime() - new Date(baseDate).getTime()) / (24 * 60 * 60 * 1000)),
+    );
+
+    delete (application as unknown as Record<string, unknown>).application_status;
+    delete (application as unknown as Record<string, unknown>).status_history;
+
+    application.deadline_at = newDeadline;
+    application.extended_until = newDeadline;
+    application.extension_reason = reason;
+    application.sla_days = totalDays;
+    application.prosecutor_approval_number = dto.prosecutor_approval_number?.trim() || null;
+    application.prosecutor_approval_date = dto.prosecutor_approval_date
+      ? new Date(dto.prosecutor_approval_date)
+      : null;
+
+    await this.applicationRepo.save(application);
+
+    await this.statusHistoryRepo.save(
+      this.statusHistoryRepo.create({
+        application_id: id,
+        action: 'DEADLINE_EXTENDED',
+        from_status_id: oldStatusId,
+        from_status_name: oldStatusName,
+        to_status_id: targetStatus?.id || application.status_id,
+        to_status_name: targetStatus?.name || application.status,
+        old_deadline_at: oldDeadline,
+        new_deadline_at: newDeadline,
+        prosecutor_approval_number: application.prosecutor_approval_number,
+        prosecutor_approval_date: application.prosecutor_approval_date,
+        note: reason,
+        changed_by_id: actorUser?.id || null,
+      }),
+    );
+
+    void this.slaQueueService.scheduleForApplication(id);
+    const fresh = await this.findOne(id, currentUser);
+    void this.notificationsService.onDeadlineExtended(fresh, newDeadline, reason, currentUser?.sub);
+    return fresh;
+  }
+
+  async getSlaOverview(currentUser?: JwtAccessPayload) {
+    const qb = this.applicationRepo
+      .createQueryBuilder('app')
+      .leftJoinAndSelect('app.application_status', 'st')
+      .leftJoinAndSelect('app.district', 'district')
+      .leftJoinAndSelect('app.citizen', 'citizen')
+      .where('app.is_deleted = false')
+      .andWhere('app.deadline_at IS NOT NULL')
+      .andWhere('(st.tracks_sla = true OR st.id IS NULL)');
+
+    if (currentUser && currentUser.role === Role.DISTRICT_OFFICER) {
+      const user = await this.userRepo.findOne({
+        where: { auth_id: currentUser.sub },
+        relations: { assigned_districts: true },
+      });
+      const assignedDistrictIds = user?.assigned_districts?.map((d) => d.id) || [];
+      if (assignedDistrictIds.length > 0) {
+        qb.andWhere('app.district_id IN (:...userDistricts)', {
+          userDistricts: assignedDistrictIds,
+        });
+      } else {
+        qb.andWhere('1 = 0');
+      }
+    }
+
+    const activeApps = await qb.orderBy('app.deadline_at', 'ASC').getMany();
+
+    const nowMs = Date.now();
+    const h24 = 24 * 60 * 60 * 1000;
+    const h72 = 72 * 60 * 60 * 1000;
+
+    let overdueCount = 0;
+    let due24hCount = 0;
+    let due72hCount = 0;
+    let extendedCount = 0;
+    let onTrackCount = 0;
+
+    for (const app of activeApps) {
+      if (
+        app.extended_until ||
+        app.application_status?.category === ApplicationStatusCategory.EXTENDED
+      ) {
+        extendedCount++;
+      }
+      const diff = new Date(app.deadline_at!).getTime() - nowMs;
+      if (diff < 0) {
+        overdueCount++;
+      } else if (diff <= h24) {
+        due24hCount++;
+      } else if (diff <= h72) {
+        due72hCount++;
+      } else {
+        onTrackCount++;
+      }
+    }
+
+    const urgentItems = activeApps
+      .filter((a) => new Date(a.deadline_at!).getTime() - nowMs <= h72)
+      .slice(0, 10)
+      .map((a) => ({
+        id: a.id,
+        application_number: a.application_number,
+        deadline_at: a.deadline_at,
+        sla_days: a.sla_days,
+        extended_until: a.extended_until,
+        district_name: a.district?.name || null,
+        citizen_name: a.citizen
+          ? `${a.citizen.last_name || ''} ${a.citizen.first_name || ''}`.trim()
+          : null,
+        status_name: a.application_status?.name || a.status,
+        status_color: a.application_status?.color || 'blue',
+        hours_remaining: Math.round(
+          (new Date(a.deadline_at!).getTime() - nowMs) / (60 * 60 * 1000),
+        ),
+      }));
+
+    return {
+      totalActive: activeApps.length,
+      overdueCount,
+      due24hCount,
+      due72hCount,
+      extendedCount,
+      onTrackCount,
+      urgentItems,
+    };
   }
 
   async update(
@@ -2598,9 +2878,18 @@ export class ApplicationsService {
       }
     }
 
+    const oldStatusId = application.status_id;
+    const oldStatusName = application.application_status?.name || application.status || null;
+    const oldDeadlineAt = application.deadline_at;
+
     const {
       custom_fields,
       date,
+      deadline_at,
+      sla_days,
+      prosecutor_approval_date,
+      decision_date,
+      status_change_note,
       citizen_data: _citizen_data,
       district_data: _district_data,
       crime_data: _crime_data,
@@ -2611,6 +2900,35 @@ export class ApplicationsService {
 
     const resolved = await this.resolvePrimaryModels(dto, id);
 
+    // Status o'zgarayotgan bo'lsa, dinamik status qoidalarini tekshiramiz
+    const nextStatusId = resolved.status_id || application.status_id;
+    const nextStatusObj = nextStatusId
+      ? await this.statusRepo.findOne({ where: { id: nextStatusId } })
+      : null;
+    const statusChanged = Boolean(nextStatusId && nextStatusId !== oldStatusId);
+
+    const effectiveDecisionTypeId =
+      resolved.decision_type_id !== undefined
+        ? resolved.decision_type_id
+        : application.decision_type_id;
+    const effectiveRejectionReasonId =
+      resolved.rejection_reason_id !== undefined
+        ? resolved.rejection_reason_id
+        : application.rejection_reason_id;
+
+    if (statusChanged && nextStatusObj) {
+      if (nextStatusObj.requires_decision && !effectiveDecisionTypeId) {
+        throw new BadRequestException(
+          `«${nextStatusObj.name}» holatiga o‘tkazish uchun yakuniy qaror turini tanlash majburiy`,
+        );
+      }
+      if (nextStatusObj.requires_rejection_reason && !effectiveRejectionReasonId) {
+        throw new BadRequestException(
+          `«${nextStatusObj.name}» holatiga o‘tkazish uchun rad etish sababini tanlash majburiy`,
+        );
+      }
+    }
+
     // Stale loaded relation ob'ektlarini olib tashlaymiz, aks holda TypeORM in-memory eskilarini qayta yozib yuboradi:
     delete (application as unknown as Record<string, unknown>).citizen;
     delete (application as unknown as Record<string, unknown>).district;
@@ -2619,6 +2937,7 @@ export class ApplicationsService {
     delete (application as unknown as Record<string, unknown>).card;
     delete (application as unknown as Record<string, unknown>).transfer;
     delete (application as unknown as Record<string, unknown>).application_status;
+    delete (application as unknown as Record<string, unknown>).status_history;
     delete (application as unknown as Record<string, unknown>).source;
     delete (application as unknown as Record<string, unknown>).department_service;
     delete (application as unknown as Record<string, unknown>).rejection_reason;
@@ -2633,8 +2952,59 @@ export class ApplicationsService {
     if (date) {
       application.date = new Date(date);
     }
+    if (prosecutor_approval_date !== undefined) {
+      application.prosecutor_approval_date = prosecutor_approval_date
+        ? new Date(prosecutor_approval_date)
+        : null;
+    }
+    if (decision_date !== undefined) {
+      application.decision_date = decision_date ? new Date(decision_date) : null;
+    }
+    if (deadline_at !== undefined) {
+      application.deadline_at = deadline_at ? new Date(deadline_at) : null;
+    } else if (sla_days !== undefined && sla_days !== null) {
+      const base = application.date || application.created_at || new Date();
+      application.sla_days = sla_days;
+      application.deadline_at = new Date(new Date(base).getTime() + sla_days * 24 * 60 * 60 * 1000);
+    }
+    if (sla_days !== undefined) {
+      application.sla_days = sla_days;
+    }
+
+    if (nextStatusObj) {
+      if (nextStatusObj.category === ApplicationStatusCategory.CLOSED) {
+        application.closed_at = application.closed_at || new Date();
+      } else if (statusChanged) {
+        application.closed_at = null;
+      }
+    }
 
     await this.applicationRepo.save(application);
+
+    const deadlineChanged =
+      (oldDeadlineAt?.getTime() || null) !== (application.deadline_at?.getTime() || null);
+    if (statusChanged || deadlineChanged) {
+      const actorUser = currentUser
+        ? await this.userRepo.findOne({ where: { auth_id: currentUser.sub } })
+        : null;
+      const isClosed = nextStatusObj?.category === ApplicationStatusCategory.CLOSED;
+      await this.statusHistoryRepo.save(
+        this.statusHistoryRepo.create({
+          application_id: id,
+          action: isClosed ? 'CLOSED' : statusChanged ? 'STATUS_CHANGED' : 'DEADLINE_CHANGED',
+          from_status_id: oldStatusId,
+          from_status_name: oldStatusName,
+          to_status_id: nextStatusObj?.id || application.status_id,
+          to_status_name: nextStatusObj?.name || application.status,
+          old_deadline_at: oldDeadlineAt,
+          new_deadline_at: application.deadline_at,
+          decision_number: application.decision_number,
+          decision_date: application.decision_date,
+          note: status_change_note?.trim() || application.decision_note || null,
+          changed_by_id: actorUser?.id || null,
+        }),
+      );
+    }
 
     if (custom_fields !== undefined) {
       await this.customFieldRepo.delete({ application_id: id });
@@ -2645,6 +3015,9 @@ export class ApplicationsService {
     }
 
     await this.intelligenceSync.syncApplicationById(id);
+    if (statusChanged || deadlineChanged) {
+      void this.slaQueueService.scheduleForApplication(id);
+    }
     if (dto.status || dto.status_id) {
       const updatedApp = await this.findOne(id);
       const statusLabel = updatedApp.application_status?.name || updatedApp.status || '';
@@ -2684,6 +3057,7 @@ export class ApplicationsService {
         application.deleted_by_id = currentUser.sub;
         await this.applicationRepo.save(application);
         await this.intelligenceSync.syncApplicationById(id);
+        void this.slaQueueService.cancelForApplication(id);
         return { success: true, message: "Ariza arxivlandi (o'chirildi)" };
       }
     }
@@ -2693,6 +3067,7 @@ export class ApplicationsService {
     application.deleted_by_id = currentUser?.sub || null;
     await this.applicationRepo.save(application);
     await this.intelligenceSync.syncApplicationById(id);
+    void this.slaQueueService.cancelForApplication(id);
     return { success: true, message: "Ariza muvaffaqiyatli o'chirildi" };
   }
 

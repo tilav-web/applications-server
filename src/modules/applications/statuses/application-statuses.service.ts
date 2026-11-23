@@ -1,5 +1,6 @@
 import {
   BadRequestException,
+  ConflictException,
   Injectable,
   NotFoundException,
   OnApplicationBootstrap,
@@ -7,44 +8,180 @@ import {
 import { InjectRepository } from '@nestjs/typeorm';
 import { FindOptionsWhere, ILike, IsNull, Repository } from 'typeorm';
 
+import { assertNoDependencies } from '../../../common/database/dependency-guard.util';
 import type { PaginatedResult } from '../../../common/interfaces/pagination.interface';
 import { Application } from '../application.entity';
-import { ApplicationStatus } from './application-status.entity';
+import { ApplicationStatus, ApplicationStatusCategory } from './application-status.entity';
 import type { CreateApplicationStatusDto } from './dto/create-application-status.dto';
 import type { UpdateApplicationStatusDto } from './dto/update-application-status.dto';
 
-const DEFAULT_STATUSES = [
+export const DEFAULT_JPK_STATUSES: Array<{
+  name: string;
+  code: string;
+  color: string;
+  description: string;
+  category: ApplicationStatusCategory;
+  tracks_sla: boolean;
+  default_sla_days: number | null;
+  legal_article: string | null;
+  requires_decision: boolean;
+  requires_rejection_reason: boolean;
+  is_default: boolean;
+  sort_order: number;
+}> = [
   {
     name: 'Yangi (Qabul qilindi)',
     code: 'YANGI',
     color: 'blue',
-    description: 'Yangi kelib tushgan ariza yoki murojaat',
+    description: 'Yangi kelib tushgan va ro‘yxatga olingan ariza (3–10 kunlik muddat)',
+    category: ApplicationStatusCategory.OPEN,
+    tracks_sla: true,
+    default_sla_days: 10,
+    legal_article: 'JPK 329-modda',
+    requires_decision: false,
+    requires_rejection_reason: false,
     is_default: true,
     sort_order: 1,
   },
   {
-    name: 'Jarayonda (Tergovda)',
+    name: 'Tergovga qadar tekshiruvda',
     code: 'JARAYONDA',
     color: 'amber',
-    description: 'Tergovga qadar tekshiruv yoki tergov jarayonida',
+    description: 'Tergovga qadar tekshiruv o‘tkazilmoqda (10 sutkagacha)',
+    category: ApplicationStatusCategory.IN_PROGRESS,
+    tracks_sla: true,
+    default_sla_days: 10,
+    legal_article: 'JPK 329-modda',
+    requires_decision: false,
+    requires_rejection_reason: false,
     is_default: false,
     sort_order: 2,
   },
   {
-    name: 'Hal qilindi',
-    code: 'HAL_QILINDI',
-    color: 'emerald',
-    description: 'Ariza ijobiy hal etilgan yoki jinoyat fosh etilgan',
+    name: 'Muddati uzaytirilgan (1 oygacha)',
+    code: 'MUDDATI_UZAYTIRILGAN',
+    color: 'orange',
+    description: 'Prokuror roziligi bilan tekshiruv muddati 1 oygacha uzaytirilgan',
+    category: ApplicationStatusCategory.EXTENDED,
+    tracks_sla: true,
+    default_sla_days: 30,
+    legal_article: 'JPK 329-modda',
+    requires_decision: false,
+    requires_rejection_reason: false,
     is_default: false,
     sort_order: 3,
   },
   {
-    name: 'Rad etildi',
-    code: 'RAD_ETILDI',
-    color: 'rose',
-    description: 'Qanoatlantirish rad etilgan yoki asossiz deb topilgan',
+    name: 'Jinoyat ishi qo‘zg‘atildi',
+    code: 'JINOYAT_ISHI_QOZGATILDI',
+    color: 'purple',
+    description: 'Jinoyat alomatlari aniqlanib, jinoyat ishi qo‘zg‘atilgan (surishtiruv/tergovda)',
+    category: ApplicationStatusCategory.IN_PROGRESS,
+    tracks_sla: false,
+    default_sla_days: null,
+    legal_article: 'JPK 330-modda 1-band',
+    requires_decision: true,
+    requires_rejection_reason: false,
     is_default: false,
     sort_order: 4,
+  },
+  {
+    name: 'Tergov to‘xtatildi (Qidiruv / Noma’lum shaxs)',
+    code: 'TERGOV_TOXTATILDI',
+    color: 'slate',
+    description: 'Shaxs aniqlanmaganligi yoki qidiruvda ekanligi sababli vaqtincha to‘xtatilgan',
+    category: ApplicationStatusCategory.PAUSED,
+    tracks_sla: false,
+    default_sla_days: null,
+    legal_article: 'JPK 364-modda',
+    requires_decision: false,
+    requires_rejection_reason: false,
+    is_default: false,
+    sort_order: 5,
+  },
+  {
+    name: 'Sudga yuborildi (Ayblov xulosasi)',
+    code: 'HAL_QILINDI',
+    color: 'emerald',
+    description: 'Dastlabki tergov tamomlanib, prokuror orqali sudga yuborilgan',
+    category: ApplicationStatusCategory.CLOSED,
+    tracks_sla: false,
+    default_sla_days: null,
+    legal_article: 'JPK 373, 381-moddalar',
+    requires_decision: true,
+    requires_rejection_reason: false,
+    is_default: false,
+    sort_order: 6,
+  },
+  {
+    name: 'Yarashuv asosida yakunlandi',
+    code: 'YARASHUV',
+    color: 'teal',
+    description: 'Jabrlanuvchi bilan yarashilganligi va zarar qoplanganligi sababli yakunlandi',
+    category: ApplicationStatusCategory.CLOSED,
+    tracks_sla: false,
+    default_sla_days: null,
+    legal_article: 'JK 66¹-m., JPK 582-m.',
+    requires_decision: true,
+    requires_rejection_reason: false,
+    is_default: false,
+    sort_order: 7,
+  },
+  {
+    name: 'Ma’muriy tartibga o‘tkazildi',
+    code: 'MAMURIY_TARTIB',
+    color: 'cyan',
+    description: 'Jinoyat tarkibi yo‘q, ma’muriy huquqbuzarlik sifatida ko‘rib chiqishga yuborildi',
+    category: ApplicationStatusCategory.CLOSED,
+    tracks_sla: false,
+    default_sla_days: null,
+    legal_article: 'JPK 334-modda',
+    requires_decision: true,
+    requires_rejection_reason: false,
+    is_default: false,
+    sort_order: 8,
+  },
+  {
+    name: 'Tegishliligi bo‘yicha yuborildi',
+    code: 'TEGISHLILIGI_BOYICHA',
+    color: 'indigo',
+    description: 'Boshqa hududiy IIB yoki vakolatli huquqni muhofaza qiluvchi organga yuborildi',
+    category: ApplicationStatusCategory.CLOSED,
+    tracks_sla: false,
+    default_sla_days: null,
+    legal_article: 'JPK 330-m. 3-b. / O‘RQ-445 25-m.',
+    requires_decision: true,
+    requires_rejection_reason: false,
+    is_default: false,
+    sort_order: 9,
+  },
+  {
+    name: 'Jinoyat ishi qo‘zg‘atish rad etildi',
+    code: 'RAD_ETILDI',
+    color: 'rose',
+    description: 'Jinoyat hodisasi yoki tarkibi yo‘qligi yoxud boshqa asoslar bilan rad etildi',
+    category: ApplicationStatusCategory.CLOSED,
+    tracks_sla: false,
+    default_sla_days: null,
+    legal_article: 'JPK 333-m. (83/84-m.)',
+    requires_decision: true,
+    requires_rejection_reason: true,
+    is_default: false,
+    sort_order: 10,
+  },
+  {
+    name: 'Tushuntirish berildi / Ko‘rmay qoldirildi',
+    code: 'TUSHUNTIRISH_BERILDI',
+    color: 'gray',
+    description: 'Umumiy murojaat bo‘yicha huquqiy tushuntirish berildi yoki ko‘rmay qoldirildi',
+    category: ApplicationStatusCategory.CLOSED,
+    tracks_sla: false,
+    default_sla_days: null,
+    legal_article: 'O‘RQ-445 29–30-moddalar',
+    requires_decision: false,
+    requires_rejection_reason: false,
+    is_default: false,
+    sort_order: 11,
   },
 ];
 
@@ -63,19 +200,48 @@ export class ApplicationStatusesService implements OnApplicationBootstrap {
 
   async seedDefaultStatuses(): Promise<void> {
     try {
-      for (const ds of DEFAULT_STATUSES) {
-        let existing = await this.statusRepo.findOne({
-          where: [{ name: ILike(ds.name) }, { code: ds.code }],
+      const existingCount = await this.statusRepo.count();
+      const isInitialSeed = existingCount === 0;
+
+      for (const ds of DEFAULT_JPK_STATUSES) {
+        const existing = await this.statusRepo.findOne({
+          where: [{ code: ds.code }, { name: ILike(ds.name) }],
         });
         if (!existing) {
-          existing = this.statusRepo.create(ds);
-          await this.statusRepo.save(existing);
+          const created = this.statusRepo.create({
+            ...ds,
+            is_default: isInitialSeed ? ds.is_default : false,
+          });
+          await this.statusRepo.save(created);
+        } else {
+          // Mavjud statusda legal_article yoki default atributlar bo'sh bo'lsa yumshoq boyitamiz
+          let changed = false;
+          if (!existing.legal_article && ds.legal_article) {
+            existing.legal_article = ds.legal_article;
+            changed = true;
+          }
+          if (changed) {
+            await this.statusRepo.save(existing);
+          }
+        }
+      }
+
+      // Kamida bitta default status mavjudligini ta'minlash
+      const hasDefault = await this.statusRepo.findOne({ where: { is_default: true } });
+      if (!hasDefault) {
+        const firstOpen = await this.statusRepo.findOne({
+          where: [{ code: 'YANGI' }, { category: ApplicationStatusCategory.OPEN }],
+          order: { sort_order: 'ASC' },
+        });
+        if (firstOpen) {
+          firstOpen.is_default = true;
+          await this.statusRepo.save(firstOpen);
         }
       }
 
       // Mavjud arizalarda status_id bo'sh bo'lsa, ularga mos status_id ni bog'laymiz
       const allStatuses = await this.statusRepo.find();
-      const defaultStatus = allStatuses.find((s) => s.code === 'YANGI') || allStatuses[0];
+      const defaultStatus = allStatuses.find((s) => s.is_default) || allStatuses[0];
       const statusMap = new Map<string, string>();
       for (const st of allStatuses) {
         if (st.code) statusMap.set(st.code.toUpperCase(), st.id);
@@ -122,11 +288,23 @@ export class ApplicationStatusesService implements OnApplicationBootstrap {
           .replace(/[^A-Z0-9_]/g, '_')
           .slice(0, 50);
 
+    const category = dto.category || ApplicationStatusCategory.OPEN;
+    const isClosedOrPaused =
+      category === ApplicationStatusCategory.CLOSED ||
+      category === ApplicationStatusCategory.PAUSED;
+
     const status = this.statusRepo.create({
       ...dto,
       name: trimmedName,
       code,
       color: dto.color || 'blue',
+      category,
+      tracks_sla: dto.tracks_sla !== undefined ? dto.tracks_sla : !isClosedOrPaused,
+      default_sla_days:
+        dto.default_sla_days !== undefined ? dto.default_sla_days : isClosedOrPaused ? null : 10,
+      legal_article: dto.legal_article?.trim() || null,
+      requires_decision: Boolean(dto.requires_decision),
+      requires_rejection_reason: Boolean(dto.requires_rejection_reason),
       is_default: Boolean(dto.is_default),
       sort_order: dto.sort_order ?? 0,
     });
@@ -145,7 +323,7 @@ export class ApplicationStatusesService implements OnApplicationBootstrap {
     let where: FindOptionsWhere<ApplicationStatus> | FindOptionsWhere<ApplicationStatus>[] = {};
     if (search && search.trim()) {
       const q = `%${search.trim()}%`;
-      where = [{ name: ILike(q) }, { code: ILike(q) }];
+      where = [{ name: ILike(q) }, { code: ILike(q) }, { legal_article: ILike(q) }];
     }
 
     const [items, total] = await this.statusRepo.findAndCount({
@@ -191,21 +369,18 @@ export class ApplicationStatusesService implements OnApplicationBootstrap {
       status.name = dto.name.trim();
     }
 
-    if (dto.code) {
-      status.code = dto.code.trim().toUpperCase();
+    if (dto.code) status.code = dto.code.trim().toUpperCase();
+    if (dto.color !== undefined) status.color = dto.color;
+    if (dto.description !== undefined) status.description = dto.description;
+    if (dto.category !== undefined) status.category = dto.category;
+    if (dto.tracks_sla !== undefined) status.tracks_sla = dto.tracks_sla;
+    if (dto.default_sla_days !== undefined) status.default_sla_days = dto.default_sla_days;
+    if (dto.legal_article !== undefined) status.legal_article = dto.legal_article?.trim() || null;
+    if (dto.requires_decision !== undefined) status.requires_decision = dto.requires_decision;
+    if (dto.requires_rejection_reason !== undefined) {
+      status.requires_rejection_reason = dto.requires_rejection_reason;
     }
-
-    if (dto.color !== undefined) {
-      status.color = dto.color;
-    }
-
-    if (dto.description !== undefined) {
-      status.description = dto.description;
-    }
-
-    if (dto.sort_order !== undefined) {
-      status.sort_order = dto.sort_order;
-    }
+    if (dto.sort_order !== undefined) status.sort_order = dto.sort_order;
 
     if (dto.is_default !== undefined) {
       if (dto.is_default && !status.is_default) {
@@ -220,18 +395,20 @@ export class ApplicationStatusesService implements OnApplicationBootstrap {
   async remove(id: string): Promise<{ success: boolean; message: string }> {
     const status = await this.findOne(id);
 
-    const appsUsing = await this.appRepo.count({ where: { status_id: id } });
-    if (appsUsing > 0) {
-      const fallback = await this.statusRepo.findOne({ where: { is_default: true } });
-      if (fallback && fallback.id !== id) {
-        await this.appRepo.update(
-          { status_id: id },
-          { status_id: fallback.id, status: fallback.code || fallback.name },
-        );
-      } else {
-        await this.appRepo.update({ status_id: id }, { status_id: null });
-      }
+    if (status.is_default) {
+      throw new ConflictException(
+        `«${status.name}» boshlang‘ich (default) status hisoblanadi va uni o‘chirib bo‘lmaydi. Avval boshqa statusni default qilib belgilang.`,
+      );
     }
+
+    await assertNoDependencies(this.statusRepo.manager, `«${status.name}» statusi`, status.id, [
+      {
+        table: 'applications',
+        column: 'status_id',
+        label: 'ariza',
+        extraWhere: 'is_deleted = false',
+      },
+    ]);
 
     await this.statusRepo.remove(status);
     return {

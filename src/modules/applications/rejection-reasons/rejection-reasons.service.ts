@@ -2,6 +2,7 @@ import { BadRequestException, Injectable, NotFoundException, OnModuleInit } from
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 
+import { assertNoDependencies } from '../../../common/database/dependency-guard.util';
 import { RejectionReason } from './rejection-reason.entity';
 
 @Injectable()
@@ -66,6 +67,14 @@ export class RejectionReasonsService implements OnModuleInit {
 
   async remove(id: string): Promise<{ success: boolean; message: string }> {
     const reason = await this.findOne(id);
+    await assertNoDependencies(this.repo.manager, `«${reason.name}» rad etish sababi`, reason.id, [
+      {
+        table: 'applications',
+        column: 'rejection_reason_id',
+        label: 'ariza',
+        extraWhere: 'is_deleted = false',
+      },
+    ]);
     await this.repo.remove(reason);
     return { success: true, message: "Rad etish sababi o'chirildi" };
   }
