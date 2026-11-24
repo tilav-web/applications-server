@@ -24,7 +24,12 @@ export class OccupationsService implements OnModuleInit {
   async findAllCategories(includeInactive = false): Promise<OccupationCategory[]> {
     const qb = this.categoryRepo
       .createQueryBuilder('cat')
-      .leftJoinAndSelect('cat.occupations', 'occ')
+      .leftJoinAndSelect(
+        'cat.occupations',
+        'occ',
+        includeInactive ? undefined : 'occ.is_active = :occActive',
+        includeInactive ? undefined : { occActive: true },
+      )
       .orderBy('cat.sort_order', 'ASC')
       .addOrderBy('cat.name', 'ASC')
       .addOrderBy('occ.sort_order', 'ASC')
@@ -211,112 +216,288 @@ export class OccupationsService implements OnModuleInit {
   }
 
   // ==========================================================================
-  // SEED DEFAULT OCCUPATIONS (CyberControl murojaat_shablon.xlsx Royxatlar E1:E25 bilan 1-ga-1 sinxron)
+  // SEED DEFAULT OCCUPATIONS (O'zbekistonda keng tarqalgan kasb toifalari va turlari)
   // ==========================================================================
   async seedDefaults(): Promise<void> {
-    const initialData: { category: string; items: string[] }[] = [
+    const initialData: { code: string; category: string; items: string[] }[] = [
       {
-        category: 'Xususiy sektor tadbirkorlar',
+        code: 'DAVLAT_XIZMATI',
+        category: 'Davlat boshqaruvi va xizmati',
         items: [
-          "Savdo faoliyati bilan shug'ullanuvchilar",
-          'Yirik korxona ishchi-xizmatchilar',
-          'Kichik tashkilotlar ishchi-xizmatchilar',
-          "Xizmat ko'rsatish sektori ishchilari",
+          'Hokimiyat xodimi',
+          'Vazirlik / davlat idorasi xodimi',
+          'Mahalla xodimi (rais, hokim yordamchisi va b.)',
+          'Soliq / bojxona / kadastr xodimi',
+          'Davlat xizmatlari markazi xodimi',
+          'Boshqa davlat xizmatchisi',
         ],
       },
       {
-        category: "To'lov tashkilotlari",
+        code: 'HUQUQ_TARTIBOT',
+        category: 'Huquq-tartibot va harbiy soha',
         items: [
-          'Banklar (Ipoteka, Asaka, Kapital va boshqalar)',
-          "To'lov tashkilotlari (Payme, Click, Uzim, Upay va boshqalar)",
+          'Huquq-tartibot organlari xodimi',
+          'Harbiy xizmatchi (Mudofaa / Milliy gvardiya)',
+          'Favqulodda vaziyatlar xodimi (FVV)',
+          'Sud / prokuratura / adliya xodimi',
+          'Advokat / huquqshunos (yurist)',
         ],
       },
       {
-        category: "Ta'lim tashkilotlari",
+        code: 'TALIM_FAN',
+        category: "Ta'lim va fan",
         items: [
-          "Oliy ta'lim muassasalari (Universitet, Institut)",
-          "O'rta-maxsus muassasalari (Akademik litsey, Texnikum)",
-          "O'rta ta'lim muassasalari (maktab, ixtisoslashtirilgan maktablar)",
-          "Maktabgacha ta'lim muassasalari (davlat va nodavlat bog'cha)",
-          "O'qituvchi (ta'lim sohasidagi hodimlar)",
-          'Talabalar',
-          "Maktab o'quvchilari",
+          "Maktab o'qituvchisi",
+          "Oliy ta'lim o'qituvchisi / professor",
+          "Bog'cha tarbiyachisi",
+          "O'quv markazi o'qituvchisi / repetitor",
+          "Ta'lim muassasasi rahbari / xodimi",
+          'Talaba (OTM)',
+          "Litsey / texnikum / kollej o'quvchisi",
+          "Maktab o'quvchisi",
         ],
       },
       {
-        category: 'Tibbiyot sohasidagi hodimlar',
+        code: 'TIBBIYOT',
+        category: 'Tibbiyot va farmatsevtika',
         items: [
-          'Tibbiyot sohasidagi hodimlar',
-          'Shifokorlar',
-          'Hamshira va kichik tibbiy xodimlar',
-          'Farmatsevtlar',
+          'Shifokor (vrach)',
+          'Hamshira / feldsher',
+          'Stomatolog',
+          'Farmatsevt / dorixona xodimi',
+          'Kichik tibbiy xodim / laborant',
         ],
       },
       {
-        category: 'Davlat korxona va tashkilotlar ishchilari',
+        code: 'BANK_MOLIYA',
+        category: "Bank, moliya va to'lov tizimlari",
         items: [
-          'Davlat korxona va tashkilotlar ishchilari',
-          'Hokimiyat va davlat boshqaruvi xodimlari',
-          'Kommunal soha xodimlari',
-          'Sanoat va ishlab chiqarish davlat korxonalari xodimlari',
+          'Bank xodimi',
+          "To'lov tashkiloti / fintex xodimi (Payme, Click, Uzum va b.)",
+          'Buxgalter / auditor',
+          'Iqtisodchi / moliyachi',
+          "Sug'urta / mikromoliya xodimi",
         ],
       },
       {
-        category: 'HMQO organlari hodimlar',
+        code: 'TADBIRKORLIK_SAVDO',
+        category: 'Tadbirkorlik va savdo',
         items: [
-          'HMQO organlari hodimlar',
-          'Harbiylar (Mudofaa)',
-          'Favqulodda vaziyatlar xodimlari',
-          'Boshqa huquq-tartibot organlari',
+          'Yakka tartibdagi tadbirkor (YaTT)',
+          "Korxona / MChJ rahbari (ta'sischisi)",
+          "Do'kon / bozor sotuvchisi",
+          'Onlayn savdo / marketpleys sotuvchisi',
+          'Savdo agenti / menejer',
+          'Kassir / omborchi',
         ],
       },
       {
-        category: "Nafaqaxo'rlar",
+        code: 'IT_MEDIA',
+        category: 'IT, telekommunikatsiya va media',
         items: [
-          "Nafaqaxo'rlar",
-          'Yoshga doir nafaqaxo‘rlar',
-          'Nogironligi bo‘lgan shaxslar',
-          'Boquvchisini yo‘qotganlar',
+          'Dasturchi / IT mutaxassisi',
+          'Dizayner / SMM / marketolog',
+          'Aloqa va telekommunikatsiya xodimi',
+          'Bloger / jurnalist / OAV xodimi',
+          'Frilanser',
         ],
       },
       {
-        category: 'Vaqtincha ishsizlar',
-        items: ['Vaqtincha ishsizlar', 'Uy bekasi', 'Mavsumiy ishchilar'],
+        code: 'SANOAT_ENERGETIKA',
+        category: 'Sanoat, energetika va neft-gaz',
+        items: [
+          'Neft-gaz sohasi xodimi',
+          'Energetika / elektr tarmoqlari xodimi',
+          'Zavod / fabrika ishchisi',
+          'Muhandis / texnolog',
+          'Tikuvchilik / yengil sanoat ishchisi',
+        ],
       },
       {
+        code: 'QURILISH_KOMMUNAL',
+        category: 'Qurilish va kommunal soha',
+        items: [
+          "Quruvchi / usta (suvoqchi, g'isht teruvchi, bo'yoqchi va b.)",
+          'Prorab / arxitektor / muhandis-quruvchi',
+          'Elektrik / santexnik / payvandchi',
+          'Kommunal xizmat xodimi (suv, gaz, obodonlashtirish)',
+        ],
+      },
+      {
+        code: 'TRANSPORT_LOGISTIKA',
+        category: 'Transport va logistika',
+        items: [
+          'Taksi haydovchisi',
+          'Yuk mashinasi / avtobus haydovchisi',
+          'Kuryer / yetkazib beruvchi',
+          "Temir yo'l / aviatsiya xodimi",
+          'Avtoservis ustasi / mexanik',
+        ],
+      },
+      {
+        code: 'QISHLOQ_XOJALIGI',
+        category: "Qishloq xo'jaligi va fermerlik",
+        items: [
+          "Fermer / dehqon xo'jaligi rahbari",
+          'Dehqon / dala ishchisi',
+          "Chorvador / bog'bon",
+          'Agronom / veterinar',
+        ],
+      },
+      {
+        code: 'XIZMAT_KORSATISH',
+        category: "Xizmat ko'rsatish va hunarmandchilik",
+        items: [
+          'Oshpaz / ofitsiant / umumiy ovqatlanish xodimi',
+          "Sartarosh / go'zallik saloni ustasi",
+          'Mehmonxona / turizm xodimi',
+          "Qo'riqchi / xavfsizlik xodimi",
+          "Hunarmand / ta'mirlovchi usta",
+          "Boshqa xizmat ko'rsatish xodimi",
+        ],
+      },
+      {
+        code: 'NAFAQAXORLAR',
+        category: "Nafaqaxo'rlar va ijtimoiy toifa",
+        items: [
+          "Yoshga doir nafaqaxo'r",
+          "Nogironligi bo'lgan shaxs",
+          "Boquvchisini yo'qotgan shaxs",
+        ],
+      },
+      {
+        code: 'VAQTINCHA_ISHSIZLAR',
+        category: 'Vaqtincha ishsizlar va uy bekasi',
+        items: [
+          'Vaqtincha ishsiz',
+          'Uy bekasi',
+          'Mavsumiy / kunlik ishchi',
+          'Xorijda ishlovchi (mehnat migranti)',
+        ],
+      },
+      {
+        code: 'CHET_EL_FUQAROLARI',
         category: 'Chet el fuqarolari',
         items: [
-          'Chet el fuqarolari',
-          'Sayyohlar / Chet el mehmonlari',
-          'Xorijiy kompaniya vakillari',
-          'Xorijiy talabalar',
+          'Sayyoh / chet el mehmoni',
+          'Xorijiy kompaniya vakili / mutaxassisi',
+          'Xorijiy talaba',
         ],
       },
     ];
 
-    // Eski "IIB xodimlari" yozuvi mavjud bo'lsa, uni umumiy nomga yangilaymiz
-    const legacyIibOcc = await this.occupationRepo
-      .createQueryBuilder('o')
-      .where('LOWER(o.name) = LOWER(:name)', { name: 'IIB xodimlari' })
-      .getOne();
-    if (legacyIibOcc) {
-      legacyIibOcc.name = 'Huquq-tartibot organlari xodimlari';
-      await this.occupationRepo.save(legacyIibOcc);
-    }
-
+    // 1. Yangi default toifalar va kasb turlarini yaratish / tartibini yangilash
     let order = 1;
     for (const group of initialData) {
       const cat = await this.createCategory({
         name: group.category,
-        sort_order: order++,
+        code: group.code,
+        sort_order: order,
+        is_active: true,
       });
+
+      if (cat.sort_order !== order || cat.code !== group.code || !cat.is_active) {
+        cat.sort_order = order;
+        cat.code = group.code;
+        cat.is_active = true;
+        await this.categoryRepo.save(cat);
+      }
+      order++;
+
       let occOrder = 1;
       for (const itemName of group.items) {
-        await this.createOccupation({
+        const occ = await this.createOccupation({
           category_id: cat.id,
           name: itemName,
-          sort_order: occOrder++,
+          sort_order: occOrder,
+          is_active: true,
         });
+
+        if (occ.sort_order !== occOrder || !occ.is_active) {
+          occ.sort_order = occOrder;
+          occ.is_active = true;
+          await this.occupationRepo.save(occ);
+        }
+        occOrder++;
+      }
+    }
+
+    // 2. Eski (aralashib ketgan) default toifalarni xavfsiz tozalash:
+    //    bog'lanmagan bo'lsa o'chiriladi, fuqarolar/ish joylariga bog'langan bo'lsa nofaol qilinadi.
+    const legacyCategoryNames = [
+      'Xususiy sektor tadbirkorlar',
+      "To'lov tashkilotlari",
+      "Ta'lim tashkilotlari",
+      'Tibbiyot sohasidagi hodimlar',
+      'Davlat korxona va tashkilotlar ishchilari',
+      'HMQO organlari hodimlar',
+      "Nafaqaxo'rlar",
+      'Vaqtincha ishsizlar',
+    ];
+
+    for (const legacyName of legacyCategoryNames) {
+      const legacyCat = await this.categoryRepo
+        .createQueryBuilder('c')
+        .where('LOWER(c.name) = LOWER(:name)', { name: legacyName })
+        .getOne();
+      if (!legacyCat) continue;
+
+      const citizenRefs: Array<{ cnt: number }> = await this.categoryRepo.manager.query(
+        `SELECT COUNT(*)::int AS cnt FROM citizens
+         WHERE occupation_category_id = $1
+            OR occupation_id IN (SELECT id FROM occupations WHERE category_id = $1)`,
+        [legacyCat.id],
+      );
+      const workplaceRefs: Array<{ cnt: number }> = await this.categoryRepo.manager.query(
+        `SELECT COUNT(*)::int AS cnt FROM workplaces WHERE occupation_category_id = $1`,
+        [legacyCat.id],
+      );
+      const citizenRefCount = citizenRefs[0]?.cnt ?? 0;
+      const workplaceRefCount = workplaceRefs[0]?.cnt ?? 0;
+
+      if (citizenRefCount === 0 && workplaceRefCount === 0) {
+        await this.categoryRepo.remove(legacyCat);
+      } else {
+        legacyCat.is_active = false;
+        await this.categoryRepo.save(legacyCat);
+        await this.occupationRepo.update({ category_id: legacyCat.id }, { is_active: false });
+      }
+    }
+
+    // 3. "Chet el fuqarolari" ichidagi eski dublikat/ko'plikdagi yozuvlarni xavfsiz tozalash
+    const foreignCat = await this.categoryRepo
+      .createQueryBuilder('c')
+      .where('LOWER(c.name) = LOWER(:name)', { name: 'Chet el fuqarolari' })
+      .getOne();
+    if (foreignCat) {
+      const legacyForeignItems = [
+        'Chet el fuqarolari',
+        'Sayyohlar / Chet el mehmonlari',
+        'Xorijiy kompaniya vakillari',
+        'Xorijiy talabalar',
+      ];
+      for (const legacyItemName of legacyForeignItems) {
+        const legacyOcc = await this.occupationRepo
+          .createQueryBuilder('o')
+          .where('o.category_id = :catId AND LOWER(o.name) = LOWER(:name)', {
+            catId: foreignCat.id,
+            name: legacyItemName,
+          })
+          .getOne();
+        if (!legacyOcc) continue;
+
+        const occRefs: Array<{ cnt: number }> = await this.occupationRepo.manager.query(
+          `SELECT COUNT(*)::int AS cnt FROM citizens WHERE occupation_id = $1`,
+          [legacyOcc.id],
+        );
+        const refCount = occRefs[0]?.cnt ?? 0;
+
+        if (refCount === 0) {
+          await this.occupationRepo.remove(legacyOcc);
+        } else {
+          legacyOcc.is_active = false;
+          await this.occupationRepo.save(legacyOcc);
+        }
       }
     }
   }

@@ -1,4 +1,4 @@
-import { Injectable, NotFoundException } from '@nestjs/common';
+import { Injectable, NotFoundException, OnModuleInit } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { FindOptionsWhere, ILike, Repository } from 'typeorm';
 
@@ -8,12 +8,70 @@ import type { CreatePaymentProviderDto } from './dto/create-payment-provider.dto
 import type { UpdatePaymentProviderDto } from './dto/update-payment-provider.dto';
 import { PaymentProvider } from './payment_provider.entity';
 
+export const DEFAULT_PAYMENT_PROVIDERS: Array<{ name: string; code: string }> = [
+  { name: 'Click', code: 'click' },
+  { name: 'Payme', code: 'payme' },
+  { name: 'Uzum Bank', code: 'uzum_bank' },
+  { name: 'Paynet', code: 'paynet' },
+  { name: 'Anorbank', code: 'anorbank' },
+  { name: 'TBC UZ', code: 'tbc_uz' },
+  { name: 'Xazna', code: 'xazna' },
+  { name: 'Beepul', code: 'beepul' },
+  { name: 'Oson', code: 'oson' },
+  { name: 'Alif Mobi', code: 'alif_mobi' },
+  { name: 'Humans', code: 'humans' },
+  { name: 'Plum', code: 'plum' },
+  { name: 'Upay', code: 'upay' },
+  { name: 'Multicard', code: 'multicard' },
+  { name: 'PayWay', code: 'payway' },
+  { name: 'Unired', code: 'unired' },
+  { name: 'ATTO', code: 'atto' },
+  { name: 'AVO', code: 'avo' },
+  { name: 'Milliy (NBU)', code: 'milliy' },
+  { name: 'Mavrid (Mikrokreditbank)', code: 'mavrid' },
+  { name: 'Zoomrad (Aloqabank)', code: 'zoomrad' },
+  { name: 'Agrobank Mobile', code: 'agrobank_mobile' },
+  { name: 'SQB Mobile', code: 'sqb_mobile' },
+  { name: 'Ipoteka Retail', code: 'ipoteka_retail' },
+  { name: 'Hamkor Mobile', code: 'hamkor_mobile' },
+  { name: "Ipak Yo'li Mobile", code: 'ipak_yoli_mobile' },
+  { name: 'Kapitalbank Mobile', code: 'kapitalbank_mobile' },
+  { name: 'Asakabank Mobile', code: 'asakabank_mobile' },
+];
+
 @Injectable()
-export class PaymentProvidersService {
+export class PaymentProvidersService implements OnModuleInit {
   constructor(
     @InjectRepository(PaymentProvider)
     private readonly providerRepo: Repository<PaymentProvider>,
   ) {}
+
+  async onModuleInit(): Promise<void> {
+    await this.seedDefaults();
+  }
+
+  async seedDefaults(): Promise<void> {
+    for (const item of DEFAULT_PAYMENT_PROVIDERS) {
+      const existing = await this.providerRepo.findOne({
+        where: [{ code: item.code }, { name: ILike(item.name) }],
+      });
+
+      if (existing) {
+        if (!existing.code) {
+          existing.code = item.code;
+          await this.providerRepo.save(existing);
+        }
+        continue;
+      }
+
+      await this.providerRepo.save(
+        this.providerRepo.create({
+          name: item.name,
+          code: item.code,
+        }),
+      );
+    }
+  }
 
   async create(dto: CreatePaymentProviderDto): Promise<PaymentProvider> {
     const provider = this.providerRepo.create(dto);

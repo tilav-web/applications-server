@@ -204,7 +204,7 @@ const STREET_NAMES = [
 ];
 
 const BANK_DEFS: Array<{ name: string; mfo: string; bins: string[] }> = [
-  { name: 'Xalq Banki', mfo: '00401', bins: ['860006', '986006'] },
+  { name: 'Xalq Banki', mfo: '01125', bins: ['860006', '986006'] },
   { name: 'Agrobank', mfo: '00394', bins: ['860004', '986004'] },
   { name: 'Ipoteka Bank', mfo: '00075', bins: ['860031', '986031'] },
   { name: 'Milliy Bank (NBU)', mfo: '00450', bins: ['860012', '986012'] },
@@ -213,8 +213,8 @@ const BANK_DEFS: Array<{ name: string; mfo: string; bins: string[] }> = [
   { name: 'Anorbank', mfo: '01183', bins: ['860048', '986016'] },
   { name: 'TBC Bank', mfo: '01180', bins: ['986024', '530011'] },
   { name: 'Uzum Bank', mfo: '01197', bins: ['986060', '986035'] },
-  { name: 'Ipak Yo‘li Banki', mfo: '00421', bins: ['986003', '860020'] },
-  { name: 'O‘zsanoatqurilishbank', mfo: '00440', bins: ['860002', '986002'] },
+  { name: "Ipak Yo'li Banki", mfo: '00421', bins: ['986003', '860020'] },
+  { name: "O'zsanoatqurilishbank (SQB)", mfo: '00440', bins: ['860002', '986002'] },
 ];
 
 const PROVIDER_NAMES = [
@@ -688,8 +688,8 @@ async function seedMockData(
   const statusRejected =
     statuses.find((s) => (s.code || '').toUpperCase().includes('RAD')) || statusNew || null;
 
-  const occCategories = await occCatRepo.find();
-  const occupations = await occRepo.find();
+  const occCategories = await occCatRepo.find({ where: { is_active: true } });
+  const occupations = await occRepo.find({ where: { is_active: true } });
   const sources = await sourceRepo.find();
   const deptServices = await deptServiceRepo.find();
   const decisionTypes = await decisionTypeRepo.find();

@@ -538,21 +538,48 @@ export class CyberControlShablonExcelService {
         options.find((o) => this.toAscii(o).includes(substr));
 
       const rules: Array<[RegExp, string]> = [
-        [/\b(ishsiz|uy\s*bekasi|vaqtincha)\b/, 'vaqtincha ishsizlar'],
-        [/\b(nafaqa|pensioner|qariya)\b/, 'nafaqaxorlar'],
-        [/\b(talaba|student|universitet|institut)\b/, 'talabalar'],
-        [/\b(maktab\s*oquvchi|oquvchi)\b/, 'maktab oquvchilari'],
-        [/\b(bogcha|maktabgacha)\b/, 'maktabgacha talim'],
+        [/\b(chet\s*el|sayyoh|xorijiy\s*(kompaniya|talaba))\b/, 'chet el fuqarolari'],
+        [
+          /\b(ishsiz|uy\s*bekasi|vaqtincha|mavsumiy|kunlik|migrant|xorijda)\b/,
+          'vaqtincha ishsizlar',
+        ],
+        [/\b(nafaqa|pensioner|qariya|nogiron|boquvchisini)\b/, 'nafaqaxorlar'],
+        [/\b(talaba|student|universitet|institut|otm)\b/, 'talabalar'],
+        [/\b(maktab\s*oquvchi)\b/, 'maktab oquvchilari'],
         [/\b(litsey|texnikum|kollej)\b/, 'orta-maxsus muassasalari'],
-        [/\b(oqituvchi|muallim|pedagog|ustoz)\b/, 'oqituvchi'],
-        [/\b(shifokor|vrach|hamshira|tibbiyot)\b/, 'tibbiyot sohasidagi'],
-        [/\b(bank\s*xodim|ipoteka|asaka|kapital|xalq\s*bank)\b/, 'banklar'],
-        [/\b(payme|click|uzum|tolov\s*tashkilot)\b/, 'tolov tashkilotlari'],
-        [/\b(tadbirkor|yakka\s*tartib|biznes|mchj)\b/, 'xususiy sektor tadbirkorlar'],
-        [/\b(savdo|sotuvchi|bozor|dokon)\b/, 'savdo faoliyati'],
-        [/\b(hmqo|harbiy|organ)\b/, 'hmqo organlari'],
-        [/\b(xizmat\s*korsatish|haydovchi|usta|ofitsiant)\b/, 'xizmat korsatish sektori'],
-        [/\b(davlat|hokimiyat|byudjet)\b/, 'davlat korxona va tashkilotlar'],
+        [/\b(bogcha|maktabgacha|tarbiyachi)\b/, 'maktabgacha talim'],
+        [/\b(oqituvchi|muallim|pedagog|ustoz|professor|repetitor)\b/, 'oqituvchi'],
+        [/\b(talim)\b/, 'talim tashkilotlari'],
+        [
+          /\b(shifokor|vrach|hamshira|feldsher|stomatolog|farmatsevt|dorixona|laborant|tibbiyot|tibbiy)\b/,
+          'tibbiyot sohasidagi',
+        ],
+        [/\b(payme|click|uzum|fintex|tolov\s*tashkilot)\b/, 'tolov tashkilotlari'],
+        [
+          /\b(bank|ipoteka|asaka|kapital|xalq\s*bank|buxgalter|auditor|iqtisodchi|moliyachi|sugurta|mikromoliya)\b/,
+          'banklar',
+        ],
+        [
+          /\b(hmqo|harbiy|huquq-tartibot|fvv|favqulodda|sud|prokuratura|adliya|advokat|huquqshunos|yurist)\b/,
+          'hmqo organlari',
+        ],
+        [/\b(savdo|sotuvchi|bozor|dokon|marketpleys|kassir|omborchi)\b/, 'savdo faoliyati'],
+        [
+          /\b(tadbirkor|yatt|yakka\s*tartib|biznes|mchj|fermer|dehqon|chorvador|bogbon|agronom|veterinar|qishloq)\b/,
+          'xususiy sektor tadbirkorlar',
+        ],
+        [
+          /\b(neft|gaz|energetika|elektr\s*tarmoq|zavod|fabrika|sanoat|muhandis|texnolog|tikuvchilik)\b/,
+          'yirik korxona',
+        ],
+        [
+          /\b(davlat|hokimiyat|vazirlik|mahalla|soliq|bojxona|kadastr|byudjet|kommunal)\b/,
+          'davlat korxona va tashkilotlar',
+        ],
+        [
+          /\b(xizmat\s*korsatish|taksi|haydovchi|kuryer|temir\s*yol|aviatsiya|avtoservis|mexanik|quruvchi|prorab|arxitektor|elektrik|santexnik|payvandchi|oshpaz|ofitsiant|sartarosh|mehmonxona|turizm|qoriqchi|hunarmand|usta|dasturchi|it|dizayner|smm|marketolog|aloqa|telekommunikatsiya|bloger|jurnalist|oav|frilanser)\b/,
+          'xizmat korsatish sektori',
+        ],
       ];
 
       for (const [regex, targetSubstr] of rules) {
