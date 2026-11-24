@@ -2,6 +2,7 @@ export interface UserProfileResponse {
   id: string;
   username: string;
   role: string;
+  is_root: boolean;
   created_at: Date;
   updated_at: Date;
   profile: {

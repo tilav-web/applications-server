@@ -38,19 +38,19 @@ export class TransferChannelsController {
   }
 
   @Post()
-  @Roles(Role.SUPER_ADMIN, Role.ADMIN, Role.INSPECTOR)
+  @Roles(Role.SUPER_ADMIN, Role.ADMIN, Role.INSPECTOR, Role.STAFF)
   create(@Body() dto: CreateTransferChannelDto) {
     return this.channelsService.create(dto);
   }
 
   @Patch(':id')
-  @Roles(Role.SUPER_ADMIN, Role.ADMIN, Role.INSPECTOR)
+  @Roles(Role.SUPER_ADMIN, Role.ADMIN, Role.INSPECTOR, Role.STAFF)
   update(@Param('id', ParseUUIDPipe) id: string, @Body() dto: Partial<CreateTransferChannelDto>) {
     return this.channelsService.update(id, dto);
   }
 
   @Delete(':id')
-  @Roles(Role.SUPER_ADMIN, Role.ADMIN)
+  @Roles(Role.SUPER_ADMIN, Role.ADMIN, Role.STAFF)
   remove(@Param('id', ParseUUIDPipe) id: string) {
     return this.channelsService.remove(id);
   }

@@ -23,12 +23,13 @@ import { UsersService } from './users.service';
 
 @Controller('users')
 @UseGuards(JwtAuthGuard, RolesGuard)
-@Roles(Role.SUPER_ADMIN, Role.ADMIN)
+@Roles(Role.SUPER_ADMIN)
 export class UsersController {
   constructor(private readonly usersService: UsersService) {}
 
   @Get()
   findAll(
+    @CurrentUser() currentUser: JwtAccessPayload,
     @Query('page') page?: number,
     @Query('limit') limit?: number,
     @Query('search') search?: string,
@@ -39,18 +40,24 @@ export class UsersController {
     @Query('district_id') districtId?: string,
   ) {
     const pagination = normalizePagination(page, limit, 10);
-    return this.usersService.findAll(pagination.page, pagination.limit, search, {
-      role,
-      fullName,
-      username,
-      phoneNumber,
-      districtId,
-    });
+    return this.usersService.findAll(
+      pagination.page,
+      pagination.limit,
+      search,
+      {
+        role,
+        fullName,
+        username,
+        phoneNumber,
+        districtId,
+      },
+      currentUser,
+    );
   }
 
   @Get(':id')
-  findOne(@Param('id') id: string) {
-    return this.usersService.findOne(id);
+  findOne(@Param('id') id: string, @CurrentUser() currentUser: JwtAccessPayload) {
+    return this.usersService.findOne(id, currentUser);
   }
 
   @Post()

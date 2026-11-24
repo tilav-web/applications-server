@@ -5,9 +5,12 @@ import {
   OnModuleDestroy,
   OnModuleInit,
 } from '@nestjs/common';
+import { ModuleRef } from '@nestjs/core';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 
+import { Role } from '../../common/enums/role.enum';
+import { ApplicationsReportsService } from '../applications/reports/applications-reports.service';
 import { SystemSetting } from '../audit/system-setting.entity';
 import { User } from '../users/user.entity';
 
@@ -29,6 +32,15 @@ interface TelegramUpdate {
     chat: { id: number; type: string; username?: string; first_name?: string };
     from?: { id: number; username?: string; first_name?: string; last_name?: string };
     text?: string;
+  };
+  callback_query?: {
+    id: string;
+    from: { id: number; username?: string; first_name?: string; last_name?: string };
+    message?: {
+      message_id: number;
+      chat: { id: number; type: string };
+    };
+    data?: string;
   };
 }
 
@@ -56,6 +68,7 @@ export class TelegramBotService implements OnModuleInit, OnModuleDestroy {
     private readonly settingRepo: Repository<SystemSetting>,
     @InjectRepository(User)
     private readonly userRepo: Repository<User>,
+    private readonly moduleRef: ModuleRef,
   ) {}
 
   async onModuleInit(): Promise<void> {
@@ -202,21 +215,30 @@ export class TelegramBotService implements OnModuleInit, OnModuleDestroy {
     return this.getConfigView();
   }
 
-  async sendMessage(chatId: string, htmlText: string): Promise<boolean> {
+  async sendMessage(
+    chatId: string,
+    htmlText: string,
+    replyMarkup?: Record<string, unknown>,
+  ): Promise<boolean> {
     if (!this.isEnabled || !this.activeToken || !chatId) {
       return false;
     }
 
     try {
+      const bodyPayload: Record<string, unknown> = {
+        chat_id: chatId,
+        text: htmlText,
+        parse_mode: 'HTML',
+        disable_web_page_preview: true,
+      };
+      if (replyMarkup) {
+        bodyPayload.reply_markup = replyMarkup;
+      }
+
       const resp = await fetch(`https://api.telegram.org/bot${this.activeToken}/sendMessage`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          chat_id: chatId,
-          text: htmlText,
-          parse_mode: 'HTML',
-          disable_web_page_preview: true,
-        }),
+        body: JSON.stringify(bodyPayload),
         signal: AbortSignal.timeout(10000),
       });
       const data = (await resp.json()) as { ok?: boolean; description?: string };
@@ -227,6 +249,67 @@ export class TelegramBotService implements OnModuleInit, OnModuleDestroy {
       return true;
     } catch (err) {
       this.logger.warn(`Telegram sendMessage tarmoq xatosi: ${(err as Error).message}`);
+      return false;
+    }
+  }
+
+  async answerCallbackQuery(
+    callbackQueryId: string,
+    text?: string,
+    showAlert = false,
+  ): Promise<void> {
+    if (!this.activeToken || !callbackQueryId) return;
+    try {
+      await fetch(`https://api.telegram.org/bot${this.activeToken}/answerCallbackQuery`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          callback_query_id: callbackQueryId,
+          text,
+          show_alert: showAlert,
+        }),
+        signal: AbortSignal.timeout(10000),
+      });
+    } catch {
+      // ignore
+    }
+  }
+
+  async sendDocument(
+    chatId: string,
+    buffer: Buffer,
+    filename: string,
+    captionHtml?: string,
+  ): Promise<boolean> {
+    if (!this.isEnabled || !this.activeToken || !chatId) {
+      return false;
+    }
+    try {
+      const form = new FormData();
+      form.append('chat_id', chatId);
+      if (captionHtml) {
+        form.append('caption', captionHtml);
+        form.append('parse_mode', 'HTML');
+      }
+      const bytes = new Uint8Array(buffer);
+      const blob = new Blob([bytes], {
+        type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+      });
+      form.append('document', blob, filename);
+
+      const resp = await fetch(`https://api.telegram.org/bot${this.activeToken}/sendDocument`, {
+        method: 'POST',
+        body: form,
+        signal: AbortSignal.timeout(30000),
+      });
+      const data = (await resp.json()) as { ok?: boolean; description?: string };
+      if (!data.ok) {
+        this.logger.warn(`Telegram sendDocument xatosi (chat=${chatId}): ${data.description}`);
+        return false;
+      }
+      return true;
+    } catch (err) {
+      this.logger.warn(`Telegram sendDocument tarmoq xatosi: ${(err as Error).message}`);
       return false;
     }
   }
@@ -250,7 +333,7 @@ export class TelegramBotService implements OnModuleInit, OnModuleDestroy {
     while (this.isPolling && this.activeToken) {
       try {
         this.pollAbortController = new AbortController();
-        const url = `https://api.telegram.org/bot${this.activeToken}/getUpdates?timeout=25&offset=${this.lastUpdateId + 1}&allowed_updates=["message"]`;
+        const url = `https://api.telegram.org/bot${this.activeToken}/getUpdates?timeout=25&offset=${this.lastUpdateId + 1}&allowed_updates=["message","callback_query"]`;
         const resp = await fetch(url, { signal: this.pollAbortController.signal });
         const data = (await resp.json()) as { ok?: boolean; result?: TelegramUpdate[] };
 
@@ -273,7 +356,74 @@ export class TelegramBotService implements OnModuleInit, OnModuleDestroy {
     }
   }
 
+  private async handleCallbackQuery(
+    cb: NonNullable<TelegramUpdate['callback_query']>,
+  ): Promise<void> {
+    const data = (cb.data || '').trim();
+    const chatId = String(cb.message?.chat?.id || cb.from.id);
+
+    if (data.startsWith('svodka_excel:')) {
+      const dateStr = data.slice('svodka_excel:'.length).trim();
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(dateStr)) {
+        await this.answerCallbackQuery(cb.id, "Sana formati noto'g'ri", true);
+        return;
+      }
+
+      const user = await this.userRepo.findOne({
+        where: { telegram_chat_id: chatId },
+        relations: { auth: true },
+      });
+      const role = user?.auth?.role;
+      if (!user || (role !== Role.BOSS && role !== Role.SUPER_ADMIN)) {
+        await this.answerCallbackQuery(
+          cb.id,
+          'Sizda kunlik svodkani yuklab olish huquqi mavjud emas',
+          true,
+        );
+        return;
+      }
+
+      await this.answerCallbackQuery(cb.id, '⏳ Excel svodka tayyorlanmoqda...');
+
+      try {
+        const reportsService = this.moduleRef.get(ApplicationsReportsService, { strict: false });
+        const workbook = await reportsService.exportOperationalMatrixExcel({ date: dateStr });
+        const arrayBuf = await workbook.xlsx.writeBuffer();
+        const buffer = Buffer.from(arrayBuf);
+        const filename = `Viloyat_Tezkor_Svodkasi_${dateStr}.xlsx`;
+
+        const sent = await this.sendDocument(
+          chatId,
+          buffer,
+          filename,
+          `📊 <b>Viloyat Tezkor Svodkasi</b>\n📅 Sana: <code>${dateStr}</code>\n⚡ So'rov asosida (on-demand) generatsiya qilindi`,
+        );
+
+        if (!sent) {
+          await this.sendMessage(
+            chatId,
+            `❌ Excel svodkani yuborishda xatolik yuz berdi (${dateStr}).`,
+          );
+        }
+      } catch (err) {
+        this.logger.error(`Telegram svodka_excel xatosi (${dateStr}):`, err);
+        await this.sendMessage(
+          chatId,
+          `❌ Excel svodka generatsiya qilishda xatolik: ${this.escapeHtml((err as Error).message)}`,
+        );
+      }
+      return;
+    }
+
+    await this.answerCallbackQuery(cb.id);
+  }
+
   private async handleUpdate(upd: TelegramUpdate): Promise<void> {
+    if (upd.callback_query) {
+      await this.handleCallbackQuery(upd.callback_query);
+      return;
+    }
+
     const msg = upd.message;
     if (!msg?.text || !msg.chat?.id) return;
 

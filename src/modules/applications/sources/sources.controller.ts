@@ -17,13 +17,13 @@ export class ApplicationSourcesController {
   }
 
   @Post()
-  @Roles(Role.SUPER_ADMIN, Role.ADMIN, Role.INSPECTOR)
+  @Roles(Role.SUPER_ADMIN, Role.ADMIN, Role.INSPECTOR, Role.STAFF)
   async create(@Body() body: { name: string; code?: string; is_active?: boolean }) {
     return this.sourcesService.create(body);
   }
 
   @Put(':id')
-  @Roles(Role.SUPER_ADMIN, Role.ADMIN, Role.INSPECTOR)
+  @Roles(Role.SUPER_ADMIN, Role.ADMIN, Role.INSPECTOR, Role.STAFF)
   async update(
     @Param('id') id: string,
     @Body() body: { name?: string; code?: string; is_active?: boolean },
@@ -32,13 +32,13 @@ export class ApplicationSourcesController {
   }
 
   @Delete(':id')
-  @Roles(Role.SUPER_ADMIN, Role.ADMIN)
+  @Roles(Role.SUPER_ADMIN, Role.ADMIN, Role.STAFF)
   async remove(@Param('id') id: string) {
     return this.sourcesService.remove(id);
   }
 
   @Post('seed')
-  @Roles(Role.SUPER_ADMIN, Role.ADMIN)
+  @Roles(Role.SUPER_ADMIN, Role.ADMIN, Role.STAFF)
   async seed() {
     await this.sourcesService.seedDefaults();
     return { success: true, message: 'Boshlang‘ich murojaat manbalari saqlandi' };

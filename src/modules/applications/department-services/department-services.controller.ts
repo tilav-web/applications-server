@@ -17,13 +17,13 @@ export class DepartmentServicesController {
   }
 
   @Post()
-  @Roles(Role.SUPER_ADMIN, Role.ADMIN, Role.INSPECTOR)
+  @Roles(Role.SUPER_ADMIN, Role.ADMIN, Role.INSPECTOR, Role.STAFF)
   async create(@Body() body: { name: string; short_name?: string; is_active?: boolean }) {
     return this.servicesService.create(body);
   }
 
   @Put(':id')
-  @Roles(Role.SUPER_ADMIN, Role.ADMIN, Role.INSPECTOR)
+  @Roles(Role.SUPER_ADMIN, Role.ADMIN, Role.INSPECTOR, Role.STAFF)
   async update(
     @Param('id') id: string,
     @Body() body: { name?: string; short_name?: string; is_active?: boolean },
@@ -32,13 +32,13 @@ export class DepartmentServicesController {
   }
 
   @Delete(':id')
-  @Roles(Role.SUPER_ADMIN, Role.ADMIN)
+  @Roles(Role.SUPER_ADMIN, Role.ADMIN, Role.STAFF)
   async remove(@Param('id') id: string) {
     return this.servicesService.remove(id);
   }
 
   @Post('seed')
-  @Roles(Role.SUPER_ADMIN, Role.ADMIN)
+  @Roles(Role.SUPER_ADMIN, Role.ADMIN, Role.STAFF)
   async seed() {
     await this.servicesService.seedDefaults();
     return { success: true, message: 'Boshlang‘ich sohaviy xizmatlar saqlandi' };

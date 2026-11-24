@@ -25,7 +25,7 @@ export class CrimeMethodsController {
   constructor(private readonly service: CrimeMethodsService) {}
 
   @Post()
-  @Roles(Role.SUPER_ADMIN, Role.ADMIN, Role.INSPECTOR)
+  @Roles(Role.SUPER_ADMIN, Role.ADMIN, Role.INSPECTOR, Role.STAFF)
   create(@Body() dto: CreateCrimeMethodDto) {
     return this.service.create(dto);
   }
@@ -52,13 +52,13 @@ export class CrimeMethodsController {
   }
 
   @Patch(':id')
-  @Roles(Role.SUPER_ADMIN, Role.ADMIN, Role.INSPECTOR)
+  @Roles(Role.SUPER_ADMIN, Role.ADMIN, Role.INSPECTOR, Role.STAFF)
   update(@Param('id') id: string, @Body() dto: UpdateCrimeMethodDto) {
     return this.service.update(id, dto);
   }
 
   @Delete(':id')
-  @Roles(Role.SUPER_ADMIN, Role.ADMIN)
+  @Roles(Role.SUPER_ADMIN, Role.ADMIN, Role.STAFF)
   remove(@Param('id') id: string) {
     return this.service.remove(id);
   }

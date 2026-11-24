@@ -86,6 +86,14 @@ export class AuthService implements OnApplicationBootstrap {
       });
 
       if (existingAuth) {
+        if (!existingAuth.is_root && existingAuth.role === Role.SUPER_ADMIN) {
+          const hasRoot = await this.authRepository.existsBy({ is_root: true });
+          if (!hasRoot) {
+            existingAuth.is_root = true;
+            await this.authRepository.save(existingAuth);
+            this.logger.log(`Root Super Admin belgisi tiklandi (username: ${username})`);
+          }
+        }
         if (!existingAuth.user) {
           const profile = this.userRepository.create({
             auth_id: existingAuth.id,
@@ -108,10 +116,12 @@ export class AuthService implements OnApplicationBootstrap {
 
       const finalPassword = password || 'admin123';
       const hashedPassword = await bcrypt.hash(finalPassword, 10);
+      const hasRoot = await this.authRepository.existsBy({ is_root: true });
       const auth = this.authRepository.create({
         username,
         password: hashedPassword,
         role: Role.SUPER_ADMIN,
+        is_root: !hasRoot,
       });
 
       const savedAuth = await this.authRepository.save(auth);
@@ -191,6 +201,7 @@ export class AuthService implements OnApplicationBootstrap {
       sub: auth.id,
       username: auth.username,
       role: auth.role,
+      is_root: Boolean(auth.is_root),
     };
 
     const refreshPayload: JwtRefreshPayload = {
@@ -307,6 +318,7 @@ export class AuthService implements OnApplicationBootstrap {
       id: string;
       username: string;
       role: string;
+      is_root: boolean;
       profile: {
         id?: string;
         first_name: string | null;
@@ -325,6 +337,7 @@ export class AuthService implements OnApplicationBootstrap {
       id: auth.id,
       username: auth.username,
       role: auth.role,
+      is_root: Boolean(auth.is_root),
       profile: auth.user
         ? {
             id: auth.user.id,
@@ -430,7 +443,7 @@ export class AuthService implements OnApplicationBootstrap {
 
     // 1. Dastlab Redis keshidan tekshiramiz (Cache HIT)
     const cachedProfile = await this.redisService.getJson<UserProfileResponse>(cacheKey);
-    if (cachedProfile) {
+    if (cachedProfile && typeof cachedProfile.is_root === 'boolean') {
       return cachedProfile;
     }
 
@@ -441,13 +454,14 @@ export class AuthService implements OnApplicationBootstrap {
     });
 
     if (!auth) {
-      throw new NotFoundException('Foydalanuvchi topilmadi');
+      throw new NotFoundException('Hodim topilmadi');
     }
 
     const profileData: UserProfileResponse = {
       id: auth.id,
       username: auth.username,
       role: auth.role,
+      is_root: Boolean(auth.is_root),
       created_at: auth.created_at,
       updated_at: auth.updated_at,
       profile: auth.user
@@ -545,6 +559,7 @@ export class AuthService implements OnApplicationBootstrap {
       id: updatedAuth.id,
       username: updatedAuth.username,
       role: updatedAuth.role,
+      is_root: Boolean(updatedAuth.is_root),
       created_at: updatedAuth.created_at,
       updated_at: updatedAuth.updated_at,
       profile: updatedAuth.user

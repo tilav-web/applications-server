@@ -21,6 +21,7 @@ export interface UserView {
   id: string;
   username: string;
   role: Role;
+  is_root: boolean;
   first_name: string | null;
   last_name: string | null;
   phone_number: string | null;
@@ -39,6 +40,52 @@ export class UsersService {
     @InjectRepository(District)
     private readonly districtRepository: Repository<District>,
   ) {}
+
+  private async assertRootSuperAdmin(currentUser?: JwtAccessPayload): Promise<void> {
+    if (!currentUser?.sub) {
+      throw new ForbiddenException(
+        'Hodimlarni boshqarish faqat Asosiy (Root) Super Admin ga ruxsat etilgan',
+      );
+    }
+
+    const caller = await this.authRepository.findOne({
+      where: { id: currentUser.sub },
+      select: { id: true, role: true, is_root: true },
+    });
+
+    if (!caller || caller.role !== Role.SUPER_ADMIN || !caller.is_root) {
+      throw new ForbiddenException(
+        'Hodimlarni boshqarish faqat Asosiy (Root) Super Admin ga ruxsat etilgan',
+      );
+    }
+  }
+
+  private mapAuthToUserView(auth: Auth): UserView {
+    return {
+      id: auth.id,
+      username: auth.username,
+      role: auth.role,
+      is_root: Boolean(auth.is_root),
+      first_name: auth.user?.first_name || null,
+      last_name: auth.user?.last_name || null,
+      phone_number: auth.user?.phone_number || null,
+      assigned_districts:
+        auth.user?.assigned_districts?.map((d) => ({ id: d.id, name: d.name })) || [],
+      created_at: auth.created_at,
+      updated_at: auth.updated_at,
+    };
+  }
+
+  private async getUserViewById(id: string): Promise<UserView> {
+    const auth = await this.authRepository.findOne({
+      where: { id },
+      relations: { user: { assigned_districts: true } },
+    });
+    if (!auth) {
+      throw new NotFoundException('Hodim topilmadi');
+    }
+    return this.mapAuthToUserView(auth);
+  }
 
   async findByAuthId(authId: string): Promise<User | null> {
     return this.userRepository.findOne({
@@ -66,7 +113,10 @@ export class UsersService {
       phoneNumber?: string;
       districtId?: string;
     },
+    currentUser?: JwtAccessPayload,
   ): Promise<PaginatedResult<UserView>> {
+    await this.assertRootSuperAdmin(currentUser);
+
     const take = limit;
     const skip = (page - 1) * limit;
 
@@ -74,7 +124,8 @@ export class UsersService {
       .createQueryBuilder('auth')
       .leftJoinAndSelect('auth.user', 'user')
       .leftJoinAndSelect('user.assigned_districts', 'districts')
-      .orderBy('auth.created_at', 'DESC')
+      .orderBy('auth.is_root', 'DESC')
+      .addOrderBy('auth.created_at', 'DESC')
       .skip(skip)
       .take(take);
 
@@ -110,18 +161,7 @@ export class UsersService {
 
     const [authList, total] = await query.getManyAndCount();
 
-    const items: UserView[] = authList.map((auth) => ({
-      id: auth.id,
-      username: auth.username,
-      role: auth.role,
-      first_name: auth.user?.first_name || null,
-      last_name: auth.user?.last_name || null,
-      phone_number: auth.user?.phone_number || null,
-      assigned_districts:
-        auth.user?.assigned_districts?.map((d) => ({ id: d.id, name: d.name })) || [],
-      created_at: auth.created_at,
-      updated_at: auth.updated_at,
-    }));
+    const items: UserView[] = authList.map((auth) => this.mapAuthToUserView(auth));
 
     const totalPages = Math.ceil(total / limit) || 1;
 
@@ -138,36 +178,17 @@ export class UsersService {
     };
   }
 
-  async findOne(id: string): Promise<UserView> {
-    const auth = await this.authRepository.findOne({
-      where: { id },
-      relations: { user: { assigned_districts: true } },
-    });
-    if (!auth) {
-      throw new NotFoundException('Foydalanuvchi topilmadi');
-    }
-    return {
-      id: auth.id,
-      username: auth.username,
-      role: auth.role,
-      first_name: auth.user?.first_name || null,
-      last_name: auth.user?.last_name || null,
-      phone_number: auth.user?.phone_number || null,
-      assigned_districts:
-        auth.user?.assigned_districts?.map((d) => ({ id: d.id, name: d.name })) || [],
-      created_at: auth.created_at,
-      updated_at: auth.updated_at,
-    };
+  async findOne(id: string, currentUser?: JwtAccessPayload): Promise<UserView> {
+    await this.assertRootSuperAdmin(currentUser);
+    return this.getUserViewById(id);
   }
 
   async create(dto: CreateUserDto, currentUser?: JwtAccessPayload): Promise<UserView> {
-    if (dto.role === Role.SUPER_ADMIN && currentUser?.role !== Role.SUPER_ADMIN) {
-      throw new ForbiddenException('Faqat SUPER_ADMIN yangi SUPER_ADMIN yarata oladi');
-    }
+    await this.assertRootSuperAdmin(currentUser);
 
     const existing = await this.authRepository.findOne({ where: { username: dto.username } });
     if (existing) {
-      throw new BadRequestException('Bunday loginli (username) foydalanuvchi allaqachon mavjud');
+      throw new BadRequestException('Bunday loginli (username) hodim allaqachon mavjud');
     }
 
     const hashedPassword = await bcrypt.hash(dto.password, 10);
@@ -175,6 +196,7 @@ export class UsersService {
       username: dto.username,
       password: hashedPassword,
       role: dto.role || Role.STAFF,
+      is_root: false,
     });
     const savedAuth = await this.authRepository.save(auth);
 
@@ -194,25 +216,29 @@ export class UsersService {
     });
     await this.userRepository.save(user);
 
-    return this.findOne(savedAuth.id);
+    return this.getUserViewById(savedAuth.id);
   }
 
   async update(id: string, dto: UpdateUserDto, currentUser?: JwtAccessPayload): Promise<UserView> {
+    await this.assertRootSuperAdmin(currentUser);
+
     const auth = await this.authRepository.findOne({
       where: { id },
       relations: { user: { assigned_districts: true } },
     });
     if (!auth) {
-      throw new NotFoundException('Foydalanuvchi topilmadi');
+      throw new NotFoundException('Hodim topilmadi');
     }
 
-    if (
-      (auth.role === Role.SUPER_ADMIN || dto.role === Role.SUPER_ADMIN) &&
-      currentUser?.role !== Role.SUPER_ADMIN
-    ) {
-      throw new ForbiddenException(
-        'SUPER_ADMIN hisobini tahrirlash yoki ushbu rolni berish faqat SUPER_ADMIN ga ruxsat etiladi',
-      );
+    if (auth.is_root) {
+      if (currentUser?.sub !== auth.id) {
+        throw new ForbiddenException(
+          'Asosiy (Root) Super Admin hisobini boshqa hodim tahrirlay olmaydi',
+        );
+      }
+      if (dto.role && dto.role !== Role.SUPER_ADMIN) {
+        throw new ForbiddenException("Asosiy (Root) Super Admin rolini o'zgartirib bo'lmaydi");
+      }
     }
 
     if (dto.username && dto.username !== auth.username) {
@@ -257,24 +283,26 @@ export class UsersService {
 
     await this.userRepository.save(user);
 
-    return this.findOne(auth.id);
+    return this.getUserViewById(auth.id);
   }
 
   async remove(
     id: string,
     currentUser?: JwtAccessPayload,
   ): Promise<{ success: boolean; message: string }> {
+    await this.assertRootSuperAdmin(currentUser);
+
     const auth = await this.authRepository.findOne({ where: { id } });
     if (!auth) {
-      throw new NotFoundException('Foydalanuvchi topilmadi');
+      throw new NotFoundException('Hodim topilmadi');
+    }
+    if (auth.is_root) {
+      throw new ForbiddenException("Asosiy (Root) Super Admin hisobini o'chirib bo'lmaydi");
     }
     if (currentUser?.sub === auth.id) {
       throw new ForbiddenException("O'zingizning hisobingizni o'chira olmaysiz");
     }
-    if (auth.role === Role.SUPER_ADMIN && currentUser?.role !== Role.SUPER_ADMIN) {
-      throw new ForbiddenException("Faqat SUPER_ADMIN boshqa SUPER_ADMIN ni o'chira oladi");
-    }
     await this.authRepository.remove(auth);
-    return { success: true, message: "Foydalanuvchi o'chirildi" };
+    return { success: true, message: "Hodim o'chirildi" };
   }
 }

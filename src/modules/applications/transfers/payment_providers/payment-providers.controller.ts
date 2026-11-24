@@ -25,7 +25,7 @@ export class PaymentProvidersController {
   constructor(private readonly paymentProvidersService: PaymentProvidersService) {}
 
   @Post()
-  @Roles(Role.SUPER_ADMIN, Role.ADMIN, Role.INSPECTOR)
+  @Roles(Role.SUPER_ADMIN, Role.ADMIN, Role.INSPECTOR, Role.STAFF)
   create(@Body() dto: CreatePaymentProviderDto) {
     return this.paymentProvidersService.create(dto);
   }
@@ -46,13 +46,13 @@ export class PaymentProvidersController {
   }
 
   @Patch(':id')
-  @Roles(Role.SUPER_ADMIN, Role.ADMIN, Role.INSPECTOR)
+  @Roles(Role.SUPER_ADMIN, Role.ADMIN, Role.INSPECTOR, Role.STAFF)
   update(@Param('id') id: string, @Body() dto: UpdatePaymentProviderDto) {
     return this.paymentProvidersService.update(id, dto);
   }
 
   @Delete(':id')
-  @Roles(Role.SUPER_ADMIN, Role.ADMIN)
+  @Roles(Role.SUPER_ADMIN, Role.ADMIN, Role.STAFF)
   remove(@Param('id') id: string) {
     return this.paymentProvidersService.remove(id);
   }

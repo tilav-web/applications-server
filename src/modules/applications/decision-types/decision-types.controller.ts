@@ -17,25 +17,25 @@ export class DecisionTypesController {
   }
 
   @Post()
-  @Roles(Role.SUPER_ADMIN, Role.ADMIN, Role.INSPECTOR)
+  @Roles(Role.SUPER_ADMIN, Role.ADMIN, Role.INSPECTOR, Role.STAFF)
   async create(@Body() body: { name: string; is_active?: boolean }) {
     return this.decisionTypesService.create(body);
   }
 
   @Put(':id')
-  @Roles(Role.SUPER_ADMIN, Role.ADMIN, Role.INSPECTOR)
+  @Roles(Role.SUPER_ADMIN, Role.ADMIN, Role.INSPECTOR, Role.STAFF)
   async update(@Param('id') id: string, @Body() body: { name?: string; is_active?: boolean }) {
     return this.decisionTypesService.update(id, body);
   }
 
   @Delete(':id')
-  @Roles(Role.SUPER_ADMIN, Role.ADMIN)
+  @Roles(Role.SUPER_ADMIN, Role.ADMIN, Role.STAFF)
   async remove(@Param('id') id: string) {
     return this.decisionTypesService.remove(id);
   }
 
   @Post('seed')
-  @Roles(Role.SUPER_ADMIN, Role.ADMIN)
+  @Roles(Role.SUPER_ADMIN, Role.ADMIN, Role.STAFF)
   async seed() {
     await this.decisionTypesService.seedDefaults();
     return { success: true, message: 'Boshlang‘ich qaror turlari saqlandi' };

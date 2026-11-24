@@ -25,7 +25,7 @@ export class ApplicationStatusesController {
   constructor(private readonly statusesService: ApplicationStatusesService) {}
 
   @Post()
-  @Roles(Role.SUPER_ADMIN, Role.ADMIN, Role.INSPECTOR)
+  @Roles(Role.SUPER_ADMIN, Role.ADMIN, Role.INSPECTOR, Role.STAFF)
   create(@Body() dto: CreateApplicationStatusDto) {
     return this.statusesService.create(dto);
   }
@@ -46,13 +46,13 @@ export class ApplicationStatusesController {
   }
 
   @Patch(':id')
-  @Roles(Role.SUPER_ADMIN, Role.ADMIN, Role.INSPECTOR)
+  @Roles(Role.SUPER_ADMIN, Role.ADMIN, Role.INSPECTOR, Role.STAFF)
   update(@Param('id') id: string, @Body() dto: UpdateApplicationStatusDto) {
     return this.statusesService.update(id, dto);
   }
 
   @Delete(':id')
-  @Roles(Role.SUPER_ADMIN, Role.ADMIN)
+  @Roles(Role.SUPER_ADMIN, Role.ADMIN, Role.STAFF)
   remove(@Param('id') id: string) {
     return this.statusesService.remove(id);
   }

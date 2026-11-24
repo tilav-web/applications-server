@@ -144,6 +144,7 @@ export class NotificationsService implements OnModuleInit, OnModuleDestroy {
       link_url?: string | null;
       metadata?: Record<string, unknown> | null;
       forceTelegram?: boolean;
+      telegramReplyMarkup?: Record<string, unknown>;
     },
   ): Promise<Notification> {
     const prefs = this.mergePrefs(user.notification_prefs);
@@ -154,7 +155,11 @@ export class NotificationsService implements OnModuleInit, OnModuleDestroy {
       (payload.forceTelegram || this.shouldSendTelegramForType(payload.type, prefs))
     ) {
       const html = this.formatTelegramHtml(payload.priority, payload.title, payload.message);
-      sentToTelegram = await this.telegramBot.sendMessage(user.telegram_chat_id, html);
+      sentToTelegram = await this.telegramBot.sendMessage(
+        user.telegram_chat_id,
+        html,
+        payload.telegramReplyMarkup,
+      );
     }
 
     const entity = this.notifRepo.create({
@@ -361,29 +366,86 @@ export class NotificationsService implements OnModuleInit, OnModuleDestroy {
     }
   }
 
+  private getTashkentNowParts(): { dateStr: string; hour: number; startOfDayUtc: Date } {
+    // O'zbekiston vaqti: UTC+5 (DST yo'q)
+    const nowUtcMs = Date.now();
+    const uzOffsetMs = 5 * 60 * 60 * 1000;
+    const uzDate = new Date(nowUtcMs + uzOffsetMs);
+    const yyyy = uzDate.getUTCFullYear();
+    const mm = String(uzDate.getUTCMonth() + 1).padStart(2, '0');
+    const dd = String(uzDate.getUTCDate()).padStart(2, '0');
+    const hour = uzDate.getUTCHours();
+    const startOfDayUtc = new Date(
+      Date.UTC(yyyy, uzDate.getUTCMonth(), uzDate.getUTCDate()) - uzOffsetMs,
+    );
+    return { dateStr: `${yyyy}-${mm}-${dd}`, hour, startOfDayUtc };
+  }
+
   /**
    * 4. Kunlik Telegram & In-App Svodka (BOSS + SUPER_ADMIN)
+   * Excel fayl oldindan saqlanmaydi — hodim/rahbar tugmani bosganda on-demand generatsiya qilinadi.
    */
   async sendDailyDigest(): Promise<{ sentCount: number }> {
-    const now = new Date();
-    const startOfDay = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 0, 0, 0, 0);
+    const { dateStr, startOfDayUtc } = this.getTashkentNowParts();
+
     const todayApps = await this.applicationRepo
       .createQueryBuilder('app')
       .leftJoinAndSelect('app.transfer', 'transfer')
       .leftJoinAndSelect('app.district', 'district')
+      .leftJoinAndSelect('app.application_status', 'application_status')
       .where('app.is_deleted = false')
-      .andWhere('app.created_at >= :startOfDay', { startOfDay })
+      .andWhere('app.created_at >= :startOfDay', { startOfDay: startOfDayUtc })
       .getMany();
 
     const totalCount = todayApps.length;
-    const totalLoss = todayApps.reduce((sum, a) => sum + Number(a.transfer?.amount || 0), 0);
+    let totalLoss = 0;
+
+    if (totalCount > 0) {
+      const appIds = todayApps.map((a) => a.id);
+      const lossRows: Array<{ total: string | number | null }> =
+        await this.applicationRepo.manager.query(
+          `SELECT COALESCE(SUM(t.amount), 0) AS total
+           FROM transfers t
+           WHERE (t.currency IS NULL OR UPPER(t.currency) = 'UZS')
+             AND (
+               t.application_id = ANY($1::uuid[])
+               OR t.id IN (SELECT transfer_id FROM applications WHERE id = ANY($1::uuid[]) AND transfer_id IS NOT NULL)
+             )`,
+          [appIds],
+        );
+      totalLoss = Number(lossRows[0]?.total || 0);
+    }
+
     const resolvedCount = todayApps.filter(
-      (a) => a.status === ApplicationStatus.HAL_QILINDI,
+      (a) =>
+        a.status === ApplicationStatus.HAL_QILINDI ||
+        String(a.application_status?.category || '') === 'CLOSED',
     ).length;
+
+    const detectedRows: Array<{ cnt: number }> = await this.applicationRepo.manager.query(
+      `SELECT COUNT(*)::int AS cnt
+       FROM detected_crimes
+       WHERE is_deleted = false AND created_at >= $1`,
+      [startOfDayUtc],
+    );
+    const todayDetectedCount = detectedRows[0]?.cnt ?? 0;
+
+    const overdueSlaRows: Array<{ cnt: number }> = await this.applicationRepo.manager.query(
+      `SELECT COUNT(*)::int AS cnt
+       FROM applications a
+       LEFT JOIN application_statuses s ON s.id = a.status_id
+       WHERE a.is_deleted = false
+         AND a.deadline_at IS NOT NULL
+         AND a.deadline_at < NOW()
+         AND a.closed_at IS NULL
+         AND COALESCE(s.category, '') <> 'CLOSED'
+         AND a.status NOT IN ('HAL_QILINDI', 'RAD_ETILDI')`,
+    );
+    const overdueSlaCount = overdueSlaRows[0]?.cnt ?? 0;
 
     const districtCounts = new Map<string, number>();
     for (const a of todayApps) {
-      const dName = a.district?.name || 'Noma‘lum';
+      const dName = a.district?.name || "Noma'lum";
       districtCounts.set(dName, (districtCounts.get(dName) || 0) + 1);
     }
     const topDistricts = Array.from(districtCounts.entries())
@@ -392,13 +454,13 @@ export class NotificationsService implements OnModuleInit, OnModuleDestroy {
       .map(([name, cnt]) => `${name} (${cnt})`)
       .join(', ');
 
-    const dateStr = now.toISOString().slice(0, 10);
     const formattedLoss = `${new Intl.NumberFormat('uz-UZ').format(Math.round(totalLoss))} UZS`;
     const message =
       `Sana: ${dateStr}\n` +
-      `Jami bugungi arizalar: ${totalCount} ta\n` +
-      `Hal qilingan: ${resolvedCount} ta\n` +
+      `Bugungi arizalar: ${totalCount} ta (Yopilgan: ${resolvedCount} ta)\n` +
+      `Aniqlangan jinoyatlar: ${todayDetectedCount} ta\n` +
       `Umumiy zarar: ${formattedLoss}` +
+      (overdueSlaCount > 0 ? `\nMuddati o'tgan (SLA): ${overdueSlaCount} ta` : '') +
       (topDistricts ? `\nFaol hududlar: ${topDistricts}` : '');
 
     const recipients = await this.findUsersByRoles([Role.BOSS, Role.SUPER_ADMIN]);
@@ -406,11 +468,29 @@ export class NotificationsService implements OnModuleInit, OnModuleDestroy {
     for (const u of recipients) {
       await this.notifyUser(u, {
         type: 'DAILY_DIGEST',
-        priority: 'INFO',
+        priority: overdueSlaCount > 0 ? 'WARNING' : 'INFO',
         title: `Kunlik Svodka (${dateStr})`,
         message,
-        link_url: '/',
-        metadata: { date: dateStr, totalCount, totalLoss },
+        link_url: `/reports?tab=matrix&date=${dateStr}`,
+        metadata: {
+          date: dateStr,
+          totalCount,
+          resolvedCount,
+          todayDetectedCount,
+          overdueSlaCount,
+          totalLoss,
+          excelExportType: 'operational_matrix',
+        },
+        telegramReplyMarkup: {
+          inline_keyboard: [
+            [
+              {
+                text: `📊 Excel svodkani yuklab olish (${dateStr})`,
+                callback_data: `svodka_excel:${dateStr}`,
+              },
+            ],
+          ],
+        },
       });
       sentCount++;
     }
@@ -659,13 +739,12 @@ export class NotificationsService implements OnModuleInit, OnModuleDestroy {
 
   private async runScheduledChecks(): Promise<void> {
     try {
-      const now = new Date();
-      const todayKey = now.toISOString().slice(0, 10);
+      const { dateStr: todayKey, hour: uzHour } = this.getTashkentNowParts();
 
-      // 1. Kunlik svodka
+      // 1. Kunlik svodka (O'zbekiston vaqti bilan)
       const digestEnabled = await this.getSettingBool('notif_daily_digest_enabled', true);
       const digestHour = await this.getSettingNumber('notif_daily_digest_hour', 18);
-      if (digestEnabled && now.getHours() === digestHour && this.lastDigestDate !== todayKey) {
+      if (digestEnabled && uzHour === digestHour && this.lastDigestDate !== todayKey) {
         this.lastDigestDate = todayKey;
         await this.sendDailyDigest();
       }

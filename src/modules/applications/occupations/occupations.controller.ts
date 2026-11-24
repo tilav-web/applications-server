@@ -20,7 +20,7 @@ export class OccupationsController {
   }
 
   @Post('occupation-categories')
-  @Roles(Role.SUPER_ADMIN, Role.ADMIN, Role.INSPECTOR)
+  @Roles(Role.SUPER_ADMIN, Role.ADMIN, Role.INSPECTOR, Role.STAFF)
   async createCategory(
     @Body()
     body: {
@@ -34,7 +34,7 @@ export class OccupationsController {
   }
 
   @Put('occupation-categories/:id')
-  @Roles(Role.SUPER_ADMIN, Role.ADMIN, Role.INSPECTOR)
+  @Roles(Role.SUPER_ADMIN, Role.ADMIN, Role.INSPECTOR, Role.STAFF)
   async updateCategory(
     @Param('id') id: string,
     @Body()
@@ -49,7 +49,7 @@ export class OccupationsController {
   }
 
   @Delete('occupation-categories/:id')
-  @Roles(Role.SUPER_ADMIN, Role.ADMIN)
+  @Roles(Role.SUPER_ADMIN, Role.ADMIN, Role.STAFF)
   async deleteCategory(@Param('id') id: string) {
     return this.occupationsService.removeCategory(id);
   }
@@ -66,7 +66,7 @@ export class OccupationsController {
   }
 
   @Post('occupations')
-  @Roles(Role.SUPER_ADMIN, Role.ADMIN, Role.INSPECTOR)
+  @Roles(Role.SUPER_ADMIN, Role.ADMIN, Role.INSPECTOR, Role.STAFF)
   async createOccupation(
     @Body()
     body: {
@@ -81,7 +81,7 @@ export class OccupationsController {
   }
 
   @Put('occupations/:id')
-  @Roles(Role.SUPER_ADMIN, Role.ADMIN, Role.INSPECTOR)
+  @Roles(Role.SUPER_ADMIN, Role.ADMIN, Role.INSPECTOR, Role.STAFF)
   async updateOccupation(
     @Param('id') id: string,
     @Body()
@@ -97,13 +97,13 @@ export class OccupationsController {
   }
 
   @Delete('occupations/:id')
-  @Roles(Role.SUPER_ADMIN, Role.ADMIN)
+  @Roles(Role.SUPER_ADMIN, Role.ADMIN, Role.STAFF)
   async deleteOccupation(@Param('id') id: string) {
     return this.occupationsService.removeOccupation(id);
   }
 
   @Post('occupations/seed')
-  @Roles(Role.SUPER_ADMIN, Role.ADMIN)
+  @Roles(Role.SUPER_ADMIN, Role.ADMIN, Role.STAFF)
   async seed() {
     await this.occupationsService.seedDefaults();
     return { success: true, message: 'Boshlang‘ich kasb toifalari muvaffaqiyatli saqlandi' };

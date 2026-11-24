@@ -25,7 +25,7 @@ export class SuspectFieldConfigsController {
   constructor(private readonly service: SuspectFieldConfigsService) {}
 
   @Post()
-  @Roles(Role.SUPER_ADMIN, Role.ADMIN, Role.INSPECTOR)
+  @Roles(Role.SUPER_ADMIN, Role.ADMIN, Role.INSPECTOR, Role.STAFF)
   create(@Body() dto: CreateSuspectFieldConfigDto) {
     return this.service.create(dto);
   }
@@ -51,13 +51,13 @@ export class SuspectFieldConfigsController {
   }
 
   @Patch(':id')
-  @Roles(Role.SUPER_ADMIN, Role.ADMIN, Role.INSPECTOR)
+  @Roles(Role.SUPER_ADMIN, Role.ADMIN, Role.INSPECTOR, Role.STAFF)
   update(@Param('id') id: string, @Body() dto: UpdateSuspectFieldConfigDto) {
     return this.service.update(id, dto);
   }
 
   @Delete(':id')
-  @Roles(Role.SUPER_ADMIN, Role.ADMIN)
+  @Roles(Role.SUPER_ADMIN, Role.ADMIN, Role.STAFF)
   remove(@Param('id') id: string) {
     return this.service.remove(id);
   }

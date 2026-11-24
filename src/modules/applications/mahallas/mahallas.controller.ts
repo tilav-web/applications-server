@@ -25,7 +25,7 @@ export class MahallasController {
   constructor(private readonly mahallasService: MahallasService) {}
 
   @Post()
-  @Roles(Role.SUPER_ADMIN, Role.ADMIN, Role.INSPECTOR)
+  @Roles(Role.SUPER_ADMIN, Role.ADMIN, Role.INSPECTOR, Role.STAFF)
   create(@Body() dto: CreateMahallaDto) {
     return this.mahallasService.create(dto);
   }
@@ -47,13 +47,13 @@ export class MahallasController {
   }
 
   @Patch(':id')
-  @Roles(Role.SUPER_ADMIN, Role.ADMIN, Role.INSPECTOR)
+  @Roles(Role.SUPER_ADMIN, Role.ADMIN, Role.INSPECTOR, Role.STAFF)
   update(@Param('id') id: string, @Body() dto: UpdateMahallaDto) {
     return this.mahallasService.update(id, dto);
   }
 
   @Delete(':id')
-  @Roles(Role.SUPER_ADMIN, Role.ADMIN)
+  @Roles(Role.SUPER_ADMIN, Role.ADMIN, Role.STAFF)
   remove(@Param('id') id: string) {
     return this.mahallasService.remove(id);
   }

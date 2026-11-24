@@ -20,6 +20,9 @@ export class Auth extends BaseEntity {
   })
   role: Role;
 
+  @Column({ name: 'is_root', type: 'boolean', default: false })
+  is_root: boolean;
+
   @Column({
     name: 'hashed_refresh_token',
     type: 'varchar',
