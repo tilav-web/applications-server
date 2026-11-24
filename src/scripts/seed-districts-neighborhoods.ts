@@ -2,7 +2,7 @@ import { NestFactory } from '@nestjs/core';
 
 import { AppModule } from '../app.module';
 import { DistrictsService } from '../modules/applications/districts/districts.service';
-import { MahallasService } from '../modules/applications/mahallas/mahallas.service';
+import { NeighborhoodsService } from '../modules/applications/neighborhoods/neighborhoods.service';
 
 async function bootstrap() {
   const app = await NestFactory.createApplicationContext(AppModule, {
@@ -10,13 +10,13 @@ async function bootstrap() {
   });
 
   const districtsService = app.get(DistrictsService);
-  const mahallasService = app.get(MahallasService);
+  const neighborhoodsService = app.get(NeighborhoodsService);
 
   console.log('Qashqadaryo tumanlarini bazaga kiritish boshlandi...');
   await districtsService.seedDefaultDistricts();
 
   console.log('Qashqadaryo mahallalarini bazaga kiritish boshlandi...');
-  await mahallasService.seedDefaultMahallas();
+  await neighborhoodsService.seedDefaultNeighborhoods();
 
   console.log('Barcha tumanlar va mahallalar muvaffaqiyatli bazaga kiritildi!');
   await app.close();

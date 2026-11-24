@@ -477,7 +477,7 @@ export class ApplicationsService {
       created_by: true,
       citizen: {
         district: true,
-        mahalla: true,
+        neighborhood: true,
         occupation_category: true,
         occupation: true,
         workplace: true,
@@ -500,7 +500,7 @@ export class ApplicationsService {
       custom_fields: {
         citizen: {
           district: true,
-          mahalla: true,
+          neighborhood: true,
           occupation_category: true,
           occupation: true,
           workplace: true,
@@ -708,7 +708,7 @@ export class ApplicationsService {
       relations: {
         citizen: {
           district: true,
-          mahalla: true,
+          neighborhood: true,
           occupation_category: true,
           occupation: true,
           workplace: true,
@@ -721,7 +721,7 @@ export class ApplicationsService {
         custom_fields: {
           citizen: {
             district: true,
-            mahalla: true,
+            neighborhood: true,
             occupation_category: true,
             occupation: true,
             workplace: true,
@@ -798,18 +798,18 @@ export class ApplicationsService {
         decision_type: true,
         workplace: {
           district: true,
-          mahalla: true,
+          neighborhood: true,
           occupation_category: true,
         },
         created_by: true,
         citizen: {
           district: true,
-          mahalla: true,
+          neighborhood: true,
           occupation_category: true,
           occupation: true,
           workplace: {
             district: true,
-            mahalla: true,
+            neighborhood: true,
             occupation_category: true,
           },
         },
@@ -830,7 +830,7 @@ export class ApplicationsService {
         custom_fields: {
           citizen: {
             district: true,
-            mahalla: true,
+            neighborhood: true,
             occupation_category: true,
             occupation: true,
           },

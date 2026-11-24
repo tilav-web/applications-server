@@ -714,7 +714,7 @@ export class DocumentsService {
     const application = await this.applicationsRepository.findOne({
       where: { id: applicationId },
       relations: {
-        citizen: { district: true, mahalla: true },
+        citizen: { district: true, neighborhood: true },
         district: true,
         crime: true,
         card: { bank: true, citizen: true },
@@ -725,7 +725,7 @@ export class DocumentsService {
         },
         application_status: true,
         custom_fields: {
-          citizen: { district: true, mahalla: true },
+          citizen: { district: true, neighborhood: true },
           card: { bank: true },
           crime: true,
           district: true,
@@ -842,8 +842,8 @@ export class DocumentsService {
     if (application.district?.name || citizen?.district?.name) {
       addressParts.push(application.district?.name || citizen?.district?.name || '');
     }
-    if (citizen?.mahalla?.name) {
-      addressParts.push(citizen.mahalla.name);
+    if (citizen?.neighborhood?.name) {
+      addressParts.push(citizen.neighborhood.name);
     }
     if (citizen?.address) {
       addressParts.push(citizen.address);
@@ -877,7 +877,7 @@ export class DocumentsService {
         application.district?.name || citizen?.district?.name || '',
         script,
       ),
-      mahallaName: adaptToScript(citizen?.mahalla?.name || '', script),
+      neighborhoodName: adaptToScript(citizen?.neighborhood?.name || '', script),
       cardNumber: card?.card_number || '',
       cardHolder: adaptToScript(card?.full_name || citizenFullNameRaw, script),
       cardBank: adaptToScript(card?.bank?.name || '', script),
@@ -965,7 +965,7 @@ export class DocumentsService {
       const application = await this.applicationsRepository.findOne({
         where: { id: applicationId },
         relations: {
-          citizen: { district: true, mahalla: true },
+          citizen: { district: true, neighborhood: true },
           district: true,
           crime: true,
           card: { bank: true, citizen: true },
@@ -976,7 +976,7 @@ export class DocumentsService {
           },
           application_status: true,
           custom_fields: {
-            citizen: { district: true, mahalla: true },
+            citizen: { district: true, neighborhood: true },
             card: { bank: true },
             crime: true,
             district: true,
@@ -1078,7 +1078,7 @@ export class DocumentsService {
     const application = await this.applicationsRepository.findOne({
       where: { id: applicationId },
       relations: {
-        citizen: { district: true, mahalla: true },
+        citizen: { district: true, neighborhood: true },
         district: true,
         crime: true,
         card: { bank: true, citizen: true },
@@ -1089,7 +1089,7 @@ export class DocumentsService {
         },
         application_status: true,
         custom_fields: {
-          citizen: { district: true, mahalla: true },
+          citizen: { district: true, neighborhood: true },
           card: { bank: true },
           crime: true,
           district: true,

@@ -245,7 +245,7 @@ export class CitizensService {
           digital_identifiers: true,
           applications: true,
           district: true,
-          mahalla: true,
+          neighborhood: true,
           occupation_category: true,
           occupation: true,
         },
@@ -277,12 +277,12 @@ export class CitizensService {
         digital_identifiers: true,
         applications: true,
         district: true,
-        mahalla: true,
+        neighborhood: true,
         occupation_category: true,
         occupation: true,
         workplace: {
           district: true,
-          mahalla: true,
+          neighborhood: true,
           occupation_category: true,
         },
       },
@@ -340,8 +340,8 @@ export class CitizensService {
     // Stale loaded relation ob'ektlarini tozalash (TypeORM FK yangilanishini bosib ketmasligi uchun)
     if (dto.district_id !== undefined)
       delete (citizen as unknown as Record<string, unknown>).district;
-    if (dto.mahalla_id !== undefined)
-      delete (citizen as unknown as Record<string, unknown>).mahalla;
+    if (dto.neighborhood_id !== undefined)
+      delete (citizen as unknown as Record<string, unknown>).neighborhood;
     if (dto.occupation_category_id !== undefined)
       delete (citizen as unknown as Record<string, unknown>).occupation_category;
     if (dto.occupation_id !== undefined)
@@ -417,7 +417,7 @@ export class CitizensService {
               cards: { bank: true },
               applications: true,
               district: true,
-              mahalla: true,
+              neighborhood: true,
               occupation_category: true,
               occupation: true,
               workplace: true,

@@ -2,13 +2,13 @@ import { Column, Entity, Index, JoinColumn, JoinTable, ManyToMany, ManyToOne } f
 
 import { BaseEntity } from '../../../common/database/base.entity';
 import { District } from '../districts/district.entity';
-import { Mahalla } from '../mahallas/mahalla.entity';
+import { Neighborhood } from '../neighborhoods/neighborhood.entity';
 import { Occupation } from '../occupations/occupation.entity';
 import { OccupationCategory } from '../occupations/occupation-category.entity';
 
 @Entity('workplaces')
 @Index('IDX_workplaces_district_id', ['district_id'])
-@Index('IDX_workplaces_mahalla_id', ['mahalla_id'])
+@Index('IDX_workplaces_neighborhood_id', ['neighborhood_id'])
 @Index('IDX_workplaces_category_id', ['occupation_category_id'])
 export class Workplace extends BaseEntity {
   @Column({ name: 'name', type: 'varchar', length: 255 })
@@ -21,12 +21,12 @@ export class Workplace extends BaseEntity {
   @JoinColumn({ name: 'district_id' })
   district: District | null;
 
-  @Column({ name: 'mahalla_id', type: 'uuid', nullable: true })
-  mahalla_id: string | null;
+  @Column({ name: 'neighborhood_id', type: 'uuid', nullable: true })
+  neighborhood_id: string | null;
 
-  @ManyToOne(() => Mahalla, { nullable: true, onDelete: 'SET NULL' })
-  @JoinColumn({ name: 'mahalla_id' })
-  mahalla: Mahalla | null;
+  @ManyToOne(() => Neighborhood, { nullable: true, onDelete: 'SET NULL' })
+  @JoinColumn({ name: 'neighborhood_id' })
+  neighborhood: Neighborhood | null;
 
   @Column({ name: 'occupation_category_id', type: 'uuid', nullable: true })
   occupation_category_id: string | null;

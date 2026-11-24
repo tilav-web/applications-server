@@ -525,7 +525,7 @@ export class TemplatesManagementService implements OnApplicationBootstrap {
         relations: {
           citizen: {
             district: true,
-            mahalla: true,
+            neighborhood: true,
           },
           crime: true,
           district: true,
@@ -541,7 +541,7 @@ export class TemplatesManagementService implements OnApplicationBootstrap {
           },
           application_status: true,
           custom_fields: {
-            citizen: { district: true, mahalla: true },
+            citizen: { district: true, neighborhood: true },
             card: { bank: true },
             crime: true,
             district: true,
@@ -592,7 +592,7 @@ export class TemplatesManagementService implements OnApplicationBootstrap {
           gender: 'male',
           address: 'Qarshi shahri, Mustaqillik ko‘chasi, 12-uy',
           district: { name: 'Qarshi shahri' },
-          mahalla: { name: 'Mustaqillik MFY' },
+          neighborhood: { name: 'Mustaqillik MFY' },
         },
         crime: {
           article: '168-modda',

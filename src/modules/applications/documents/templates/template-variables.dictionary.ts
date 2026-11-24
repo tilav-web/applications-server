@@ -101,8 +101,8 @@ export const TEMPLATE_VARIABLES_DICTIONARY: TemplateCategoryConfig[] = [
         sampleValue: 'Qarshi shahri',
       },
       {
-        tag: '{{citizen.mahalla.name}}',
-        rawKey: 'citizen.mahalla.name',
+        tag: '{{citizen.neighborhood.name}}',
+        rawKey: 'citizen.neighborhood.name',
         label: 'Yashash mahallasi (mahalla.name)',
         modelName: 'Citizen',
         description: 'Fuqaro yashaydigan mahalla nomi',

@@ -71,6 +71,9 @@ export class DetectedCrimeStatusesService implements OnModuleInit {
 
   async onModuleInit(): Promise<void> {
     try {
+      const count = await this.repo.count();
+      if (count > 0) return;
+
       for (const item of DEFAULT_DETECTED_CRIME_STATUSES) {
         const existing = await this.repo.findOne({
           where: [{ code: item.code }, { name: ILike(item.name) }],

@@ -729,7 +729,7 @@ export class DetectedCrimesService {
       .leftJoinAndSelect('dc.district', 'district')
       .leftJoinAndSelect('dc.suspects', 'suspects')
       .leftJoinAndSelect('suspects.citizen', 'citizen')
-      .leftJoinAndSelect('citizen.mahalla', 'mahalla')
+      .leftJoinAndSelect('citizen.neighborhood', 'neighborhood')
       .leftJoinAndSelect('citizen.district', 'citizen_district')
       .where('dc.is_deleted = false');
 
@@ -766,7 +766,13 @@ export class DetectedCrimesService {
     if (toDate) qb.andWhere('dc.detected_at <= :toDate', { toDate });
 
     const items = await qb.getMany();
-    const allDistricts = await this.districtRepo.find({ order: { name: 'ASC' } });
+    const allDistrictsRaw = await this.districtRepo.find({
+      relations: { region: true },
+      order: { name: 'ASC' },
+    });
+    const allDistricts = allDistrictsRaw.filter(
+      (d) => !d.region || d.region.code === 'QASHQADARYO',
+    );
     const scopedDistricts =
       assignedDistrictIds !== null
         ? allDistricts.filter((d) => assignedDistrictIds.includes(d.id))
@@ -774,19 +780,37 @@ export class DetectedCrimesService {
 
     const districtMap = new Map<
       string,
-      { id: string; name: string; count: number; totalLoss: number }
+      {
+        id: string;
+        name: string;
+        region_id: string | null;
+        latitude: number | null;
+        longitude: number | null;
+        count: number;
+        totalLoss: number;
+      }
     >();
     for (const d of scopedDistricts) {
-      districtMap.set(d.id, { id: d.id, name: d.name || '', count: 0, totalLoss: 0 });
+      districtMap.set(d.id, {
+        id: d.id,
+        name: d.name || '',
+        region_id: d.region_id ?? null,
+        latitude: d.latitude ?? null,
+        longitude: d.longitude ?? null,
+        count: 0,
+        totalLoss: 0,
+      });
     }
 
-    const mahallaMap = new Map<
+    const neighborhoodMap = new Map<
       string,
       {
         id: string;
         name: string;
         district_id: string;
         district_name: string | null;
+        latitude: number | null;
+        longitude: number | null;
         count: number;
         totalLoss: number;
       }
@@ -804,22 +828,24 @@ export class DetectedCrimesService {
       }
 
       // Gumonlanuvchilarning yashash mahallasi bo'yicha xarita nuqtalari
-      const countedMahallas = new Set<string>();
+      const countedNeighborhoods = new Set<string>();
       for (const s of dc.suspects || []) {
-        const m = s.citizen?.mahalla;
-        if (!m || countedMahallas.has(m.id)) continue;
-        countedMahallas.add(m.id);
-        const existing = mahallaMap.get(m.id) || {
-          id: m.id,
-          name: m.name,
-          district_id: m.district_id || s.citizen?.district_id || dc.district_id || '',
+        const n = s.citizen?.neighborhood;
+        if (!n || countedNeighborhoods.has(n.id)) continue;
+        countedNeighborhoods.add(n.id);
+        const existing = neighborhoodMap.get(n.id) || {
+          id: n.id,
+          name: n.name,
+          district_id: n.district_id || s.citizen?.district_id || dc.district_id || '',
           district_name: s.citizen?.district?.name || dc.district?.name || null,
+          latitude: n.latitude ?? null,
+          longitude: n.longitude ?? null,
           count: 0,
           totalLoss: 0,
         };
         existing.count += 1;
         existing.totalLoss += dmg;
-        mahallaMap.set(m.id, existing);
+        neighborhoodMap.set(n.id, existing);
       }
     }
 
@@ -831,18 +857,18 @@ export class DetectedCrimesService {
         percent: total > 0 ? Math.round((d.count / total) * 100) : 0,
       }));
 
-    const byMahalla = Array.from(mahallaMap.values())
+    const byNeighborhood = Array.from(neighborhoodMap.values())
       .sort((a, b) => b.count - a.count)
-      .map((m) => ({
-        ...m,
-        percent: total > 0 ? Math.round((m.count / total) * 100) : 0,
+      .map((n) => ({
+        ...n,
+        percent: total > 0 ? Math.round((n.count / total) * 100) : 0,
       }));
 
     return {
       total,
       totalDamage,
       byDistrict,
-      byMahalla,
+      byNeighborhood,
     };
   }
 
@@ -863,7 +889,7 @@ export class DetectedCrimesService {
       .leftJoinAndSelect('dc.suspects', 'suspects')
       .leftJoinAndSelect('suspects.citizen', 'suspect_citizen')
       .leftJoinAndSelect('suspect_citizen.district', 'suspect_district')
-      .leftJoinAndSelect('suspect_citizen.mahalla', 'suspect_mahalla')
+      .leftJoinAndSelect('suspect_citizen.neighborhood', 'suspect_neighborhood')
       .leftJoinAndSelect('suspect_citizen.occupation', 'suspect_occupation')
       .leftJoinAndSelect('suspect_citizen.workplace', 'suspect_workplace')
       .leftJoinAndSelect('dc.evidences', 'evidences')
@@ -1083,7 +1109,7 @@ export class DetectedCrimesService {
       { header: 'F.I.O.', key: 'name', width: 28 },
       { header: 'Pasport', key: 'passport', width: 16 },
       { header: 'Telefon', key: 'phone', width: 18 },
-      { header: 'Hudud (Tuman / Mahalla)', key: 'region', width: 26 },
+      { header: 'Hudud (Tuman / Neighborhood)', key: 'region', width: 26 },
       { header: 'Kasbi', key: 'occupation', width: 22 },
       { header: 'Ish joyi', key: 'workplace', width: 28 },
       { header: 'Jinoyatdagi roli', key: 'role', width: 22 },
@@ -1104,7 +1130,8 @@ export class DetectedCrimesService {
               .join(' ')
           : '—';
         const regionStr =
-          [s.citizen?.district?.name, s.citizen?.mahalla?.name].filter(Boolean).join(', ') || '—';
+          [s.citizen?.district?.name, s.citizen?.neighborhood?.name].filter(Boolean).join(', ') ||
+          '—';
         const row = ws2.addRow(
           sanitizeExcelRow({
             idx: sIdx,

@@ -15,7 +15,7 @@
     "start:prod": "node dist/main",
     "migration:run": "typeorm-ts-node-commonjs migration:run -d src/data-source.ts",
     "migration:revert": "typeorm-ts-node-commonjs migration:revert -d src/data-source.ts",
-    "seed:districts-mahallas": "ts-node src/scripts/seed-districts-mahallas.ts",
+    "seed:districts-neighborhoods": "ts-node src/scripts/seed-districts-neighborhoods.ts",
     "mockdata": "test -f src/scripts/mockdata.ts && ts-node src/scripts/mockdata.ts seed || node dist/scripts/mockdata.js seed",
     "mockdata:clean": "test -f src/scripts/mockdata.ts && ts-node src/scripts/mockdata.ts clean || node dist/scripts/mockdata.js clean",
     "statuses:sync": "test -f src/scripts/mockdata.ts && ts-node src/scripts/mockdata.ts statuses:sync || node dist/scripts/mockdata.js statuses:sync",

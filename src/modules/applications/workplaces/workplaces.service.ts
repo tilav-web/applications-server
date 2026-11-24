@@ -22,7 +22,7 @@ import { Workplace } from './workplace.entity';
 export interface CreateWorkplaceInput {
   name: string;
   district_id?: string | null;
-  mahalla_id?: string | null;
+  neighborhood_id?: string | null;
   occupation_category_id?: string | null;
   occupation_ids?: string[];
   address?: string | null;
@@ -53,6 +53,9 @@ export class WorkplacesService implements OnApplicationBootstrap {
 
   async seedDefaultWorkplaces(): Promise<void> {
     try {
+      const existingWorkplacesCount = await this.repo.count();
+      if (existingWorkplacesCount > 0) return;
+
       let districts = await this.districtRepo.find();
       if (districts.length === 0) {
         await this.districtsService.seedDefaultDistricts();
@@ -170,7 +173,7 @@ export class WorkplacesService implements OnApplicationBootstrap {
     const qb = this.repo
       .createQueryBuilder('w')
       .leftJoinAndSelect('w.district', 'district')
-      .leftJoinAndSelect('w.mahalla', 'mahalla')
+      .leftJoinAndSelect('w.neighborhood', 'neighborhood')
       .leftJoinAndSelect('w.occupation_category', 'occupation_category')
       .leftJoinAndSelect('w.occupations', 'occupations')
       .orderBy('w.name', 'ASC');
@@ -222,7 +225,12 @@ export class WorkplacesService implements OnApplicationBootstrap {
   async findOne(id: string): Promise<Workplace> {
     const wp = await this.repo.findOne({
       where: { id },
-      relations: { district: true, mahalla: true, occupation_category: true, occupations: true },
+      relations: {
+        district: true,
+        neighborhood: true,
+        occupation_category: true,
+        occupations: true,
+      },
     });
     if (!wp) throw new NotFoundException(`Ish joyi / tashkilot (ID: ${id}) topilmadi`);
     return wp;
@@ -268,8 +276,8 @@ export class WorkplacesService implements OnApplicationBootstrap {
 
     if (existing) {
       let dirty = false;
-      if (!existing.mahalla_id && data.mahalla_id) {
-        existing.mahalla_id = data.mahalla_id;
+      if (!existing.neighborhood_id && data.neighborhood_id) {
+        existing.neighborhood_id = data.neighborhood_id;
         dirty = true;
       }
       if (!existing.occupation_category_id && data.occupation_category_id) {
@@ -299,7 +307,7 @@ export class WorkplacesService implements OnApplicationBootstrap {
     const created = this.repo.create({
       name: cleanName,
       district_id: districtId,
-      mahalla_id: data.mahalla_id?.trim() || null,
+      neighborhood_id: data.neighborhood_id?.trim() || null,
       occupation_category_id: data.occupation_category_id?.trim() || null,
       occupations: resolvedOccupations || [],
       address: data.address?.trim() || null,
@@ -317,7 +325,7 @@ export class WorkplacesService implements OnApplicationBootstrap {
   async update(id: string, data: Partial<CreateWorkplaceInput>): Promise<Workplace> {
     const wp = await this.findOne(id);
     delete (wp as unknown as Record<string, unknown>).district;
-    delete (wp as unknown as Record<string, unknown>).mahalla;
+    delete (wp as unknown as Record<string, unknown>).neighborhood;
     delete (wp as unknown as Record<string, unknown>).occupation_category;
 
     if (data.name !== undefined) {
@@ -326,7 +334,7 @@ export class WorkplacesService implements OnApplicationBootstrap {
       wp.name = cleanName;
     }
     if (data.district_id !== undefined) wp.district_id = data.district_id || null;
-    if (data.mahalla_id !== undefined) wp.mahalla_id = data.mahalla_id || null;
+    if (data.neighborhood_id !== undefined) wp.neighborhood_id = data.neighborhood_id || null;
     if (data.occupation_category_id !== undefined) {
       wp.occupation_category_id = data.occupation_category_id || null;
     }

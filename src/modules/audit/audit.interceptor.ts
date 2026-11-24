@@ -137,7 +137,8 @@ function classifyAuditEvent(
     entityLabelUz = 'Audit / Xavfsizlik';
   } else if (
     path.startsWith('/districts') ||
-    path.startsWith('/mahallas') ||
+    path.startsWith('/regions') ||
+    path.startsWith('/neighborhoods') ||
     path.startsWith('/crimes') ||
     path.startsWith('/banks') ||
     path.startsWith('/payment-providers') ||

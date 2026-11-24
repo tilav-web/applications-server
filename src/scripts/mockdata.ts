@@ -15,7 +15,7 @@ import { ApplicationCustomField } from '../modules/applications/custom-fields/ap
 import { DecisionType } from '../modules/applications/decision-types/decision-type.entity';
 import { DepartmentService } from '../modules/applications/department-services/department-service.entity';
 import { District } from '../modules/applications/districts/district.entity';
-import { Mahalla } from '../modules/applications/mahallas/mahalla.entity';
+import { Neighborhood } from '../modules/applications/neighborhoods/neighborhood.entity';
 import { Occupation } from '../modules/applications/occupations/occupation.entity';
 import { OccupationCategory } from '../modules/applications/occupations/occupation-category.entity';
 import { RejectionReason } from '../modules/applications/rejection-reasons/rejection-reason.entity';
@@ -599,7 +599,7 @@ async function seedMockData(
 
   // 1. Master ma'lumotnomalarni bazadan o'qiymiz (dublikat yaratmaslik qoidasi!)
   const districtRepo = ds.getRepository(District);
-  const mahallaRepo = ds.getRepository(Mahalla);
+  const neighborhoodRepo = ds.getRepository(Neighborhood);
   const bankRepo = ds.getRepository(Bank);
   const providerRepo = ds.getRepository(PaymentProvider);
   const crimeRepo = ds.getRepository(Crime);
@@ -623,8 +623,8 @@ async function seedMockData(
     throw new Error('Bazada tumanlar topilmadi. Avval serverni ishga tushiring.');
   }
 
-  const allMahallas = await mahallaRepo.find();
-  const mahallasByDistrict = new Map<string, Mahalla[]>();
+  const allMahallas = await neighborhoodRepo.find();
+  const mahallasByDistrict = new Map<string, Neighborhood[]>();
   for (const m of allMahallas) {
     if (!m.district_id) continue;
     const list = mahallasByDistrict.get(m.district_id) ?? [];
@@ -812,7 +812,7 @@ async function seedMockData(
       passport,
       phone_number: genUniquePhone(),
       district,
-      mahalla,
+      neighborhood: mahalla,
       occCat,
       occ,
       address,
@@ -839,7 +839,7 @@ async function seedMockData(
         passport: p.passport,
         phone_number: p.phone_number,
         district_id: p.district.id,
-        mahalla_id: p.mahalla?.id || null,
+        neighborhood_id: p.neighborhood?.id || null,
         occupation_category_id: p.occCat?.id || null,
         occupation_id: p.occ?.id || null,
         address: p.address,
@@ -887,7 +887,7 @@ async function seedMockData(
           passport: p.passport,
           phone_number: p.phone_number,
           district_id: p.district.id,
-          mahalla_id: p.mahalla?.id || null,
+          neighborhood_id: p.neighborhood?.id || null,
           occupation_category_id: p.occCat?.id || null,
           occupation_id: p.occ?.id || null,
           address: p.address,

@@ -4,10 +4,10 @@ import { BaseEntity } from '../../../common/database/base.entity';
 import type { Citizen } from '../citizens/citizen.entity';
 import { District } from '../districts/district.entity';
 
-@Entity('mahallas')
-@Index('IDX_mahallas_district_id', ['district_id'])
-@Index('UQ_mahallas_district_name', ['district_id', 'name'], { unique: true })
-export class Mahalla extends BaseEntity {
+@Entity('neighborhoods')
+@Index('IDX_neighborhoods_district_id', ['district_id'])
+@Index('UQ_neighborhoods_district_name', ['district_id', 'name'], { unique: true })
+export class Neighborhood extends BaseEntity {
   @Column({
     name: 'name',
     type: 'varchar',
@@ -31,13 +31,27 @@ export class Mahalla extends BaseEntity {
   })
   tracking_id?: string | null;
 
-  @ManyToOne(() => District, (district) => district.mahallas, {
+  @Column({
+    name: 'latitude',
+    type: 'double precision',
+    nullable: true,
+  })
+  latitude: number | null;
+
+  @Column({
+    name: 'longitude',
+    type: 'double precision',
+    nullable: true,
+  })
+  longitude: number | null;
+
+  @ManyToOne(() => District, (district) => district.neighborhoods, {
     nullable: false,
     onDelete: 'CASCADE',
   })
   @JoinColumn({ name: 'district_id' })
   district: District;
 
-  @OneToMany('Citizen', 'mahalla')
+  @OneToMany('Citizen', 'neighborhood')
   citizens: Citizen[];
 }

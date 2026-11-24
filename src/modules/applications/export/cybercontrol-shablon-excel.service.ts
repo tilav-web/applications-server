@@ -155,8 +155,8 @@ export class CyberControlShablonExcelService {
       this.matchDistrict(fallbackDistrictName, refs.tumanlar) ||
       '';
 
-    // 4. Mahalla
-    const mahallaVal = this.matchMahalla(citizen?.mahalla?.name || '', refs.mahallalar);
+    // 4. Neighborhood
+    const mahallaVal = this.matchMahalla(citizen?.neighborhood?.name || '', refs.mahallalar);
 
     // 5. F.I.SH
     const fullName = citizen

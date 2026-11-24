@@ -210,7 +210,7 @@ export class ApplicationsStatisticsService {
       .leftJoinAndSelect('app.application_status', 'application_status')
       .leftJoinAndSelect('app.transfer', 'transfer')
       .leftJoinAndSelect('app.citizen', 'citizen')
-      .leftJoinAndSelect('citizen.mahalla', 'citizen_mahalla')
+      .leftJoinAndSelect('citizen.neighborhood', 'citizen_neighborhood')
       .leftJoinAndSelect('app.district', 'district')
       .leftJoinAndSelect('app.crime', 'crime')
       .leftJoinAndSelect('transfer.payment_provider', 'payment_provider')
@@ -351,15 +351,25 @@ export class ApplicationsStatisticsService {
 
     const districtMap = new Map<
       string,
-      { id: string; name: string; count: number; totalLoss: number }
+      {
+        id: string;
+        name: string;
+        region_id: string | null;
+        latitude: number | null;
+        longitude: number | null;
+        count: number;
+        totalLoss: number;
+      }
     >();
-    const mahallaMap = new Map<
+    const neighborhoodMap = new Map<
       string,
       {
         id: string;
         name: string;
         district_id: string;
         district_name: string | null;
+        latitude: number | null;
+        longitude: number | null;
         count: number;
         totalLoss: number;
       }
@@ -391,6 +401,9 @@ export class ApplicationsStatisticsService {
         const d = districtMap.get(app.district.id) || {
           id: app.district.id,
           name: app.district.name || 'Noma‘lum tuman',
+          region_id: app.district.region_id ?? null,
+          latitude: app.district.latitude ?? null,
+          longitude: app.district.longitude ?? null,
           count: 0,
           totalLoss: 0,
         };
@@ -399,19 +412,21 @@ export class ApplicationsStatisticsService {
         districtMap.set(app.district.id, d);
       }
 
-      if (app.citizen?.mahalla) {
-        const mKey = app.citizen.mahalla.id;
-        const m = mahallaMap.get(mKey) || {
-          id: app.citizen.mahalla.id,
-          name: app.citizen.mahalla.name,
-          district_id: app.citizen.mahalla.district_id,
+      if (app.citizen?.neighborhood) {
+        const nKey = app.citizen.neighborhood.id;
+        const n = neighborhoodMap.get(nKey) || {
+          id: app.citizen.neighborhood.id,
+          name: app.citizen.neighborhood.name,
+          district_id: app.citizen.neighborhood.district_id,
           district_name: app.district?.name || null,
+          latitude: app.citizen.neighborhood.latitude ?? null,
+          longitude: app.citizen.neighborhood.longitude ?? null,
           count: 0,
           totalLoss: 0,
         };
-        m.count++;
-        m.totalLoss += amount;
-        mahallaMap.set(mKey, m);
+        n.count++;
+        n.totalLoss += amount;
+        neighborhoodMap.set(nKey, n);
       }
 
       if (app.crime) {
@@ -630,16 +645,26 @@ export class ApplicationsStatisticsService {
       },
     ];
 
-    const allDbDistrictsRaw = await this.districtRepo.find({ order: { name: 'ASC' } });
+    const allDbDistrictsRaw = await this.districtRepo.find({
+      relations: { region: true },
+      order: { name: 'ASC' },
+    });
+    // Xarita va Qashqadaryo bo'limlari statistikasi uchun faqat Qashqadaryo viloyati tumanlarini 0 bilan oldindan to'ldiramiz
+    const qashqadaryoDistricts = allDbDistrictsRaw.filter(
+      (d) => !d.region || d.region.code === 'QASHQADARYO',
+    );
     const allDbDistricts =
       assignedDistrictIds !== null
-        ? allDbDistrictsRaw.filter((d) => assignedDistrictIds.includes(d.id))
-        : allDbDistrictsRaw;
+        ? qashqadaryoDistricts.filter((d) => assignedDistrictIds.includes(d.id))
+        : qashqadaryoDistricts;
     for (const d of allDbDistricts) {
       if (!districtMap.has(d.id)) {
         districtMap.set(d.id, {
           id: d.id,
           name: d.name || 'Noma‘lum tuman',
+          region_id: d.region_id ?? null,
+          latitude: d.latitude ?? null,
+          longitude: d.longitude ?? null,
           count: 0,
           totalLoss: 0,
         });
@@ -653,7 +678,7 @@ export class ApplicationsStatisticsService {
         percent: totalApplications > 0 ? Math.round((d.count / totalApplications) * 100) : 0,
       }));
 
-    const byMahalla = Array.from(mahallaMap.values())
+    const byNeighborhood = Array.from(neighborhoodMap.values())
       .sort((a, b) => b.count - a.count)
       .map((m) => ({
         ...m,
@@ -721,7 +746,7 @@ export class ApplicationsStatisticsService {
       timeline,
       byStatus,
       byDistrict,
-      byMahalla,
+      byNeighborhood,
       byCrime,
       byPaymentProvider,
       recentApplications,

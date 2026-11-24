@@ -1,4 +1,4 @@
-export interface SeedMahallaItem {
+export interface SeedNeighborhoodItem {
   district: string;
   name: string;
   tracking_id?: string;
@@ -23,7 +23,7 @@ export const DEFAULT_QASHQADARYO_DISTRICTS: string[] = [
   'Mirishkor t.',
 ];
 
-export const DEFAULT_QASHQADARYO_MAHALLAS: SeedMahallaItem[] = [
+export const DEFAULT_QASHQADARYO_NEIGHBORHOODS: SeedNeighborhoodItem[] = [
   {
     district: 'Qarshi sh.',
     name: 'A.Navoiy MFY',

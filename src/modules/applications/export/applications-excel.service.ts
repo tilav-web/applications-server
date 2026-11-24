@@ -141,7 +141,7 @@ export class ApplicationsExcelService {
       { header: 'Murojaat Manbasi', key: 'source', width: 18 }, // D (4)
       { header: 'Holati (JPK)', key: 'status', width: 24 }, // E (5)
       { header: 'Hudud (Tuman)', key: 'district', width: 18 }, // F (6)
-      { header: 'Mahalla', key: 'mahalla', width: 22 }, // G (7)
+      { header: 'Neighborhood', key: 'neighborhood', width: 22 }, // G (7)
       { header: 'Jinoyat Moddasi', key: 'crime', width: 24 }, // H (8)
       { header: 'Jinoyat Usuli', key: 'crime_method', width: 28 }, // I (9)
       { header: 'Arizachi (F.I.SH)', key: 'citizen_name', width: 28 }, // J (10)
@@ -259,7 +259,7 @@ export class ApplicationsExcelService {
           source: app.source?.name || '—',
           status: statusName,
           district: app.district?.name || citizen?.district?.name || '—',
-          mahalla: citizen?.mahalla?.name || '—',
+          neighborhood: citizen?.neighborhood?.name || '—',
           crime: app.crime ? app.crime.article || app.crime.title : '—',
           crime_method: app.crime_method?.name || '—',
           citizen_name: citizenName,

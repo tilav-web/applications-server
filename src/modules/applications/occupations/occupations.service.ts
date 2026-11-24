@@ -16,7 +16,7 @@ export class OccupationsService implements OnModuleInit {
   ) {}
 
   async onModuleInit(): Promise<void> {
-    await this.seedDefaults();
+    await this.seedDefaults(false);
   }
 
   // ==========================================================================
@@ -59,12 +59,16 @@ export class OccupationsService implements OnModuleInit {
     is_active?: boolean;
   }): Promise<OccupationCategory> {
     const cleanName = data.name.trim();
+    const cleanCode = data.code?.trim() || null;
     if (!cleanName) throw new BadRequestException('Nom kiritilishi shart');
 
-    const existing = await this.categoryRepo
+    const qb = this.categoryRepo
       .createQueryBuilder('c')
-      .where('LOWER(c.name) = LOWER(:name)', { name: cleanName })
-      .getOne();
+      .where('LOWER(c.name) = LOWER(:name)', { name: cleanName });
+    if (cleanCode) {
+      qb.orWhere('LOWER(c.code) = LOWER(:code)', { code: cleanCode });
+    }
+    const existing = await qb.getOne();
 
     if (existing) {
       return existing;
@@ -72,7 +76,7 @@ export class OccupationsService implements OnModuleInit {
 
     const category = this.categoryRepo.create({
       name: cleanName,
-      code: data.code?.trim() || null,
+      code: cleanCode,
       sort_order: data.sort_order ?? 0,
       is_active: data.is_active ?? true,
     });
@@ -103,11 +107,6 @@ export class OccupationsService implements OnModuleInit {
 
   async removeCategory(id: string): Promise<{ success: boolean; message: string }> {
     const cat = await this.findCategoryById(id);
-    await assertNoDependencies(this.categoryRepo.manager, `«${cat.name}» kasb toifasi`, cat.id, [
-      { table: 'citizens', column: 'occupation_category_id', label: 'fuqaro' },
-      { table: 'workplaces', column: 'occupation_category_id', label: 'ish joyi / tashkilot' },
-      { table: 'occupations', column: 'category_id', label: 'kasb turi' },
-    ]);
     await assertNoDependencies(this.categoryRepo.manager, `«${cat.name}» kasb toifasi`, cat.id, [
       { table: 'citizens', column: 'occupation_category_id', label: 'fuqaro' },
       { table: 'workplaces', column: 'occupation_category_id', label: 'ish joyi / tashkilot' },
@@ -237,7 +236,14 @@ export class OccupationsService implements OnModuleInit {
   // ==========================================================================
   // SEED DEFAULT OCCUPATIONS (O'zbekistonda keng tarqalgan kasb toifalari va turlari)
   // ==========================================================================
-  async seedDefaults(): Promise<void> {
+  async seedDefaults(force = false): Promise<void> {
+    // Agar bazada kasb toifalari allaqachon mavjud bo'lsa, server qayta ishga tushganda
+    // hodim tomonidan o'zgartirilgan/o'chirilgan yozuvlarni qayta yaratmaymiz
+    if (!force) {
+      const existingCount = await this.categoryRepo.count();
+      if (existingCount > 0) return;
+    }
+
     const initialData: { code: string; category: string; items: string[] }[] = [
       {
         code: 'DAVLAT_XIZMATI',
@@ -405,7 +411,8 @@ export class OccupationsService implements OnModuleInit {
       },
     ];
 
-    // 1. Yangi default toifalar va kasb turlarini yaratish / tartibini yangilash
+    // Boshlang'ich toifalar va kasb turlarini yaratish (mavjud bo'lsa code/name bo'yicha o'tkazib yuboradi,
+    // hodim o'zgartirgan nom, tartib yoki faollik holatiga tegmaydi)
     let order = 1;
     for (const group of initialData) {
       const cat = await this.createCategory({
@@ -415,108 +422,21 @@ export class OccupationsService implements OnModuleInit {
         is_active: true,
       });
 
-      if (cat.sort_order !== order || cat.code !== group.code || !cat.is_active) {
-        cat.sort_order = order;
+      if (!cat.code) {
         cat.code = group.code;
-        cat.is_active = true;
         await this.categoryRepo.save(cat);
       }
       order++;
 
       let occOrder = 1;
       for (const itemName of group.items) {
-        const occ = await this.createOccupation({
+        await this.createOccupation({
           category_id: cat.id,
           name: itemName,
           sort_order: occOrder,
           is_active: true,
         });
-
-        if (occ.sort_order !== occOrder || !occ.is_active) {
-          occ.sort_order = occOrder;
-          occ.is_active = true;
-          await this.occupationRepo.save(occ);
-        }
         occOrder++;
-      }
-    }
-
-    // 2. Eski (aralashib ketgan) default toifalarni xavfsiz tozalash:
-    //    bog'lanmagan bo'lsa o'chiriladi, fuqarolar/ish joylariga bog'langan bo'lsa nofaol qilinadi.
-    const legacyCategoryNames = [
-      'Xususiy sektor tadbirkorlar',
-      "To'lov tashkilotlari",
-      "Ta'lim tashkilotlari",
-      'Tibbiyot sohasidagi hodimlar',
-      'Davlat korxona va tashkilotlar ishchilari',
-      'HMQO organlari hodimlar',
-      "Nafaqaxo'rlar",
-      'Vaqtincha ishsizlar',
-    ];
-
-    for (const legacyName of legacyCategoryNames) {
-      const legacyCat = await this.categoryRepo
-        .createQueryBuilder('c')
-        .where('LOWER(c.name) = LOWER(:name)', { name: legacyName })
-        .getOne();
-      if (!legacyCat) continue;
-
-      const citizenRefs: Array<{ cnt: number }> = await this.categoryRepo.manager.query(
-        `SELECT COUNT(*)::int AS cnt FROM citizens
-         WHERE occupation_category_id = $1
-            OR occupation_id IN (SELECT id FROM occupations WHERE category_id = $1)`,
-        [legacyCat.id],
-      );
-      const workplaceRefs: Array<{ cnt: number }> = await this.categoryRepo.manager.query(
-        `SELECT COUNT(*)::int AS cnt FROM workplaces WHERE occupation_category_id = $1`,
-        [legacyCat.id],
-      );
-      const citizenRefCount = citizenRefs[0]?.cnt ?? 0;
-      const workplaceRefCount = workplaceRefs[0]?.cnt ?? 0;
-
-      if (citizenRefCount === 0 && workplaceRefCount === 0) {
-        await this.categoryRepo.remove(legacyCat);
-      } else {
-        legacyCat.is_active = false;
-        await this.categoryRepo.save(legacyCat);
-        await this.occupationRepo.update({ category_id: legacyCat.id }, { is_active: false });
-      }
-    }
-
-    // 3. "Chet el fuqarolari" ichidagi eski dublikat/ko'plikdagi yozuvlarni xavfsiz tozalash
-    const foreignCat = await this.categoryRepo
-      .createQueryBuilder('c')
-      .where('LOWER(c.name) = LOWER(:name)', { name: 'Chet el fuqarolari' })
-      .getOne();
-    if (foreignCat) {
-      const legacyForeignItems = [
-        'Chet el fuqarolari',
-        'Sayyohlar / Chet el mehmonlari',
-        'Xorijiy kompaniya vakillari',
-        'Xorijiy talabalar',
-      ];
-      for (const legacyItemName of legacyForeignItems) {
-        const legacyOcc = await this.occupationRepo
-          .createQueryBuilder('o')
-          .where('o.category_id = :catId AND LOWER(o.name) = LOWER(:name)', {
-            catId: foreignCat.id,
-            name: legacyItemName,
-          })
-          .getOne();
-        if (!legacyOcc) continue;
-
-        const occRefs: Array<{ cnt: number }> = await this.occupationRepo.manager.query(
-          `SELECT COUNT(*)::int AS cnt FROM citizens WHERE occupation_id = $1`,
-          [legacyOcc.id],
-        );
-        const refCount = occRefs[0]?.cnt ?? 0;
-
-        if (refCount === 0) {
-          await this.occupationRepo.remove(legacyOcc);
-        } else {
-          legacyOcc.is_active = false;
-          await this.occupationRepo.save(legacyOcc);
-        }
       }
     }
   }

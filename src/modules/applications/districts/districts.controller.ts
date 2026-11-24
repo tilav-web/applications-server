@@ -4,6 +4,7 @@ import {
   Delete,
   Get,
   Param,
+  ParseUUIDPipe,
   Patch,
   Post,
   Query,
@@ -35,25 +36,26 @@ export class DistrictsController {
     @Query('page') page?: number,
     @Query('limit') limit?: number,
     @Query('search') search?: string,
+    @Query('region_id') regionId?: string,
   ) {
-    const pagination = normalizePagination(page, limit, 50);
-    return this.districtsService.findAll(pagination.page, pagination.limit, search);
+    const pagination = normalizePagination(page, limit, 50, 500);
+    return this.districtsService.findAll(pagination.page, pagination.limit, search, regionId);
   }
 
   @Get(':id')
-  findOne(@Param('id') id: string) {
+  findOne(@Param('id', ParseUUIDPipe) id: string) {
     return this.districtsService.findOne(id);
   }
 
   @Patch(':id')
   @Roles(Role.SUPER_ADMIN, Role.ADMIN, Role.INSPECTOR, Role.STAFF)
-  update(@Param('id') id: string, @Body() dto: UpdateDistrictDto) {
+  update(@Param('id', ParseUUIDPipe) id: string, @Body() dto: UpdateDistrictDto) {
     return this.districtsService.update(id, dto);
   }
 
   @Delete(':id')
   @Roles(Role.SUPER_ADMIN, Role.ADMIN, Role.STAFF)
-  remove(@Param('id') id: string) {
+  remove(@Param('id', ParseUUIDPipe) id: string) {
     return this.districtsService.remove(id);
   }
 }

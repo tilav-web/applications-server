@@ -19,7 +19,7 @@ import type { DigitalIdentifierEntity } from '../../intelligence/entities/digita
 import type { PhoneEntity } from '../../intelligence/entities/phone.entity';
 import type { Application } from '../application.entity';
 import { District } from '../districts/district.entity';
-import { Mahalla } from '../mahallas/mahalla.entity';
+import { Neighborhood } from '../neighborhoods/neighborhood.entity';
 import { Occupation } from '../occupations/occupation.entity';
 import { OccupationCategory } from '../occupations/occupation-category.entity';
 import type { Card } from '../transfers/cards/card.entity';
@@ -36,7 +36,7 @@ import { Workplace } from '../workplaces/workplace.entity';
 })
 @Index('IDX_citizens_phone_number', ['phone_number'])
 @Index('IDX_citizens_district_id', ['district_id'])
-@Index('IDX_citizens_mahalla_id', ['mahalla_id'])
+@Index('IDX_citizens_neighborhood_id', ['neighborhood_id'])
 export class Citizen extends BaseEntity {
   @Column({
     name: 'first_name',
@@ -124,18 +124,18 @@ export class Citizen extends BaseEntity {
   district: District | null;
 
   @Column({
-    name: 'mahalla_id',
+    name: 'neighborhood_id',
     type: 'uuid',
     nullable: true,
   })
-  mahalla_id: string | null;
+  neighborhood_id: string | null;
 
-  @ManyToOne(() => Mahalla, (mahalla) => mahalla.citizens, {
+  @ManyToOne(() => Neighborhood, (neighborhood) => neighborhood.citizens, {
     nullable: true,
     onDelete: 'SET NULL',
   })
-  @JoinColumn({ name: 'mahalla_id' })
-  mahalla: Mahalla | null;
+  @JoinColumn({ name: 'neighborhood_id' })
+  neighborhood: Neighborhood | null;
 
   @Column({
     name: 'occupation_category_id',

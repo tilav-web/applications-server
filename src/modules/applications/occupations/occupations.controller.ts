@@ -105,7 +105,7 @@ export class OccupationsController {
   @Post('occupations/seed')
   @Roles(Role.SUPER_ADMIN, Role.ADMIN, Role.STAFF)
   async seed() {
-    await this.occupationsService.seedDefaults();
+    await this.occupationsService.seedDefaults(true);
     return { success: true, message: 'Boshlang‘ich kasb toifalari muvaffaqiyatli saqlandi' };
   }
 }

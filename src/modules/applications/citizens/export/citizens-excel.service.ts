@@ -32,7 +32,7 @@ export class CitizensExcelService {
       { header: 'Asosiy Telefon', key: 'phone', width: 18 }, // G
       { header: "Qo'shimcha Telefonlar", key: 'extra_phones', width: 24 }, // H
       { header: 'Tuman / Shahar', key: 'district', width: 18 }, // I
-      { header: 'Mahalla', key: 'mahalla', width: 22 }, // J
+      { header: 'Neighborhood', key: 'neighborhood', width: 22 }, // J
       { header: 'Yashash Manzili', key: 'address', width: 32 }, // K
       { header: 'Kasb Toifasi', key: 'occ_category', width: 24 }, // L
       { header: 'Kasb Turi', key: 'occupation', width: 24 }, // M
@@ -97,7 +97,7 @@ export class CitizensExcelService {
           phone: primaryPhone || '—',
           extra_phones: extraPhonesList.join(', ') || '—',
           district: citizen.district?.name || '—',
-          mahalla: citizen.mahalla?.name || '—',
+          neighborhood: citizen.neighborhood?.name || '—',
           address: citizen.address || '—',
           occ_category: citizen.occupation_category?.name || '—',
           occupation: citizen.occupation?.name || '—',

@@ -478,7 +478,7 @@ export class ApplicationsRelationsService {
             where: { id: In(candidateIds), is_deleted: false },
             relations: {
               application_status: true,
-              citizen: { district: true, mahalla: true },
+              citizen: { district: true, neighborhood: true },
               district: true,
               crime: true,
               crime_method: { fields: true },
@@ -491,7 +491,7 @@ export class ApplicationsRelationsService {
                 custom_fields: { card: { bank: true }, citizen: true },
               },
               custom_fields: {
-                citizen: { district: true, mahalla: true },
+                citizen: { district: true, neighborhood: true },
                 card: { bank: true, citizen: true },
                 crime: true,
                 district: true,

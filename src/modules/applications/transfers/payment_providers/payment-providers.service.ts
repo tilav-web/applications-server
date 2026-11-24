@@ -52,6 +52,9 @@ export class PaymentProvidersService implements OnModuleInit {
   }
 
   async seedDefaults(): Promise<void> {
+    const count = await this.providerRepo.count();
+    if (count > 0) return;
+
     for (const item of DEFAULT_PAYMENT_PROVIDERS) {
       const existing = await this.providerRepo.findOne({
         where: [{ code: item.code }, { name: ILike(item.name) }],

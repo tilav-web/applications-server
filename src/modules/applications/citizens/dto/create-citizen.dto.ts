@@ -69,7 +69,7 @@ export class CreateCitizenDto {
 
   @IsOptional()
   @IsString()
-  mahalla_id?: string | null;
+  neighborhood_id?: string | null;
 
   @IsOptional()
   @IsString()

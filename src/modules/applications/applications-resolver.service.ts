@@ -17,7 +17,7 @@ import { ApplicationCustomField } from './custom-fields/application-custom-field
 import { District } from './districts/district.entity';
 import type { CreateApplicationDto } from './dto/create-application.dto';
 import type { UpdateApplicationDto } from './dto/update-application.dto';
-import { Mahalla } from './mahallas/mahalla.entity';
+import { Neighborhood } from './neighborhoods/neighborhood.entity';
 import { ApplicationStatus as ApplicationStatusEntity } from './statuses/application-status.entity';
 import { Bank } from './transfers/banks/bank.entity';
 import { Card } from './transfers/cards/card.entity';
@@ -60,7 +60,7 @@ export class ApplicationsResolverService {
     const citizenRepo = manager.getRepository(Citizen);
     const crimeRepo = manager.getRepository(Crime);
     const districtRepo = manager.getRepository(District);
-    const mahallaRepo = manager.getRepository(Mahalla);
+    const neighborhoodRepo = manager.getRepository(Neighborhood);
     const cardRepo = manager.getRepository(Card);
     const transferRepo = manager.getRepository(Transfer);
     const bankRepo = manager.getRepository(Bank);
@@ -102,26 +102,26 @@ export class ApplicationsResolverService {
           citDistrictId = d.id;
         }
 
-        let citMahallaId = cData.mahalla_id || null;
+        let citNeighborhoodId = cData.neighborhood_id || null;
         if (
-          !citMahallaId &&
-          typeof cData.mahalla_name === 'string' &&
-          cData.mahalla_name.trim() &&
+          !citNeighborhoodId &&
+          typeof cData.neighborhood_name === 'string' &&
+          cData.neighborhood_name.trim() &&
           citDistrictId
         ) {
-          const mNameStr = cData.mahalla_name.trim();
-          let m = await mahallaRepo.findOne({
+          const mNameStr = cData.neighborhood_name.trim();
+          let m = await neighborhoodRepo.findOne({
             where: { name: ILike(mNameStr), district_id: citDistrictId },
           });
           if (!m) {
-            m = await mahallaRepo.save(
-              mahallaRepo.create({ name: mNameStr, district_id: citDistrictId }),
+            m = await neighborhoodRepo.save(
+              neighborhoodRepo.create({ name: mNameStr, district_id: citDistrictId }),
             );
           }
-          citMahallaId = m.id;
+          citNeighborhoodId = m.id;
         }
 
-        if (fName || lName || pass || pinfl || pNum || citDistrictId || citMahallaId) {
+        if (fName || lName || pass || pinfl || pNum || citDistrictId || citNeighborhoodId) {
           let existingCitizen: Citizen | null = null;
           if (pass) {
             existingCitizen = await citizenRepo.findOne({ where: { passport: pass } });
@@ -147,8 +147,8 @@ export class ApplicationsResolverService {
               existingCitizen.gender = cData.gender as 'male' | 'female';
             if (citDistrictId && !existingCitizen.district_id)
               existingCitizen.district_id = citDistrictId;
-            if (citMahallaId && !existingCitizen.mahalla_id)
-              existingCitizen.mahalla_id = citMahallaId;
+            if (citNeighborhoodId && !existingCitizen.neighborhood_id)
+              existingCitizen.neighborhood_id = citNeighborhoodId;
             await citizenRepo.save(existingCitizen);
             citizenId = existingCitizen.id;
           } else {
@@ -163,7 +163,7 @@ export class ApplicationsResolverService {
               gender: (cData.gender as 'male' | 'female') || null,
               address: addr,
               district_id: citDistrictId,
-              mahalla_id: citMahallaId,
+              neighborhood_id: citNeighborhoodId,
             });
             const savedCitizen = await citizenRepo.save(createdCitizen);
             citizenId = savedCitizen.id;
@@ -392,7 +392,7 @@ export class ApplicationsResolverService {
     const citizenRepo = manager.getRepository(Citizen);
     const crimeRepo = manager.getRepository(Crime);
     const districtRepo = manager.getRepository(District);
-    const mahallaRepo = manager.getRepository(Mahalla);
+    const neighborhoodRepo = manager.getRepository(Neighborhood);
     const cardRepo = manager.getRepository(Card);
     const transferRepo = manager.getRepository(Transfer);
     const bankRepo = manager.getRepository(Bank);
@@ -480,29 +480,29 @@ export class ApplicationsResolverService {
           citDistrictId = d.id;
         }
 
-        let citMahallaId = data.mahalla_id || null;
+        let citNeighborhoodId = data.neighborhood_id || null;
         if (
-          !citMahallaId &&
-          typeof data.mahalla_name === 'string' &&
-          data.mahalla_name.trim() &&
+          !citNeighborhoodId &&
+          typeof data.neighborhood_name === 'string' &&
+          data.neighborhood_name.trim() &&
           citDistrictId
         ) {
-          const mName = data.mahalla_name.trim();
-          let m = await mahallaRepo.findOne({
+          const mName = data.neighborhood_name.trim();
+          let m = await neighborhoodRepo.findOne({
             where: { name: ILike(mName), district_id: citDistrictId },
           });
           if (!m) {
-            m = await mahallaRepo.save(
-              mahallaRepo.create({ name: formatTitleCase(mName), district_id: citDistrictId }),
+            m = await neighborhoodRepo.save(
+              neighborhoodRepo.create({ name: formatTitleCase(mName), district_id: citDistrictId }),
             );
           }
-          citMahallaId = m.id;
+          citNeighborhoodId = m.id;
         }
 
         if (citDistrictId !== null || data.district_id !== undefined)
           existing.district_id = citDistrictId;
-        if (citMahallaId !== null || data.mahalla_id !== undefined)
-          existing.mahalla_id = citMahallaId;
+        if (citNeighborhoodId !== null || data.neighborhood_id !== undefined)
+          existing.neighborhood_id = citNeighborhoodId;
         if (data.address !== undefined) existing.address = data.address || null;
         if (data.birth_date !== undefined) existing.birth_date = data.birth_date || null;
         if (data.gender !== undefined) existing.gender = (data.gender as 'male' | 'female') || null;
@@ -548,23 +548,23 @@ export class ApplicationsResolverService {
           citDistrictId = d.id;
         }
 
-        let citMahallaId = data.mahalla_id || null;
+        let citNeighborhoodId = data.neighborhood_id || null;
         if (
-          !citMahallaId &&
-          typeof data.mahalla_name === 'string' &&
-          data.mahalla_name.trim() &&
+          !citNeighborhoodId &&
+          typeof data.neighborhood_name === 'string' &&
+          data.neighborhood_name.trim() &&
           citDistrictId
         ) {
-          const mName = data.mahalla_name.trim();
-          let m = await mahallaRepo.findOne({
+          const mName = data.neighborhood_name.trim();
+          let m = await neighborhoodRepo.findOne({
             where: { name: ILike(mName), district_id: citDistrictId },
           });
           if (!m) {
-            m = await mahallaRepo.save(
-              mahallaRepo.create({ name: formatTitleCase(mName), district_id: citDistrictId }),
+            m = await neighborhoodRepo.save(
+              neighborhoodRepo.create({ name: formatTitleCase(mName), district_id: citDistrictId }),
             );
           }
-          citMahallaId = m.id;
+          citNeighborhoodId = m.id;
         }
 
         const fName = data.first_name ? formatUzbekName(data.first_name) : null;
@@ -575,8 +575,8 @@ export class ApplicationsResolverService {
           // Avto-biriktirilganda mavjud ma'lumotlarni buzib yubormasdan faqat bo'sh maydonlarni to'ldiramiz
           if (citDistrictId && !existingCitizen.district_id)
             existingCitizen.district_id = citDistrictId;
-          if (citMahallaId && !existingCitizen.mahalla_id)
-            existingCitizen.mahalla_id = citMahallaId;
+          if (citNeighborhoodId && !existingCitizen.neighborhood_id)
+            existingCitizen.neighborhood_id = citNeighborhoodId;
           if (data.address && !existingCitizen.address) existingCitizen.address = data.address;
           if (data.birth_date && !existingCitizen.birth_date)
             existingCitizen.birth_date = data.birth_date;
@@ -608,7 +608,7 @@ export class ApplicationsResolverService {
             gender: (data.gender as 'male' | 'female') || null,
             address: data.address ? data.address.trim() : null,
             district_id: citDistrictId,
-            mahalla_id: citMahallaId,
+            neighborhood_id: citNeighborhoodId,
             occupation_category_id: data.occupation_category_id || null,
             occupation_id: data.occupation_id || null,
           });
@@ -858,7 +858,7 @@ export class ApplicationsResolverService {
         const wp = await this.workplacesService.findOrCreate({
           name: wpData.name,
           district_id: wpData.district_id || null,
-          mahalla_id: wpData.mahalla_id || null,
+          neighborhood_id: wpData.neighborhood_id || null,
           occupation_category_id: wpData.occupation_category_id || null,
           address: wpData.address || null,
           inn: wpData.inn || null,

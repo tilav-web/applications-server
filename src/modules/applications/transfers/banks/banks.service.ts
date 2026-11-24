@@ -59,6 +59,9 @@ export class BanksService implements OnModuleInit {
   }
 
   async seedDefaults(): Promise<void> {
+    const count = await this.bankRepo.count();
+    if (count > 0) return;
+
     for (const item of DEFAULT_UZBEKISTAN_BANKS) {
       const existing = await this.bankRepo.findOne({
         where: [{ name: ILike(item.name) }, { mfo: item.mfo }],

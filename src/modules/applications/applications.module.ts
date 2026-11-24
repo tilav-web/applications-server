@@ -27,11 +27,13 @@ import { ApplicationDocument } from './documents/application-document.entity';
 import { DocumentsModule } from './documents/documents.module';
 import { ApplicationsExcelService } from './export/applications-excel.service';
 import { CyberControlShablonExcelService } from './export/cybercontrol-shablon-excel.service';
-import { Mahalla } from './mahallas/mahalla.entity';
-import { MahallasModule } from './mahallas/mahallas.module';
+import { Neighborhood } from './neighborhoods/neighborhood.entity';
+import { NeighborhoodsModule } from './neighborhoods/neighborhoods.module';
 import { Occupation } from './occupations/occupation.entity';
 import { OccupationCategory } from './occupations/occupation-category.entity';
 import { OccupationsModule } from './occupations/occupations.module';
+import { Region } from './regions/region.entity';
+import { RegionsModule } from './regions/regions.module';
 import { RejectionReason } from './rejection-reasons/rejection-reason.entity';
 import { RejectionReasonsModule } from './rejection-reasons/rejection-reasons.module';
 import { ApplicationsReportsController } from './reports/applications-reports.controller';
@@ -64,8 +66,9 @@ import { WorkplacesModule } from './workplaces/workplaces.module';
       Citizen,
       Crime,
       CrimeMethod,
+      Region,
       District,
-      Mahalla,
+      Neighborhood,
       Card,
       Transfer,
       Bank,
@@ -87,8 +90,9 @@ import { WorkplacesModule } from './workplaces/workplaces.module';
     CitizensModule,
     CrimesModule,
     CrimeMethodsModule,
+    RegionsModule,
     DistrictsModule,
-    MahallasModule,
+    NeighborhoodsModule,
     ApplicationStatusesModule,
     SuspectFieldConfigsModule,
     BanksModule,
@@ -130,6 +134,7 @@ import { WorkplacesModule } from './workplaces/workplaces.module';
     RejectionReasonsModule,
     DecisionTypesModule,
     WorkplacesModule,
+    RegionsModule,
   ],
 })
 export class ApplicationsModule {}

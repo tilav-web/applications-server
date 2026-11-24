@@ -27,6 +27,9 @@ export class CrimesService implements OnModuleInit {
   ) {}
 
   async onModuleInit() {
+    const count = await this.crimeRepo.count();
+    if (count > 0) return;
+
     for (const name of DEFAULT_CRIMES) {
       const existing = await this.crimeRepo.findOne({
         where: [{ article: ILike(name) }, { title: ILike(name) }],

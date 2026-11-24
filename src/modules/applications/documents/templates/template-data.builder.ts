@@ -88,10 +88,10 @@ export function buildTemplateContext(
   const cShortName = cLast ? `${cFirst ? cFirst[0] + '.' : ''}${cLast}` : cFullName;
 
   const citizenDistrictName = citizen?.district?.name || district?.name || '';
-  const citizenMahallaName = citizen?.mahalla?.name || '';
+  const citizenNeighborhoodName = citizen?.neighborhood?.name || '';
   const citizenFullAddress = citizen?.address
     ? citizen.address
-    : [citizenDistrictName, citizenMahallaName].filter(Boolean).join(', ');
+    : [citizenDistrictName, citizenNeighborhoodName].filter(Boolean).join(', ');
 
   const citizenBirthDateRaw = citizen?.birth_date || '';
   const citizenBirthDateText = formatDateUzbek(citizenBirthDateRaw, script);
@@ -394,10 +394,16 @@ export function buildTemplateContext(
         id: citizen?.district?.id || '',
         name: adapt(citizenDistrictName),
       },
+      neighborhood: {
+        id: citizen?.neighborhood?.id || '',
+        name: adapt(citizenNeighborhoodName),
+        tracking_id: citizen?.neighborhood?.tracking_id || '',
+      },
+      // Eski .docx shablonlar (`{{citizen.mahalla.name}}`) bilan moslik uchun alias
       mahalla: {
-        id: citizen?.mahalla?.id || '',
-        name: adapt(citizenMahallaName),
-        tracking_id: citizen?.mahalla?.tracking_id || '',
+        id: citizen?.neighborhood?.id || '',
+        name: adapt(citizenNeighborhoodName),
+        tracking_id: citizen?.neighborhood?.tracking_id || '',
       },
       // Backwards-compatible aliases
       full_name: adapt(cFullName),

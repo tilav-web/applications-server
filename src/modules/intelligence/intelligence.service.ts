@@ -1474,12 +1474,12 @@ export class IntelligenceService {
       where: { id: citizenId },
       relations: {
         district: true,
-        mahalla: true,
+        neighborhood: true,
         occupation_category: true,
         occupation: true,
         workplace: {
           district: true,
-          mahalla: true,
+          neighborhood: true,
           occupation_category: true,
         },
       },
@@ -1983,7 +1983,7 @@ export class IntelligenceService {
       where: { id: cardId },
       relations: {
         bank: true,
-        citizen: { district: true, mahalla: true },
+        citizen: { district: true, neighborhood: true },
       },
     });
 
@@ -2305,7 +2305,7 @@ export class IntelligenceService {
   ): Promise<FullDossierResponse> {
     const phone = await this.phoneRepo.findOne({
       where: { id: phoneId },
-      relations: { citizen: { district: true, mahalla: true } },
+      relations: { citizen: { district: true, neighborhood: true } },
     });
     if (!phone) {
       throw new NotFoundException(`Telefon raqam (ID: ${phoneId}) topilmadi`);
@@ -2520,7 +2520,7 @@ export class IntelligenceService {
   ): Promise<FullDossierResponse> {
     const identifier = await this.identifierRepo.findOne({
       where: { id: identifierId },
-      relations: { citizen: { district: true, mahalla: true } },
+      relations: { citizen: { district: true, neighborhood: true } },
     });
     if (!identifier) {
       throw new NotFoundException(`Raqamli identifikator (ID: ${identifierId}) topilmadi`);

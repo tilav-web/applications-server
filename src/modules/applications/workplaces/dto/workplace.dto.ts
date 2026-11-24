@@ -20,7 +20,7 @@ export class CreateWorkplaceDto {
 
   @IsOptional()
   @IsUUID()
-  mahalla_id?: string | null;
+  neighborhood_id?: string | null;
 
   @IsOptional()
   @IsUUID()
@@ -58,7 +58,7 @@ export class UpdateWorkplaceDto {
 
   @IsOptional()
   @IsUUID()
-  mahalla_id?: string | null;
+  neighborhood_id?: string | null;
 
   @IsOptional()
   @IsUUID()
