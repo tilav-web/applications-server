@@ -5,6 +5,7 @@ import cookieParser from 'cookie-parser';
 import helmet from 'helmet';
 
 import { AppModule } from './app.module';
+import { LatinNormalizePipe } from './common/pipes/latin-normalize.pipe';
 
 async function bootstrap() {
   const logger = new Logger('Bootstrap');
@@ -23,6 +24,7 @@ async function bootstrap() {
   app.use(cookieParser());
 
   app.useGlobalPipes(
+    new LatinNormalizePipe(),
     new ValidationPipe({
       whitelist: true,
       transform: true,

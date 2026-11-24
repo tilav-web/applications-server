@@ -3,56 +3,7 @@
  * Qonunchilik va rasmiy hujjatlar standartlariga to'liq moslangan.
  */
 
-const CYR_TO_LAT_MAP: Record<string, string> = {
-  А: 'A',
-  а: 'a',
-  Б: 'B',
-  б: 'b',
-  В: 'V',
-  в: 'v',
-  Г: 'G',
-  г: 'g',
-  Д: 'D',
-  д: 'd',
-  Ж: 'J',
-  ж: 'j',
-  З: 'Z',
-  з: 'z',
-  И: 'I',
-  и: 'i',
-  Й: 'Y',
-  й: 'y',
-  К: 'K',
-  к: 'k',
-  Л: 'L',
-  л: 'l',
-  М: 'M',
-  м: 'm',
-  Н: 'N',
-  н: 'n',
-  О: 'O',
-  о: 'o',
-  П: 'P',
-  п: 'p',
-  Р: 'R',
-  р: 'r',
-  С: 'S',
-  с: 's',
-  Т: 'T',
-  т: 't',
-  У: 'U',
-  у: 'u',
-  Ф: 'F',
-  ф: 'f',
-  Х: 'X',
-  х: 'x',
-  Ҳ: 'H',
-  ҳ: 'h',
-  Қ: 'Q',
-  қ: 'q',
-  Э: 'E',
-  э: 'e',
-};
+import { cyrillicToLatinNormalized } from '../../../../common/utils/uzbek-latin.util';
 
 const LAT_TO_CYR_MAP: Record<string, string> = {
   A: 'А',
@@ -128,64 +79,7 @@ const VOWELS_CYR = new Set([
 const VOWELS_LAT = new Set(['A', 'E', 'I', 'O', 'U', 'a', 'e', 'i', 'o', 'u']);
 
 export function cyrillicToLatin(text: string): string {
-  if (!text) return '';
-  let s = text;
-
-  // Case-insensitive specific legal replacements
-  s = s.replace(/САНКЦИЯ/g, 'SANKSIYA');
-  s = s.replace(/Санкция/g, 'Sanksiya');
-  s = s.replace(/санкция/g, 'sanksiya');
-  s = s.replace(/ТРАНЗАКЦИЯ/g, 'TRANZAKSIYA');
-  s = s.replace(/Транзакция/g, 'Tranzaksiya');
-  s = s.replace(/транзакция/g, 'tranzaksiya');
-  s = s.replace(/КОМПЕНСАЦИЯ/g, 'KOMPENSATSIYA');
-  s = s.replace(/Компенсация/g, 'Kompensatsiya');
-  s = s.replace(/компенсация/g, 'kompensatsiya');
-  s = s.replace(/ИДЕНТИФИКАЦИЯ/g, 'IDENTIFIKATSIYA');
-  s = s.replace(/Идентификация/g, 'Identifikatsiya');
-  s = s.replace(/идентификация/g, 'identifikatsiya');
-  s = s.replace(/ПРОЦЕССУАЛ/g, 'PROTSESSUAL');
-  s = s.replace(/Процессуал/g, 'Protsessual');
-  s = s.replace(/процессуал/g, 'protsessual');
-  s = s.replace(/ПРОЦЕССИНГ/g, 'PROTSESSING');
-  s = s.replace(/Процессинг/g, 'Protsessing');
-  s = s.replace(/процессинг/g, 'protsessing');
-
-  // Multi-char Cyrillic replacements
-  s = s.replace(/Ў/g, 'O‘').replace(/ў/g, 'o‘');
-  s = s.replace(/Ғ/g, 'G‘').replace(/ғ/g, 'g‘');
-  s = s.replace(/Ш/g, 'Sh').replace(/ш/g, 'sh');
-  s = s.replace(/Ч/g, 'Ch').replace(/ч/g, 'ch');
-  s = s.replace(/Ё/g, 'Yo').replace(/ё/g, 'yo');
-  s = s.replace(/Ю/g, 'Yu').replace(/ю/g, 'yu');
-  s = s.replace(/Я/g, 'Ya').replace(/я/g, 'ya');
-  s = s.replace(/Ц/g, 'Ts').replace(/ц/g, 'ts');
-
-  // E / Ye at start of word or after vowel
-  const chars = Array.from(s);
-  const out: string[] = [];
-  for (let i = 0; i < chars.length; i++) {
-    const c = chars[i];
-    const prev = i > 0 ? chars[i - 1] : '';
-
-    if (c === 'Е' || c === 'е') {
-      const isStart = i === 0 || !/[\p{L}\p{N}]/u.test(prev);
-      const isAfterVowel = VOWELS_CYR.has(prev) || VOWELS_LAT.has(prev);
-      if (isStart || isAfterVowel) {
-        out.push(c === 'Е' ? 'Ye' : 'ye');
-      } else {
-        out.push(c === 'Е' ? 'E' : 'e');
-      }
-    } else if (c === 'Ъ' || c === 'ъ') {
-      out.push('’');
-    } else if (c in CYR_TO_LAT_MAP) {
-      out.push(CYR_TO_LAT_MAP[c]);
-    } else {
-      out.push(c);
-    }
-  }
-
-  return out.join('');
+  return cyrillicToLatinNormalized(text);
 }
 
 export function latinToCyrillic(text: string): string {
