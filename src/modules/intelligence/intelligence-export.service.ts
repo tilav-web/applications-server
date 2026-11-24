@@ -15,6 +15,13 @@ import {
 import * as ExcelJS from 'exceljs';
 import type { Response } from 'express';
 
+import {
+  applyExcelAutoFilter,
+  formatTransferDateTime,
+  styleExcelDataRow,
+  styleExcelHeaderRow,
+  styleExcelTotalRow,
+} from '../../common/utils/excel-style.util';
 import type { FullDossierResponse } from './intelligence.types';
 
 @Injectable()
@@ -94,86 +101,140 @@ export class IntelligenceExportService {
     wb.creator = 'Arizalar bazasi';
     wb.created = new Date();
 
+    const roleLabelMap: Record<string, string> = {
+      VICTIM: 'Jabrlanuvchi',
+      SUSPECT: 'Gumonlanuvchi',
+      DROPPER: 'Dropper / Karta egasi',
+      TRANSIT: 'Tranzit',
+      WITNESS: 'Guvoh',
+      MIXED: 'Aralash rol',
+    };
+
     // 1-Varaq: Umumiy Statistika va Rekvizitlar
-    const wsSummary = wb.addWorksheet('Umumiy Dosye');
+    const wsSummary = wb.addWorksheet('Umumiy Dosye', {
+      views: [{ state: 'frozen', ySplit: 1 }],
+    });
     wsSummary.columns = [
-      { header: 'Koʻrsatkich', key: 'k', width: 38 },
-      { header: 'Qiymat', key: 'v', width: 55 },
+      { header: "Ko'rsatkich", key: 'k', width: 42 },
+      { header: 'Qiymat', key: 'v', width: 58 },
+    ];
+    styleExcelHeaderRow(wsSummary.getRow(1));
+
+    const summaryEntries: Array<{ k: string; v: string | number; isMoney?: boolean }> = [
+      { k: "Ob'ekt nomi", v: meta.heading },
+      { k: 'Rekvizitlar', v: meta.subtitle },
+      { k: 'Xavf bahosi', v: `${dossier.stats.riskScore}% — ${dossier.stats.riskLabel}` },
+      { k: "Jami bog'langan arizalar", v: `${dossier.stats.totalApplications} ta` },
+      {
+        k: 'Jabrlanuvchi / Gumonlanuvchi-Dropper sifatida',
+        v: `${dossier.stats.victimAppsCount} ta / ${dossier.stats.suspectOrDropperAppsCount} ta`,
+      },
+      {
+        k: "Arizalar bo'yicha umumiy zarar (UZS)",
+        v: Number(dossier.stats.totalLossInLinkedApps) || 0,
+        isMoney: true,
+      },
+      {
+        k: 'Kartalarga jami kirim (UZS)',
+        v: Number(dossier.stats.totalIncomingAmount) || 0,
+        isMoney: true,
+      },
+      {
+        k: 'Kartalardan jami chiqim (UZS)',
+        v: Number(dossier.stats.totalOutgoingAmount) || 0,
+        isMoney: true,
+      },
+      {
+        k: 'Birinchi va oxirgi faollik sanasi',
+        v: `${this.formatDate(dossier.stats.firstSeenDate)} — ${this.formatDate(dossier.stats.lastSeenDate)}`,
+      },
     ];
 
-    wsSummary.addRow({ k: 'Obʼekt nomi', v: meta.heading });
-    wsSummary.addRow({ k: 'Rekvizitlar', v: meta.subtitle });
-    wsSummary.addRow({
-      k: 'Xavf bahosi',
-      v: `${dossier.stats.riskScore}% — ${dossier.stats.riskLabel}`,
-    });
-    wsSummary.addRow({ k: 'Jami bogʻlangan arizalar', v: `${dossier.stats.totalApplications} ta` });
-    wsSummary.addRow({
-      k: 'Jabrlanuvchi sifatida / Gumonlanuvchi-Dropper sifatida',
-      v: `${dossier.stats.victimAppsCount} ta / ${dossier.stats.suspectOrDropperAppsCount} ta`,
-    });
-    wsSummary.addRow({
-      k: 'Arizalar boʻyicha umumiy zarar',
-      v: this.formatMoney(dossier.stats.totalLossInLinkedApps),
-    });
-    wsSummary.addRow({
-      k: 'Kartalarga jami kirim (Total In)',
-      v: this.formatMoney(dossier.stats.totalIncomingAmount),
-    });
-    wsSummary.addRow({
-      k: 'Kartalardan jami chiqim (Total Out)',
-      v: this.formatMoney(dossier.stats.totalOutgoingAmount),
-    });
-    wsSummary.addRow({
-      k: 'Birinchi va oxirgi faollik sanasi',
-      v: `${this.formatDate(dossier.stats.firstSeenDate)} — ${this.formatDate(dossier.stats.lastSeenDate)}`,
-    });
-
-    wsSummary.getRow(1).font = { bold: true };
+    for (const item of summaryEntries) {
+      const row = wsSummary.addRow({ k: item.k, v: item.v });
+      styleExcelDataRow(row, ['v']);
+      row.getCell('k').font = { name: 'Calibri', size: 10, bold: true, color: { argb: '000000' } };
+      if (item.isMoney) {
+        row.getCell('v').numFmt = '#,##0.00';
+        row.getCell('v').alignment = { horizontal: 'right', vertical: 'middle' };
+      }
+    }
 
     // 2-Varaq: Bog'langan Arizalar
-    const wsApps = wb.addWorksheet('Bogʻlangan Arizalar');
+    const wsApps = wb.addWorksheet("Bog'langan Arizalar", {
+      views: [{ state: 'frozen', ySplit: 1 }],
+    });
     wsApps.columns = [
       { header: '№', key: 'idx', width: 6 },
-      { header: 'Ariza Raqami', key: 'num', width: 18 },
-      { header: 'Sana', key: 'date', width: 14 },
-      { header: 'Roli', key: 'role', width: 18 },
-      { header: 'Tuman', key: 'dist', width: 22 },
+      { header: 'Ariza Raqami', key: 'num', width: 20 },
+      { header: 'Sana', key: 'date', width: 13 },
+      { header: 'Holati', key: 'status', width: 22 },
+      { header: 'Roli', key: 'role', width: 20 },
+      { header: 'Tuman', key: 'dist', width: 18 },
+      { header: 'Jinoyat Moddasi', key: 'crime', width: 22 },
       { header: 'Jabrlanuvchi', key: 'victim', width: 28 },
       { header: 'Zarar Summasi', key: 'amount', width: 20 },
-      { header: 'Bogʻlanish Asosi', key: 'reason', width: 42 },
+      { header: 'Valyuta', key: 'currency', width: 10 },
+      { header: "Bog'lanish Asosi", key: 'reason', width: 42 },
     ];
-    wsApps.getRow(1).font = { bold: true };
+    styleExcelHeaderRow(wsApps.getRow(1));
+    applyExcelAutoFilter(wsApps, 1);
 
     dossier.directApplications.forEach((app, i) => {
-      wsApps.addRow({
+      const row = wsApps.addRow({
         idx: i + 1,
-        num: app.application_number,
+        num: app.application_number || '—',
         date: this.formatDate(app.date),
-        role: app.role_in_app,
+        status: app.status_label || app.status || '—',
+        role: roleLabelMap[app.role_in_app] || app.role_in_app,
         dist: app.district_name || '—',
+        crime: app.crime_article || '—',
         victim: app.victim_name || '—',
-        amount: this.formatMoney(app.transfer_amount, app.currency),
-        reason: app.match_reasons.join('; '),
+        amount: Number(app.transfer_amount) || 0,
+        currency: app.currency || 'UZS',
+        reason: app.match_reasons.join('; ') || '—',
       });
+      styleExcelDataRow(row, ['reason']);
+      row.getCell('num').numFmt = '@';
+      row.getCell('amount').numFmt = '#,##0.00';
+      row.getCell('amount').alignment = { horizontal: 'right', vertical: 'middle' };
     });
 
+    if (wsApps.rowCount >= 2) {
+      const lastAppRow = wsApps.rowCount;
+      const totalRow = wsApps.addRow({
+        victim: 'JAMI (UZS):',
+        amount: { formula: `SUMIF(J2:J${lastAppRow}, "UZS", I2:I${lastAppRow})` },
+        currency: 'UZS',
+      });
+      styleExcelTotalRow(totalRow);
+      totalRow.getCell('victim').alignment = { horizontal: 'right', vertical: 'middle' };
+      totalRow.getCell('amount').numFmt = '#,##0.00';
+      totalRow.getCell('amount').alignment = { horizontal: 'right', vertical: 'middle' };
+    }
+
     // 3-Varaq: O'tkazmalar oqimi
-    const wsTransfers = wb.addWorksheet('Pul Oqimlari');
+    const wsTransfers = wb.addWorksheet('Pul Oqimlari', {
+      views: [{ state: 'frozen', ySplit: 1 }],
+    });
     wsTransfers.columns = [
       { header: '№', key: 'idx', width: 6 },
-      { header: 'Yoʻnalish', key: 'dir', width: 14 },
+      { header: "Yo'nalish", key: 'dir', width: 14 },
       { header: 'Summa', key: 'amount', width: 20 },
-      { header: 'Joʻnatuvchi Karta', key: 'sender', width: 24 },
-      { header: 'Qabul Qiluvchi Karta', key: 'receiver', width: 24 },
-      { header: 'Toʻlov Tizimi', key: 'prov', width: 18 },
-      { header: 'Sana va Vaqt', key: 'dt', width: 20 },
-      { header: 'Ariza №', key: 'app', width: 16 },
+      { header: 'Valyuta', key: 'currency', width: 10 },
+      { header: "Jo'natuvchi Karta", key: 'sender', width: 22 },
+      { header: "Jo'natuvchi F.I.SH", key: 'sender_owner', width: 26 },
+      { header: 'Qabul Qiluvchi Karta', key: 'receiver', width: 22 },
+      { header: 'Qabul Qiluvchi F.I.SH', key: 'receiver_owner', width: 26 },
+      { header: "To'lov Tizimi", key: 'prov', width: 18 },
+      { header: 'Sana va Vaqt', key: 'dt', width: 18 },
+      { header: 'Ariza №', key: 'app', width: 18 },
     ];
-    wsTransfers.getRow(1).font = { bold: true };
+    styleExcelHeaderRow(wsTransfers.getRow(1));
+    applyExcelAutoFilter(wsTransfers, 1);
 
     dossier.transfers.forEach((tr, i) => {
-      wsTransfers.addRow({
+      const row = wsTransfers.addRow({
         idx: i + 1,
         dir:
           tr.direction === 'INCOMING'
@@ -181,14 +242,109 @@ export class IntelligenceExportService {
             : tr.direction === 'OUTGOING'
               ? 'Chiqim (-)'
               : 'Ichki',
-        amount: this.formatMoney(tr.amount, tr.currency),
+        amount: Number(tr.amount) || 0,
+        currency: tr.currency || 'UZS',
         sender: tr.sender_card_number || '—',
+        sender_owner: tr.sender_owner_name || '—',
         receiver: tr.receiver_card_number || '—',
+        receiver_owner: tr.receiver_owner_name || '—',
         prov: tr.payment_provider || '—',
-        dt: `${this.formatDate(tr.transfer_date)} ${tr.transfer_time || ''}`.trim(),
+        dt: formatTransferDateTime(tr.transfer_date, tr.transfer_time),
         app: tr.application_number || '—',
       });
+      styleExcelDataRow(row);
+      row.getCell('sender').numFmt = '@';
+      row.getCell('receiver').numFmt = '@';
+      row.getCell('app').numFmt = '@';
+      row.getCell('amount').numFmt = '#,##0.00';
+      row.getCell('amount').alignment = { horizontal: 'right', vertical: 'middle' };
     });
+
+    if (wsTransfers.rowCount >= 2) {
+      const lastTrRow = wsTransfers.rowCount;
+      const totalRow = wsTransfers.addRow({
+        dir: 'JAMI (UZS):',
+        amount: { formula: `SUMIF(D2:D${lastTrRow}, "UZS", C2:C${lastTrRow})` },
+        currency: 'UZS',
+      });
+      styleExcelTotalRow(totalRow);
+      totalRow.getCell('dir').alignment = { horizontal: 'right', vertical: 'middle' };
+      totalRow.getCell('amount').numFmt = '#,##0.00';
+      totalRow.getCell('amount').alignment = { horizontal: 'right', vertical: 'middle' };
+    }
+
+    // 4-Varaq: Rekvizitlar va Bog'langan Izlar (Kartalar, Telefonlar, Identifikatorlar, Kesishuvlar)
+    const wsAssets = wb.addWorksheet("Rekvizit va Bog'liqliklar", {
+      views: [{ state: 'frozen', ySplit: 1 }],
+    });
+    wsAssets.columns = [
+      { header: '№', key: 'idx', width: 6 },
+      { header: 'Kategoriya', key: 'category', width: 24 },
+      { header: 'Turi', key: 'type', width: 20 },
+      { header: 'Qiymat / Raqam', key: 'value', width: 32 },
+      { header: "Qo'shimcha ma'lumot", key: 'extra', width: 38 },
+    ];
+    styleExcelHeaderRow(wsAssets.getRow(1));
+    applyExcelAutoFilter(wsAssets, 1);
+
+    let assetIdx = 0;
+    for (const c of dossier.ownedCards || []) {
+      assetIdx++;
+      const cardNum = this.asStr(c.card_number) || this.asStr(c.masked_number, '—');
+      const bankObj = c.bank as Record<string, unknown> | undefined;
+      const bankName = this.asStr(bankObj?.name) || this.asStr(c.inferred_bank_name);
+      const row = wsAssets.addRow({
+        idx: assetIdx,
+        category: 'Biriktirilgan karta',
+        type: bankName || 'Plastik karta',
+        value: cardNum,
+        extra: this.asStr(c.full_name, '—'),
+      });
+      styleExcelDataRow(row);
+      row.getCell('value').numFmt = '@';
+    }
+    for (const p of dossier.ownedPhones || []) {
+      assetIdx++;
+      const row = wsAssets.addRow({
+        idx: assetIdx,
+        category: 'Biriktirilgan telefon',
+        type: this.asStr(p.operator, 'Mobil raqam'),
+        value: this.asStr(p.formatted_number) || this.asStr(p.phone_number, '—'),
+        extra: this.asStr(p.label, '—'),
+      });
+      styleExcelDataRow(row);
+      row.getCell('value').numFmt = '@';
+    }
+    for (const ident of dossier.ownedIdentifiers || []) {
+      assetIdx++;
+      const row = wsAssets.addRow({
+        idx: assetIdx,
+        category: 'Raqamli identifikator',
+        type: this.asStr(ident.type_label) || this.asStr(ident.type, 'Belgi'),
+        value: this.asStr(ident.raw_value) || this.asStr(ident.normalized_value, '—'),
+        extra: this.asStr(ident.notes, '—'),
+      });
+      styleExcelDataRow(row);
+      row.getCell('value').numFmt = '@';
+    }
+    for (const clue of dossier.coOccurringClues || []) {
+      assetIdx++;
+      const row = wsAssets.addRow({
+        idx: assetIdx,
+        category: 'Kesishgan bog‘liqlik',
+        type: clue.type_label || clue.entity_type,
+        value: clue.value || '—',
+        extra: [
+          clue.owner_name ? `Egasi: ${clue.owner_name}` : '',
+          `${clue.shared_apps_count} ta umumiy ariza`,
+          clue.role ? `Rol: ${roleLabelMap[clue.role] || clue.role}` : '',
+        ]
+          .filter(Boolean)
+          .join(' | '),
+      });
+      styleExcelDataRow(row, ['extra']);
+      row.getCell('value').numFmt = '@';
+    }
 
     const dateStr = new Date().toISOString().slice(0, 10);
     const filename = `${meta.fileSlug}_${dateStr}.xlsx`;

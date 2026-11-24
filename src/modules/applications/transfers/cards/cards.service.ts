@@ -255,7 +255,73 @@ export class CardsService {
           })
         : [];
 
-    const workbook = await this.excelService.generateWorkbook(items);
+    const cardStatsMap = new Map<
+      string,
+      {
+        incomingCount: number;
+        incomingAmount: number;
+        outgoingCount: number;
+        outgoingAmount: number;
+        appNumbers: Set<string>;
+      }
+    >();
+
+    if (ids.length > 0) {
+      for (const card of items) {
+        const appNums = new Set<string>();
+        for (const a of card.applications || []) {
+          if (!a.is_deleted) {
+            appNums.add(a.application_number || `AR-${a.id.slice(0, 8)}`);
+          }
+        }
+        cardStatsMap.set(card.id, {
+          incomingCount: 0,
+          incomingAmount: 0,
+          outgoingCount: 0,
+          outgoingAmount: 0,
+          appNumbers: appNums,
+        });
+      }
+
+      const txRows: Array<{
+        sender_card_id: string | null;
+        receiver_card_id: string | null;
+        amount: string | number | null;
+        currency: string | null;
+        app_id: string | null;
+        app_num: string | null;
+      }> = await this.cardRepo.manager.query(
+        `SELECT t.sender_card_id, t.receiver_card_id, t.amount, t.currency,
+                COALESCE(a1.id, a2.id) AS app_id,
+                COALESCE(a1.application_number, a2.application_number) AS app_num
+         FROM transfers t
+         LEFT JOIN applications a1 ON a1.id = t.application_id AND a1.is_deleted = false
+         LEFT JOIN applications a2 ON a2.transfer_id = t.id AND a2.is_deleted = false
+         WHERE t.sender_card_id = ANY($1::uuid[]) OR t.receiver_card_id = ANY($1::uuid[])`,
+        [ids],
+      );
+
+      for (const row of txRows) {
+        const amt = Number(row.amount) || 0;
+        const isUzs = !row.currency || row.currency.toUpperCase() === 'UZS';
+        const appLabel = row.app_num || (row.app_id ? `AR-${row.app_id.slice(0, 8)}` : null);
+
+        if (row.sender_card_id && cardStatsMap.has(row.sender_card_id)) {
+          const st = cardStatsMap.get(row.sender_card_id)!;
+          st.outgoingCount++;
+          if (isUzs) st.outgoingAmount += amt;
+          if (appLabel) st.appNumbers.add(appLabel);
+        }
+        if (row.receiver_card_id && cardStatsMap.has(row.receiver_card_id)) {
+          const st = cardStatsMap.get(row.receiver_card_id)!;
+          st.incomingCount++;
+          if (isUzs) st.incomingAmount += amt;
+          if (appLabel) st.appNumbers.add(appLabel);
+        }
+      }
+    }
+
+    const workbook = await this.excelService.generateWorkbook(items, cardStatsMap);
     const dateStr = new Date().toISOString().slice(0, 10);
     const fileName = `Plastik_Kartalar_${dateStr}.xlsx`;
 

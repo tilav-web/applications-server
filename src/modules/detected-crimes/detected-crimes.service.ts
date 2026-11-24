@@ -763,6 +763,9 @@ export class DetectedCrimesService {
       .leftJoinAndSelect('dc.decision_type', 'decision')
       .leftJoinAndSelect('dc.suspects', 'suspects')
       .leftJoinAndSelect('suspects.citizen', 'suspect_citizen')
+      .leftJoinAndSelect('suspect_citizen.district', 'suspect_district')
+      .leftJoinAndSelect('suspect_citizen.mahalla', 'suspect_mahalla')
+      .leftJoinAndSelect('suspect_citizen.occupation', 'suspect_occupation')
       .leftJoinAndSelect('suspect_citizen.workplace', 'suspect_workplace')
       .leftJoinAndSelect('dc.evidences', 'evidences')
       .where('dc.is_deleted = false');
@@ -850,8 +853,38 @@ export class DetectedCrimesService {
 
     const qualMap: Record<string, string> = {
       CRIMINAL: 'Jinoyat (JK)',
-      ADMINISTRATIVE: 'Ma’muriy (MJTK)',
+      ADMINISTRATIVE: "Ma'muriy (MJTK)",
       PRE_INVESTIGATION: 'Tekshiruvda',
+    };
+
+    const roleMap: Record<string, string> = {
+      TASHKILOTCHI: 'Tashkilotchi',
+      ADMIN: 'Admin / Boshqaruvchi',
+      IJROCHI: 'Ijrochi',
+      VOSITACHI: 'Vositachi',
+      KARTA_EGASI: 'Karta egasi (Dropper)',
+      BOSHQA: 'Boshqa',
+    };
+
+    const detentionMap: Record<string, string> = {
+      USHLANGAN: 'Ushlangan (Qamoqda)',
+      QIDIRUVDA: 'Qidiruvda',
+      TILXATDA: 'Tilxat bilan ozodlikda',
+      OZODLIKDA: 'Ozodlikda',
+      ANIQLANMOQDA: 'Aniqlanmoqda',
+    };
+
+    const evidenceTypeMap: Record<string, string> = {
+      PHONE: 'Mobil telefon',
+      LAPTOP_PC: 'Kompyuter / Noutbuk',
+      SIM_CARD: 'SIM-karta',
+      STORAGE_MEDIA: 'Fleshka / Xotira qurilmasi',
+      CRYPTO_WALLET: 'Kripto-hamyon',
+      BANK_CARD: 'Plastik karta',
+      SCREENSHOT_VIDEO: 'Skrinshot / Video yozuv',
+      DOCUMENT: 'Hujjat / Kvitansiya',
+      CASH: 'Naqd pul mablag‘i',
+      OTHER: 'Boshqa dalil',
     };
 
     // 1-SHEET: Aniqlangan jinoyatlar
@@ -874,11 +907,12 @@ export class DetectedCrimesService {
       { header: 'Ashyoviy dalillar', key: 'evidences_count', width: 16 },
       { header: 'Zarar / Aylanma (UZS)', key: 'damage', width: 22 },
       { header: 'Holati', key: 'status', width: 26 },
-      { header: 'Ko‘rilgan choralar', key: 'measures', width: 36 },
+      { header: "Ko'rilgan choralar", key: 'measures', width: 36 },
       { header: 'Yakuniy qaror / Raqami', key: 'decision', width: 28 },
       { header: 'Fabula', key: 'description', width: 45 },
     ];
     styleHeader(ws1.getRow(1));
+    ws1.autoFilter = { from: 'A1', to: 'R1' };
 
     items.forEach((item, idx) => {
       const measuresStr =
@@ -946,13 +980,16 @@ export class DetectedCrimesService {
       { header: 'F.I.O.', key: 'name', width: 28 },
       { header: 'Pasport', key: 'passport', width: 16 },
       { header: 'Telefon', key: 'phone', width: 18 },
-      { header: 'Ish joyi', key: 'workplace', width: 26 },
-      { header: 'Jinoyatdagi roli', key: 'role', width: 18 },
-      { header: 'Ehtiyot chorasi', key: 'detention', width: 18 },
+      { header: 'Hudud (Tuman / Mahalla)', key: 'region', width: 26 },
+      { header: 'Kasbi', key: 'occupation', width: 22 },
+      { header: 'Ish joyi', key: 'workplace', width: 28 },
+      { header: 'Jinoyatdagi roli', key: 'role', width: 22 },
+      { header: 'Ehtiyot chorasi', key: 'detention', width: 22 },
       { header: 'Takroriy shaxs', key: 'repeat', width: 16 },
       { header: 'Izoh', key: 'notes', width: 32 },
     ];
     styleHeader(ws2.getRow(1));
+    ws2.autoFilter = { from: 'A1', to: 'L1' };
 
     let sIdx = 0;
     for (const item of items) {
@@ -963,16 +1000,20 @@ export class DetectedCrimesService {
               .filter(Boolean)
               .join(' ')
           : '—';
+        const regionStr =
+          [s.citizen?.district?.name, s.citizen?.mahalla?.name].filter(Boolean).join(', ') || '—';
         const row = ws2.addRow({
           idx: sIdx,
           case_number: item.case_number || '—',
           name: fullName,
           passport: s.citizen?.passport || '—',
           phone: s.citizen?.phone_number || '—',
+          region: regionStr,
+          occupation: s.citizen?.occupation?.name || '—',
           workplace: s.citizen?.workplace?.name || '—',
-          role: s.role_in_crime,
-          detention: s.detention_status,
-          repeat: s.is_repeat_offender ? 'Ha (Takroriy)' : 'Yo‘q',
+          role: roleMap[s.role_in_crime] || s.role_in_crime,
+          detention: detentionMap[s.detention_status] || s.detention_status,
+          repeat: s.is_repeat_offender ? 'Ha (Takroriy)' : "Yo'q",
           notes: s.notes || '—',
         });
         styleData(row);
@@ -989,13 +1030,14 @@ export class DetectedCrimesService {
     ws3.columns = [
       { header: '№', key: 'idx', width: 6 },
       { header: 'Ish kodi', key: 'case_number', width: 16 },
-      { header: 'Dalil turi', key: 'type', width: 22 },
+      { header: 'Dalil turi', key: 'type', width: 24 },
       { header: 'Nomi', key: 'title', width: 30 },
       { header: 'IMEI / Identifikator', key: 'identifier', width: 26 },
       { header: 'Biriktirilgan fayl', key: 'file_name', width: 26 },
       { header: 'Izoh', key: 'notes', width: 32 },
     ];
     styleHeader(ws3.getRow(1));
+    ws3.autoFilter = { from: 'A1', to: 'G1' };
 
     let eIdx = 0;
     for (const item of items) {
@@ -1004,7 +1046,7 @@ export class DetectedCrimesService {
         const row = ws3.addRow({
           idx: eIdx,
           case_number: item.case_number || '—',
-          type: ev.evidence_type,
+          type: evidenceTypeMap[ev.evidence_type] || ev.evidence_type,
           title: ev.title,
           identifier: ev.identifier_value || '—',
           file_name: ev.file_name || '—',

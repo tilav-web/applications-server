@@ -823,8 +823,8 @@ export class ApplicationsReportsService {
       views: [{ state: 'frozen', xSplit: 2, ySplit: 5 }],
     });
 
-    // Sarlavha (Title)
-    sheet.mergeCells('A1:AI1');
+    // Sarlavha (Title) — barcha 36 ustun (A..AJ)
+    sheet.mergeCells('A1:AJ1');
     const titleCell = sheet.getCell('A1');
     titleCell.value = `${data.date} КУНИДАГИ КЕЛИБ ТУШГАН МУРОЖААТЛАР БЎЙИЧА ТЕЗКОР ҲИСОБОТ`;
     titleCell.font = { name: 'Calibri', size: 13, bold: true, color: { argb: 'FF0F172A' } };
@@ -1310,6 +1310,11 @@ export class ApplicationsReportsService {
       sheet.getColumn(colNum).width = h.width;
     });
 
+    sheet.autoFilter = {
+      from: 'A2',
+      to: `${sheet.getColumn(headers.length).letter}2`,
+    };
+
     let rowIdx = 3;
     for (const item of data.items) {
       const row = sheet.getRow(rowIdx);
@@ -1340,10 +1345,13 @@ export class ApplicationsReportsService {
           vertical: 'middle',
           horizontal:
             colNumber === 10 ? 'right' : [1, 4, 6, 16, 17].includes(colNumber) ? 'center' : 'left',
-          wrapText: [8, 11, 12].includes(colNumber),
+          wrapText: [8, 11, 12, 13].includes(colNumber),
         };
         if (colNumber === 10 && typeof cell.value === 'number') {
           cell.numFmt = '#,##0 "UZS"';
+        }
+        if ([6, 13, 16].includes(colNumber)) {
+          cell.numFmt = '@';
         }
         cell.border = {
           top: { style: 'thin', color: { argb: 'FFE2E8F0' } },
@@ -1354,6 +1362,27 @@ export class ApplicationsReportsService {
       });
 
       rowIdx++;
+    }
+
+    if (rowIdx > 3) {
+      const totalRow = sheet.getRow(rowIdx);
+      totalRow.getCell(9).value = 'ЖАМИ ЗАРАР:';
+      totalRow.getCell(10).value = { formula: `SUM(J3:J${rowIdx - 1})` };
+      totalRow.height = 26;
+      for (let col = 1; col <= headers.length; col++) {
+        const c = totalRow.getCell(col);
+        c.font = { name: 'Calibri', size: 10, bold: true };
+        c.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFF8FAFC' } };
+        c.border = {
+          top: { style: 'thin', color: { argb: 'FF000000' } },
+          bottom: { style: 'double', color: { argb: 'FF000000' } },
+          left: { style: 'thin', color: { argb: 'FFCBD5E1' } },
+          right: { style: 'thin', color: { argb: 'FFCBD5E1' } },
+        };
+      }
+      totalRow.getCell(9).alignment = { horizontal: 'right', vertical: 'middle' };
+      totalRow.getCell(10).alignment = { horizontal: 'right', vertical: 'middle' };
+      totalRow.getCell(10).numFmt = '#,##0 "UZS"';
     }
 
     return Promise.resolve(workbook);

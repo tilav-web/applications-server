@@ -1429,8 +1429,9 @@ export class ApplicationsService {
       card: { bank: true, citizen: true },
       transfer: {
         payment_provider: true,
-        sender_card: true,
-        receiver_card: true,
+        sender_card: { bank: true, citizen: true },
+        receiver_card: { bank: true, citizen: true },
+        receiver_identifier: true,
         custom_fields: {
           bank: true,
           card: true,
@@ -1443,14 +1444,16 @@ export class ApplicationsService {
           mahalla: true,
           occupation_category: true,
           occupation: true,
+          workplace: true,
         },
         card: { bank: true, citizen: true },
         crime: true,
         district: true,
         transfer: {
           payment_provider: true,
-          sender_card: true,
-          receiver_card: true,
+          sender_card: { bank: true, citizen: true },
+          receiver_card: { bank: true, citizen: true },
+          receiver_identifier: true,
         },
       },
     };
@@ -1579,7 +1582,28 @@ export class ApplicationsService {
       currentUser,
     );
 
-    const workbook = await this.excelService.generateWorkbook(result.items);
+    const appIds = result.items.map((a) => a.id);
+    const extraTransfersMap = new Map<string, Transfer[]>();
+    if (appIds.length > 0) {
+      const linkedTransfers = await this.transferRepo.find({
+        where: { application_id: In(appIds) },
+        relations: {
+          payment_provider: true,
+          sender_card: { bank: true, citizen: true },
+          receiver_card: { bank: true, citizen: true },
+          receiver_identifier: true,
+        },
+        order: { transfer_at: 'ASC', created_at: 'ASC' },
+      });
+      for (const tr of linkedTransfers) {
+        if (!tr.application_id) continue;
+        const list = extraTransfersMap.get(tr.application_id) ?? [];
+        list.push(tr);
+        extraTransfersMap.set(tr.application_id, list);
+      }
+    }
+
+    const workbook = await this.excelService.generateWorkbook(result.items, extraTransfersMap);
 
     const now = new Date();
     const dateStr = now.toISOString().slice(0, 10);

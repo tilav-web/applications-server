@@ -327,7 +327,16 @@ export class CitizensService {
       ids.length > 0
         ? await this.citizenRepo.find({
             where: { id: In(ids) },
-            relations: { cards: true, applications: true, district: true, mahalla: true },
+            relations: {
+              cards: { bank: true },
+              applications: true,
+              district: true,
+              mahalla: true,
+              occupation_category: true,
+              occupation: true,
+              workplace: true,
+              phones: true,
+            },
             order: { created_at: 'DESC' },
           })
         : [];

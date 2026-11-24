@@ -13,6 +13,11 @@ import { LessThan, Repository } from 'typeorm';
 import { gzipSync } from 'zlib';
 
 import type { JwtAccessPayload } from '../../common/types/jwt-payload.interface';
+import {
+  applyExcelAutoFilter,
+  styleExcelDataRow,
+  styleExcelHeaderRow,
+} from '../../common/utils/excel-style.util';
 import { normalizePagination } from '../../common/utils/pagination.util';
 import { MinioService } from '../minio/minio.service';
 import { RedisService } from '../redis/redis.service';
@@ -524,36 +529,55 @@ export class AuditService implements OnModuleInit, OnModuleDestroy {
     const logs = await qb.getMany();
 
     const workbook = new ExcelJS.Workbook();
-    const sheet = workbook.addWorksheet('Audit Jurnali');
+    workbook.creator = 'Arizalar bazasi';
+    workbook.created = new Date();
+    const sheet = workbook.addWorksheet('Audit Jurnali', {
+      views: [{ state: 'frozen', ySplit: 1 }],
+    });
 
     sheet.columns = [
-      { header: 'Vaqt', key: 'created_at', width: 22 },
+      { header: '№', key: 'idx', width: 6 },
+      { header: 'Vaqt', key: 'created_at', width: 20 },
       { header: 'Xodim', key: 'username', width: 18 },
       { header: 'Rol', key: 'role', width: 16 },
-      { header: 'Harakat', key: 'action', width: 20 },
-      { header: 'Daraja', key: 'severity', width: 12 },
-      { header: 'Bo‘lim', key: 'entity_type', width: 16 },
+      { header: 'Harakat', key: 'action', width: 22 },
+      { header: 'Daraja', key: 'severity', width: 15 },
+      { header: "Bo'lim", key: 'entity_type', width: 18 },
       { header: 'Tavsif', key: 'summary', width: 45 },
       { header: 'IP Manzil', key: 'ip', width: 18 },
       { header: 'Status', key: 'status_code', width: 10 },
-      { header: 'Yo‘l (Path)', key: 'path', width: 35 },
+      { header: "Yo'l (Path)", key: 'path', width: 35 },
     ];
 
-    sheet.getRow(1).font = { bold: true };
-    for (const log of logs) {
-      sheet.addRow({
-        created_at: new Date(log.created_at).toLocaleString('uz-UZ'),
+    styleExcelHeaderRow(sheet.getRow(1));
+    applyExcelAutoFilter(sheet, 1);
+
+    const severityMap: Record<string, string> = {
+      INFO: "Ma'lumot",
+      WARN: 'Ogohlantirish',
+      WARNING: 'Ogohlantirish',
+      ERROR: 'Xatolik',
+      CRITICAL: 'Kritik',
+    };
+
+    logs.forEach((log, idx) => {
+      const row = sheet.addRow({
+        idx: idx + 1,
+        created_at: new Date(log.created_at).toISOString().slice(0, 19).replace('T', ' '),
         username: log.username || 'Anonim',
-        role: log.role || '-',
+        role: log.role || '—',
         action: log.action,
-        severity: log.severity,
-        entity_type: log.entity_type || '-',
-        summary: log.summary || '-',
-        ip: log.ip || '-',
+        severity: severityMap[(log.severity || '').toUpperCase()] || log.severity || '—',
+        entity_type: log.entity_type || '—',
+        summary: log.summary || '—',
+        ip: log.ip || '—',
         status_code: log.status_code,
         path: `${log.method} ${log.path}`,
       });
-    }
+      styleExcelDataRow(row, ['summary']);
+      row.getCell('ip').numFmt = '@';
+      row.getCell('status_code').alignment = { horizontal: 'center', vertical: 'middle' };
+    });
 
     const fileName = `audit_jurnal_${new Date().toISOString().slice(0, 10)}.xlsx`;
     res.setHeader(

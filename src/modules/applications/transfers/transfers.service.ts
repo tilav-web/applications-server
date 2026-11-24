@@ -411,7 +411,8 @@ export class TransfersService {
               payment_provider: true,
               sender_card: { bank: true, citizen: true },
               receiver_card: { bank: true, citizen: true },
-              application: true,
+              receiver_identifier: true,
+              application: { district: true, citizen: true },
             },
             order: { created_at: 'DESC' },
           })

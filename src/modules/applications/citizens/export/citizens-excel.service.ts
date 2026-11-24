@@ -1,6 +1,12 @@
 import { Injectable } from '@nestjs/common';
 import * as ExcelJS from 'exceljs';
 
+import {
+  applyExcelAutoFilter,
+  styleExcelDataRow,
+  styleExcelHeaderRow,
+  styleExcelTotalRow,
+} from '../../../../common/utils/excel-style.util';
 import { Citizen } from '../citizen.entity';
 
 @Injectable()
@@ -16,23 +22,30 @@ export class CitizensExcelService {
     });
 
     ws.columns = [
-      { header: '№', key: 'idx', width: 6 },
-      { header: 'Fuqaro (F.I.SH)', key: 'full_name', width: 30 },
-      { header: 'Jinsi', key: 'gender', width: 10 },
-      { header: "Tug'ilgan Sana", key: 'birth_date', width: 15 },
-      { header: 'Pasport Seriya', key: 'passport', width: 16 },
-      { header: 'JShShIR (PINFL)', key: 'pinfl', width: 18 },
-      { header: 'Telefon Raqam', key: 'phone', width: 18 },
-      { header: 'Tuman / Shahar', key: 'district', width: 18 },
-      { header: 'Mahalla', key: 'mahalla', width: 22 },
-      { header: 'Yashash Manzili', key: 'address', width: 35 },
-      { header: 'Plastik Kartalari', key: 'cards_list', width: 32 },
-      { header: 'Kartalar Soni', key: 'cards_count', width: 15 },
-      { header: 'Aloqador Arizalar', key: 'apps_count', width: 18 },
-      { header: "Ro'yxatga Olingan Sana", key: 'created_at', width: 20 },
+      { header: '№', key: 'idx', width: 6 }, // A
+      { header: 'Fuqaro (F.I.SH)', key: 'full_name', width: 28 }, // B
+      { header: 'Jinsi', key: 'gender', width: 10 }, // C
+      { header: "Tug'ilgan Sana", key: 'birth_date', width: 14 }, // D
+      { header: 'Pasport Seriya', key: 'passport', width: 15 }, // E
+      { header: 'JShShIR (PINFL)', key: 'pinfl', width: 18 }, // F
+      { header: 'Asosiy Telefon', key: 'phone', width: 18 }, // G
+      { header: "Qo'shimcha Telefonlar", key: 'extra_phones', width: 24 }, // H
+      { header: 'Tuman / Shahar', key: 'district', width: 18 }, // I
+      { header: 'Mahalla', key: 'mahalla', width: 22 }, // J
+      { header: 'Yashash Manzili', key: 'address', width: 32 }, // K
+      { header: 'Kasb Toifasi', key: 'occ_category', width: 24 }, // L
+      { header: 'Kasb Turi', key: 'occupation', width: 24 }, // M
+      { header: 'Ish Joyi / Tashkilot', key: 'workplace', width: 30 }, // N
+      { header: 'Lavozimi', key: 'work_position', width: 22 }, // O
+      { header: 'Plastik Kartalari (Banki bilan)', key: 'cards_list', width: 36 }, // P
+      { header: 'Kartalar Soni', key: 'cards_count', width: 14 }, // Q
+      { header: 'Aloqador Arizalar', key: 'apps_list', width: 28 }, // R
+      { header: 'Arizalar Soni', key: 'apps_count', width: 14 }, // S
+      { header: "Ro'yxatga Olingan Sana", key: 'created_at', width: 18 }, // T
     ];
 
-    this.styleHeaderRow(ws.getRow(1));
+    styleExcelHeaderRow(ws.getRow(1));
+    applyExcelAutoFilter(ws, 1);
 
     citizens.forEach((citizen, index) => {
       const fullName =
@@ -45,14 +58,28 @@ export class CitizensExcelService {
         ? new Date(citizen.birth_date).toISOString().slice(0, 10)
         : '—';
 
+      const primaryPhone = citizen.phone_number?.trim() || '';
+      const extraPhonesList = (Array.isArray(citizen.phones) ? citizen.phones : [])
+        .map((p) => p.formatted_number || p.phone_number)
+        .filter((num): num is string => Boolean(num && num.trim() && num.trim() !== primaryPhone));
+
       const cards = Array.isArray(citizen.cards) ? citizen.cards : [];
       const cardsListStr =
         cards
-          .map((c) => c.card_number || c.masked_number)
+          .map((c) => {
+            const num = c.card_number || c.masked_number;
+            if (!num) return '';
+            return c.bank?.name ? `${num} (${c.bank.name})` : num;
+          })
           .filter(Boolean)
           .join(', ') || '—';
 
-      const appsCount = Array.isArray(citizen.applications) ? citizen.applications.length : 0;
+      const apps = Array.isArray(citizen.applications) ? citizen.applications : [];
+      const appsListStr =
+        apps
+          .map((a) => a.application_number || `AR-${a.id.slice(0, 8)}`)
+          .filter(Boolean)
+          .join(', ') || '—';
 
       const createdDateStr = citizen.created_at
         ? new Date(citizen.created_at).toISOString().slice(0, 16).replace('T', ' ')
@@ -65,23 +92,30 @@ export class CitizensExcelService {
         birth_date: birthDateStr,
         passport: citizen.passport || '—',
         pinfl: citizen.pinfl || '—',
-        phone: citizen.phone_number || '—',
+        phone: primaryPhone || '—',
+        extra_phones: extraPhonesList.join(', ') || '—',
         district: citizen.district?.name || '—',
         mahalla: citizen.mahalla?.name || '—',
         address: citizen.address || '—',
+        occ_category: citizen.occupation_category?.name || '—',
+        occupation: citizen.occupation?.name || '—',
+        workplace: citizen.workplace?.name || '—',
+        work_position: citizen.work_position || '—',
         cards_list: cardsListStr,
         cards_count: cards.length,
-        apps_count: appsCount,
+        apps_list: appsListStr,
+        apps_count: apps.length,
         created_at: createdDateStr,
       });
 
-      this.styleDataRow(row);
+      styleExcelDataRow(row, ['address', 'cards_list', 'apps_list']);
 
-      // Karta, pasport, pinfl, telefon - matn formati (@)
       row.getCell('passport').numFmt = '@';
       row.getCell('pinfl').numFmt = '@';
       row.getCell('phone').numFmt = '@';
+      row.getCell('extra_phones').numFmt = '@';
       row.getCell('cards_list').numFmt = '@';
+      row.getCell('apps_list').numFmt = '@';
 
       row.getCell('cards_count').numFmt = '#,##0';
       row.getCell('cards_count').alignment = { horizontal: 'center', vertical: 'middle' };
@@ -93,24 +127,13 @@ export class CitizensExcelService {
     const lastDataRow = ws.rowCount;
     if (lastDataRow >= 2) {
       const summaryRow = ws.addRow({
-        idx: '',
-        full_name: '',
-        gender: '',
-        birth_date: '',
-        passport: '',
-        pinfl: '',
-        phone: '',
-        district: '',
-        mahalla: '',
-        address: 'JAMI:',
-        cards_list: '',
-        cards_count: { formula: `SUM(L2:L${lastDataRow})` },
-        apps_count: { formula: `SUM(M2:M${lastDataRow})` },
-        created_at: '',
+        cards_list: 'JAMI:',
+        cards_count: { formula: `SUM(Q2:Q${lastDataRow})` },
+        apps_count: { formula: `SUM(S2:S${lastDataRow})` },
       });
 
-      this.styleTotalRow(summaryRow);
-      summaryRow.getCell('address').alignment = { horizontal: 'right', vertical: 'middle' };
+      styleExcelTotalRow(summaryRow);
+      summaryRow.getCell('cards_list').alignment = { horizontal: 'right', vertical: 'middle' };
       summaryRow.getCell('cards_count').numFmt = '#,##0';
       summaryRow.getCell('cards_count').alignment = { horizontal: 'center', vertical: 'middle' };
       summaryRow.getCell('apps_count').numFmt = '#,##0';
@@ -118,49 +141,5 @@ export class CitizensExcelService {
     }
 
     return Promise.resolve(workbook);
-  }
-
-  private styleHeaderRow(row: ExcelJS.Row): void {
-    row.height = 28;
-    row.eachCell((cell) => {
-      cell.font = { name: 'Calibri', size: 10, bold: true, color: { argb: '000000' } };
-      cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'F1F5F9' } };
-      cell.alignment = { vertical: 'middle', horizontal: 'center', wrapText: true };
-      cell.border = {
-        top: { style: 'thin', color: { argb: '94A3B8' } },
-        left: { style: 'thin', color: { argb: 'CBD5E1' } },
-        bottom: { style: 'medium', color: { argb: '000000' } },
-        right: { style: 'thin', color: { argb: 'CBD5E1' } },
-      };
-    });
-  }
-
-  private styleDataRow(row: ExcelJS.Row): void {
-    row.height = 22;
-    row.eachCell({ includeEmpty: true }, (cell) => {
-      cell.font = { name: 'Calibri', size: 9.5, color: { argb: '000000' } };
-      cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFFFFF' } };
-      cell.alignment = { vertical: 'middle', horizontal: 'left' };
-      cell.border = {
-        top: { style: 'thin', color: { argb: 'E2E8F0' } },
-        left: { style: 'thin', color: { argb: 'E2E8F0' } },
-        bottom: { style: 'thin', color: { argb: 'E2E8F0' } },
-        right: { style: 'thin', color: { argb: 'E2E8F0' } },
-      };
-    });
-  }
-
-  private styleTotalRow(row: ExcelJS.Row): void {
-    row.height = 25;
-    row.eachCell({ includeEmpty: true }, (cell) => {
-      cell.font = { name: 'Calibri', size: 10, bold: true, color: { argb: '000000' } };
-      cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'F8FAFC' } };
-      cell.border = {
-        top: { style: 'thin', color: { argb: '000000' } },
-        bottom: { style: 'double', color: { argb: '000000' } },
-        left: { style: 'thin', color: { argb: 'CBD5E1' } },
-        right: { style: 'thin', color: { argb: 'CBD5E1' } },
-      };
-    });
   }
 }
