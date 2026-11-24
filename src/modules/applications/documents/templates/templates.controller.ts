@@ -144,7 +144,7 @@ export class TemplatesController {
   }
 
   /**
-   * Shablon faylini yuklab olish yoki ko'rish (foydalanuvchi sessiyasi yoki imzolangan ONLYOFFICE linki orqali)
+   * Shablon faylini yuklab olish yoki ko'rish (faol sessiya yoki imzolangan ONLYOFFICE linki orqali)
    */
   @Get(':id/file')
   async downloadTemplateFile(
@@ -156,15 +156,21 @@ export class TemplatesController {
   ) {
     const isSignedOnlyOffice = this.templatesService.verifySignedTemplateFileAccess(id, exp, sig);
     if (!isSignedOnlyOffice) {
-      const authId = await this.authService.resolveAuthIdFromRequest(req);
-      if (!authId) {
+      const actor = await this.authService.verifyActiveAccessRequest(req);
+      if (!actor) {
         throw new UnauthorizedException(
-          'Shablonni yuklab olish uchun tizimga kirish talab qilinadi',
+          'Shablonni yuklab olish uchun faol tizim sessiyasi talab qilinadi',
         );
       }
     }
 
     const { stream, template } = await this.templatesService.getTemplateFileStream(id);
+
+    const safeAsciiName =
+      template.file_name
+        .replace(/[\r\n"\\]/g, '_')
+        .replace(/[^\x20-\x7E]/g, '_')
+        .trim() || 'template.docx';
 
     res.setHeader('X-Content-Type-Options', 'nosniff');
     res.setHeader('Cache-Control', 'private, no-store');
@@ -174,9 +180,16 @@ export class TemplatesController {
     );
     res.setHeader(
       'Content-Disposition',
-      `attachment; filename="${encodeURIComponent(template.file_name)}"`,
+      `attachment; filename="${safeAsciiName}"; filename*=UTF-8''${encodeURIComponent(template.file_name)}`,
     );
 
+    stream.on('error', () => {
+      if (!res.headersSent) {
+        res.status(404).end();
+      } else {
+        res.end();
+      }
+    });
     stream.pipe(res);
   }
 

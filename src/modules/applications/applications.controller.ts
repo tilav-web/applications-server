@@ -4,6 +4,7 @@ import {
   Delete,
   Get,
   Param,
+  ParseUUIDPipe,
   Patch,
   Post,
   Query,
@@ -13,21 +14,33 @@ import {
 import type { Response } from 'express';
 
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
+import { Roles } from '../../common/decorators/roles.decorator';
+import { Role } from '../../common/enums/role.enum';
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
+import { RolesGuard } from '../../common/guards/roles.guard';
 import type { JwtAccessPayload } from '../../common/types/jwt-payload.interface';
 import { normalizePagination } from '../../common/utils/pagination.util';
 import { ApplicationsService } from './applications.service';
 import { CreateApplicationDto } from './dto/create-application.dto';
 import { ExportCyberControlDto } from './dto/export-cybercontrol.dto';
+import { ExtendDeadlineDto } from './dto/extend-deadline.dto';
 import { UpdateApplicationDto } from './dto/update-application.dto';
 import { APPLICATION_MASTER_TEMPLATE } from './schemas/default-application-template.schema';
 
 @Controller('applications')
-@UseGuards(JwtAuthGuard)
+@UseGuards(JwtAuthGuard, RolesGuard)
 export class ApplicationsController {
   constructor(private readonly applicationsService: ApplicationsService) {}
 
   @Post()
+  @Roles(
+    Role.SUPER_ADMIN,
+    Role.ADMIN,
+    Role.STAFF,
+    Role.INSPECTOR,
+    Role.OPERATOR,
+    Role.DISTRICT_OFFICER,
+  )
   create(@Body() dto: CreateApplicationDto, @CurrentUser() currentUser?: JwtAccessPayload) {
     return this.applicationsService.create(dto, currentUser);
   }
@@ -93,17 +106,17 @@ export class ApplicationsController {
   }
 
   @Post(':id/extend-deadline')
+  @Roles(
+    Role.SUPER_ADMIN,
+    Role.ADMIN,
+    Role.STAFF,
+    Role.INSPECTOR,
+    Role.OPERATOR,
+    Role.DISTRICT_OFFICER,
+  )
   extendDeadline(
-    @Param('id') id: string,
-    @Body()
-    body: {
-      new_deadline_at?: string;
-      extend_days?: number;
-      reason: string;
-      prosecutor_approval_number?: string;
-      prosecutor_approval_date?: string;
-      switch_to_extended_status?: boolean;
-    },
+    @Param('id', ParseUUIDPipe) id: string,
+    @Body() body: ExtendDeadlineDto,
     @CurrentUser() currentUser?: JwtAccessPayload,
   ) {
     return this.applicationsService.extendDeadline(id, body, currentUser);
@@ -129,7 +142,10 @@ export class ApplicationsController {
   }
 
   @Get(':id/relations')
-  getRelations(@Param('id') id: string, @CurrentUser() currentUser?: JwtAccessPayload) {
+  getRelations(
+    @Param('id', ParseUUIDPipe) id: string,
+    @CurrentUser() currentUser?: JwtAccessPayload,
+  ) {
     return this.applicationsService.getRelations(id, currentUser);
   }
 
@@ -190,13 +206,21 @@ export class ApplicationsController {
   }
 
   @Get(':id')
-  findOne(@Param('id') id: string, @CurrentUser() currentUser?: JwtAccessPayload) {
+  findOne(@Param('id', ParseUUIDPipe) id: string, @CurrentUser() currentUser?: JwtAccessPayload) {
     return this.applicationsService.findOne(id, currentUser);
   }
 
   @Patch(':id')
+  @Roles(
+    Role.SUPER_ADMIN,
+    Role.ADMIN,
+    Role.STAFF,
+    Role.INSPECTOR,
+    Role.OPERATOR,
+    Role.DISTRICT_OFFICER,
+  )
   update(
-    @Param('id') id: string,
+    @Param('id', ParseUUIDPipe) id: string,
     @Body() dto: UpdateApplicationDto,
     @CurrentUser() currentUser?: JwtAccessPayload,
   ) {
@@ -204,7 +228,15 @@ export class ApplicationsController {
   }
 
   @Delete(':id')
-  remove(@Param('id') id: string, @CurrentUser() currentUser?: JwtAccessPayload) {
+  @Roles(
+    Role.SUPER_ADMIN,
+    Role.ADMIN,
+    Role.STAFF,
+    Role.INSPECTOR,
+    Role.OPERATOR,
+    Role.DISTRICT_OFFICER,
+  )
+  remove(@Param('id', ParseUUIDPipe) id: string, @CurrentUser() currentUser?: JwtAccessPayload) {
     return this.applicationsService.remove(id, currentUser);
   }
 }

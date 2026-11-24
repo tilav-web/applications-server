@@ -18,6 +18,7 @@ import type { Response } from 'express';
 import {
   applyExcelAutoFilter,
   formatTransferDateTime,
+  sanitizeExcelRow,
   styleExcelDataRow,
   styleExcelHeaderRow,
   styleExcelTotalRow,
@@ -151,7 +152,7 @@ export class IntelligenceExportService {
     ];
 
     for (const item of summaryEntries) {
-      const row = wsSummary.addRow({ k: item.k, v: item.v });
+      const row = wsSummary.addRow(sanitizeExcelRow({ k: item.k, v: item.v }));
       styleExcelDataRow(row, ['v']);
       row.getCell('k').font = { name: 'Calibri', size: 10, bold: true, color: { argb: '000000' } };
       if (item.isMoney) {
@@ -181,19 +182,21 @@ export class IntelligenceExportService {
     applyExcelAutoFilter(wsApps, 1);
 
     dossier.directApplications.forEach((app, i) => {
-      const row = wsApps.addRow({
-        idx: i + 1,
-        num: app.application_number || '—',
-        date: this.formatDate(app.date),
-        status: app.status_label || app.status || '—',
-        role: roleLabelMap[app.role_in_app] || app.role_in_app,
-        dist: app.district_name || '—',
-        crime: app.crime_article || '—',
-        victim: app.victim_name || '—',
-        amount: Number(app.transfer_amount) || 0,
-        currency: app.currency || 'UZS',
-        reason: app.match_reasons.join('; ') || '—',
-      });
+      const row = wsApps.addRow(
+        sanitizeExcelRow({
+          idx: i + 1,
+          num: app.application_number || '—',
+          date: this.formatDate(app.date),
+          status: app.status_label || app.status || '—',
+          role: roleLabelMap[app.role_in_app] || app.role_in_app,
+          dist: app.district_name || '—',
+          crime: app.crime_article || '—',
+          victim: app.victim_name || '—',
+          amount: Number(app.transfer_amount) || 0,
+          currency: app.currency || 'UZS',
+          reason: app.match_reasons.join('; ') || '—',
+        }),
+      );
       styleExcelDataRow(row, ['reason']);
       row.getCell('num').numFmt = '@';
       row.getCell('amount').numFmt = '#,##0.00';
@@ -234,24 +237,26 @@ export class IntelligenceExportService {
     applyExcelAutoFilter(wsTransfers, 1);
 
     dossier.transfers.forEach((tr, i) => {
-      const row = wsTransfers.addRow({
-        idx: i + 1,
-        dir:
-          tr.direction === 'INCOMING'
-            ? 'Kirim (+)'
-            : tr.direction === 'OUTGOING'
-              ? 'Chiqim (-)'
-              : 'Ichki',
-        amount: Number(tr.amount) || 0,
-        currency: tr.currency || 'UZS',
-        sender: tr.sender_card_number || '—',
-        sender_owner: tr.sender_owner_name || '—',
-        receiver: tr.receiver_card_number || '—',
-        receiver_owner: tr.receiver_owner_name || '—',
-        prov: tr.payment_provider || '—',
-        dt: formatTransferDateTime(tr.transfer_date, tr.transfer_time),
-        app: tr.application_number || '—',
-      });
+      const row = wsTransfers.addRow(
+        sanitizeExcelRow({
+          idx: i + 1,
+          dir:
+            tr.direction === 'INCOMING'
+              ? 'Kirim (+)'
+              : tr.direction === 'OUTGOING'
+                ? 'Chiqim (-)'
+                : 'Ichki',
+          amount: Number(tr.amount) || 0,
+          currency: tr.currency || 'UZS',
+          sender: tr.sender_card_number || '—',
+          sender_owner: tr.sender_owner_name || '—',
+          receiver: tr.receiver_card_number || '—',
+          receiver_owner: tr.receiver_owner_name || '—',
+          prov: tr.payment_provider || '—',
+          dt: formatTransferDateTime(tr.transfer_date, tr.transfer_time),
+          app: tr.application_number || '—',
+        }),
+      );
       styleExcelDataRow(row);
       row.getCell('sender').numFmt = '@';
       row.getCell('receiver').numFmt = '@';
@@ -293,55 +298,63 @@ export class IntelligenceExportService {
       const cardNum = this.asStr(c.card_number) || this.asStr(c.masked_number, '—');
       const bankObj = c.bank as Record<string, unknown> | undefined;
       const bankName = this.asStr(bankObj?.name) || this.asStr(c.inferred_bank_name);
-      const row = wsAssets.addRow({
-        idx: assetIdx,
-        category: 'Biriktirilgan karta',
-        type: bankName || 'Plastik karta',
-        value: cardNum,
-        extra: this.asStr(c.full_name, '—'),
-      });
+      const row = wsAssets.addRow(
+        sanitizeExcelRow({
+          idx: assetIdx,
+          category: 'Biriktirilgan karta',
+          type: bankName || 'Plastik karta',
+          value: cardNum,
+          extra: this.asStr(c.full_name, '—'),
+        }),
+      );
       styleExcelDataRow(row);
       row.getCell('value').numFmt = '@';
     }
     for (const p of dossier.ownedPhones || []) {
       assetIdx++;
-      const row = wsAssets.addRow({
-        idx: assetIdx,
-        category: 'Biriktirilgan telefon',
-        type: this.asStr(p.operator, 'Mobil raqam'),
-        value: this.asStr(p.formatted_number) || this.asStr(p.phone_number, '—'),
-        extra: this.asStr(p.label, '—'),
-      });
+      const row = wsAssets.addRow(
+        sanitizeExcelRow({
+          idx: assetIdx,
+          category: 'Biriktirilgan telefon',
+          type: this.asStr(p.operator, 'Mobil raqam'),
+          value: this.asStr(p.formatted_number) || this.asStr(p.phone_number, '—'),
+          extra: this.asStr(p.label, '—'),
+        }),
+      );
       styleExcelDataRow(row);
       row.getCell('value').numFmt = '@';
     }
     for (const ident of dossier.ownedIdentifiers || []) {
       assetIdx++;
-      const row = wsAssets.addRow({
-        idx: assetIdx,
-        category: 'Raqamli identifikator',
-        type: this.asStr(ident.type_label) || this.asStr(ident.type, 'Belgi'),
-        value: this.asStr(ident.raw_value) || this.asStr(ident.normalized_value, '—'),
-        extra: this.asStr(ident.notes, '—'),
-      });
+      const row = wsAssets.addRow(
+        sanitizeExcelRow({
+          idx: assetIdx,
+          category: 'Raqamli identifikator',
+          type: this.asStr(ident.type_label) || this.asStr(ident.type, 'Belgi'),
+          value: this.asStr(ident.raw_value) || this.asStr(ident.normalized_value, '—'),
+          extra: this.asStr(ident.notes, '—'),
+        }),
+      );
       styleExcelDataRow(row);
       row.getCell('value').numFmt = '@';
     }
     for (const clue of dossier.coOccurringClues || []) {
       assetIdx++;
-      const row = wsAssets.addRow({
-        idx: assetIdx,
-        category: 'Kesishgan bog‘liqlik',
-        type: clue.type_label || clue.entity_type,
-        value: clue.value || '—',
-        extra: [
-          clue.owner_name ? `Egasi: ${clue.owner_name}` : '',
-          `${clue.shared_apps_count} ta umumiy ariza`,
-          clue.role ? `Rol: ${roleLabelMap[clue.role] || clue.role}` : '',
-        ]
-          .filter(Boolean)
-          .join(' | '),
-      });
+      const row = wsAssets.addRow(
+        sanitizeExcelRow({
+          idx: assetIdx,
+          category: 'Kesishgan bog‘liqlik',
+          type: clue.type_label || clue.entity_type,
+          value: clue.value || '—',
+          extra: [
+            clue.owner_name ? `Egasi: ${clue.owner_name}` : '',
+            `${clue.shared_apps_count} ta umumiy ariza`,
+            clue.role ? `Rol: ${roleLabelMap[clue.role] || clue.role}` : '',
+          ]
+            .filter(Boolean)
+            .join(' | '),
+        }),
+      );
       styleExcelDataRow(row, ['extra']);
       row.getCell('value').numFmt = '@';
     }

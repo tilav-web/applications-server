@@ -2,6 +2,7 @@ import { BadRequestException, Injectable, NotFoundException, OnModuleInit } from
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 
+import { assertNoDependencies } from '../../../common/database/dependency-guard.util';
 import { Occupation } from './occupation.entity';
 import { OccupationCategory } from './occupation-category.entity';
 
@@ -102,6 +103,16 @@ export class OccupationsService implements OnModuleInit {
 
   async removeCategory(id: string): Promise<{ success: boolean; message: string }> {
     const cat = await this.findCategoryById(id);
+    await assertNoDependencies(this.categoryRepo.manager, `«${cat.name}» kasb toifasi`, cat.id, [
+      { table: 'citizens', column: 'occupation_category_id', label: 'fuqaro' },
+      { table: 'workplaces', column: 'occupation_category_id', label: 'ish joyi / tashkilot' },
+      { table: 'occupations', column: 'category_id', label: 'kasb turi' },
+    ]);
+    await assertNoDependencies(this.categoryRepo.manager, `«${cat.name}» kasb toifasi`, cat.id, [
+      { table: 'citizens', column: 'occupation_category_id', label: 'fuqaro' },
+      { table: 'workplaces', column: 'occupation_category_id', label: 'ish joyi / tashkilot' },
+      { table: 'occupations', column: 'category_id', label: 'kasb turi' },
+    ]);
     await this.categoryRepo.remove(cat);
     return { success: true, message: "Kasb toifasi o'chirildi" };
   }
@@ -211,6 +222,14 @@ export class OccupationsService implements OnModuleInit {
 
   async removeOccupation(id: string): Promise<{ success: boolean; message: string }> {
     const occ = await this.findOccupationById(id);
+    await assertNoDependencies(this.occupationRepo.manager, `«${occ.name}» kasb turi`, occ.id, [
+      { table: 'citizens', column: 'occupation_id', label: 'fuqaro' },
+      { table: 'workplace_occupations', column: 'occupation_id', label: 'ish joyi / tashkilot' },
+    ]);
+    await assertNoDependencies(this.occupationRepo.manager, `«${occ.name}» kasb turi`, occ.id, [
+      { table: 'citizens', column: 'occupation_id', label: 'fuqaro' },
+      { table: 'workplace_occupations', column: 'occupation_id', label: 'ish joyi / tashkilot' },
+    ]);
     await this.occupationRepo.remove(occ);
     return { success: true, message: "Kasb o'chirildi" };
   }

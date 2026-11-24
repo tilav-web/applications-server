@@ -10,6 +10,11 @@ import {
 } from 'typeorm';
 
 import { BaseEntity } from '../../../common/database/base.entity';
+import {
+  normalizePassport,
+  normalizePinfl,
+  normalizeUzPhone,
+} from '../../../common/utils/normalization.util';
 import type { DigitalIdentifierEntity } from '../../intelligence/entities/digital-identifier.entity';
 import type { PhoneEntity } from '../../intelligence/entities/phone.entity';
 import type { Application } from '../application.entity';
@@ -60,7 +65,7 @@ export class Citizen extends BaseEntity {
   @Column({
     name: 'passport',
     type: 'varchar',
-    length: 9,
+    length: 20,
     nullable: true,
   })
   passport: string | null;
@@ -76,7 +81,7 @@ export class Citizen extends BaseEntity {
   @Column({
     name: 'phone_number',
     type: 'varchar',
-    length: 12,
+    length: 24,
     nullable: true,
   })
   phone_number: string | null;
@@ -188,29 +193,8 @@ export class Citizen extends BaseEntity {
   @BeforeInsert()
   @BeforeUpdate()
   normalizeFields(): void {
-    // 1. Telefon raqami: faqat raqamlar, '+' belgisisiz va 998XXXXXXXXX (12 ta raqam) formatda
-    if (this.phone_number) {
-      let cleaned = this.phone_number.replace(/\D/g, '');
-      if (cleaned.length === 9) {
-        cleaned = `998${cleaned}`;
-      }
-      this.phone_number = cleaned;
-    }
-
-    // 2. Pasport: AC1234567 ko'rinishida, boshidagi 2 ta harf KATTA va bo'shliqlarsiz
-    if (this.passport) {
-      const cleaned = this.passport.replace(/\s+/g, '').toUpperCase();
-      this.passport = cleaned.length > 0 ? cleaned : null;
-    } else {
-      this.passport = null;
-    }
-
-    // 3. PINFL (JShShIR)
-    if (this.pinfl) {
-      const cleaned = this.pinfl.replace(/\D/g, '');
-      this.pinfl = cleaned.length > 0 ? cleaned : null;
-    } else {
-      this.pinfl = null;
-    }
+    this.phone_number = normalizeUzPhone(this.phone_number);
+    this.passport = normalizePassport(this.passport);
+    this.pinfl = normalizePinfl(this.pinfl);
   }
 }

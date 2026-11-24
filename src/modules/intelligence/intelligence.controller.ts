@@ -5,6 +5,7 @@ import {
   Delete,
   Get,
   Param,
+  ParseUUIDPipe,
   Patch,
   Post,
   Query,
@@ -20,10 +21,28 @@ import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
 import { RolesGuard } from '../../common/guards/roles.guard';
 import type { JwtAccessPayload } from '../../common/types/jwt-payload.interface';
 import { normalizePagination } from '../../common/utils/pagination.util';
-import type { EntityLinkRole } from './entities/entity-application-link.entity';
+import {
+  AddCardToCitizenDto,
+  AddIdentifierToCitizenDto,
+  AddPhoneToCitizenDto,
+  BindEntityToCitizenDto,
+  ConfirmProbableMatchDto,
+  CreateTransitTransferDto,
+  LinkCitizenRoleDto,
+} from './dto/intelligence.dto';
 import { IntelligenceService } from './intelligence.service';
 import { IntelligenceExportService } from './intelligence-export.service';
 import { IntelligenceSyncService } from './intelligence-sync.service';
+
+const READ_ROLES = [
+  Role.SUPER_ADMIN,
+  Role.ADMIN,
+  Role.BOSS,
+  Role.STAFF,
+  Role.DISTRICT_OFFICER,
+  Role.INSPECTOR,
+  Role.OPERATOR,
+];
 
 const WRITE_ROLES = [
   Role.SUPER_ADMIN,
@@ -36,6 +55,7 @@ const WRITE_ROLES = [
 
 @Controller('intelligence')
 @UseGuards(JwtAuthGuard, RolesGuard)
+@Roles(...READ_ROLES)
 export class IntelligenceController {
   constructor(
     private readonly intelligenceService: IntelligenceService,
@@ -59,16 +79,26 @@ export class IntelligenceController {
     @Query('type') type?: string,
     @Query('value') value?: string,
     @Query('excludeAppId') excludeAppId?: string,
+    @CurrentUser() currentUser?: JwtAccessPayload,
   ) {
-    return this.intelligenceService.checkRadar(type || 'other_info', value || '', excludeAppId);
+    return this.intelligenceService.checkRadar(
+      type || 'other_info',
+      value || '',
+      excludeAppId,
+      currentUser,
+    );
   }
 
   @Get('expand-node')
-  expandNode(@Query('nodeType') nodeType?: string, @Query('entityId') entityId?: string) {
+  expandNode(
+    @Query('nodeType') nodeType?: string,
+    @Query('entityId') entityId?: string,
+    @CurrentUser() currentUser?: JwtAccessPayload,
+  ) {
     if (!nodeType || !entityId) {
       throw new BadRequestException('nodeType va entityId koʻrsatilishi shart');
     }
-    return this.intelligenceService.expandGraphNode(nodeType, entityId);
+    return this.intelligenceService.expandGraphNode(nodeType, entityId, currentUser);
   }
 
   @Post('sync')
@@ -82,22 +112,34 @@ export class IntelligenceController {
   // ===========================================================================
 
   @Get('dossier/citizen/:id')
-  getCitizenDossier(@Param('id') id: string, @CurrentUser() currentUser?: JwtAccessPayload) {
+  getCitizenDossier(
+    @Param('id', ParseUUIDPipe) id: string,
+    @CurrentUser() currentUser?: JwtAccessPayload,
+  ) {
     return this.intelligenceService.getCitizenDossier(id, currentUser);
   }
 
   @Get('dossier/card/:id')
-  getCardDossier(@Param('id') id: string, @CurrentUser() currentUser?: JwtAccessPayload) {
+  getCardDossier(
+    @Param('id', ParseUUIDPipe) id: string,
+    @CurrentUser() currentUser?: JwtAccessPayload,
+  ) {
     return this.intelligenceService.getCardDossier(id, currentUser);
   }
 
   @Get('dossier/phone/:id')
-  getPhoneDossier(@Param('id') id: string, @CurrentUser() currentUser?: JwtAccessPayload) {
+  getPhoneDossier(
+    @Param('id', ParseUUIDPipe) id: string,
+    @CurrentUser() currentUser?: JwtAccessPayload,
+  ) {
     return this.intelligenceService.getPhoneDossier(id, currentUser);
   }
 
   @Get('dossier/identifier/:id')
-  getIdentifierDossier(@Param('id') id: string, @CurrentUser() currentUser?: JwtAccessPayload) {
+  getIdentifierDossier(
+    @Param('id', ParseUUIDPipe) id: string,
+    @CurrentUser() currentUser?: JwtAccessPayload,
+  ) {
     return this.intelligenceService.getIdentifierDossier(id, currentUser);
   }
 
@@ -108,7 +150,7 @@ export class IntelligenceController {
   @Get('dossier/:entityType/:id/export/:format')
   async exportDossier(
     @Param('entityType') entityType: 'citizen' | 'card' | 'phone' | 'identifier',
-    @Param('id') id: string,
+    @Param('id', ParseUUIDPipe) id: string,
     @Param('format') format: 'excel' | 'docx',
     @Res() res: Response,
     @CurrentUser() currentUser?: JwtAccessPayload,
@@ -137,8 +179,8 @@ export class IntelligenceController {
   @Post('dossier/citizen/:id/phones')
   @Roles(...WRITE_ROLES)
   addPhoneToCitizen(
-    @Param('id') citizenId: string,
-    @Body() body: { phone_number: string; label?: string; notes?: string; is_primary?: boolean },
+    @Param('id', ParseUUIDPipe) citizenId: string,
+    @Body() body: AddPhoneToCitizenDto,
     @CurrentUser() currentUser?: JwtAccessPayload,
   ) {
     return this.intelligenceService.addPhoneToCitizen(citizenId, body, currentUser);
@@ -146,22 +188,18 @@ export class IntelligenceController {
 
   @Delete('phones/:phoneId')
   @Roles(...WRITE_ROLES)
-  removePhone(@Param('phoneId') phoneId: string, @CurrentUser() currentUser?: JwtAccessPayload) {
+  removePhone(
+    @Param('phoneId', ParseUUIDPipe) phoneId: string,
+    @CurrentUser() currentUser?: JwtAccessPayload,
+  ) {
     return this.intelligenceService.removePhoneFromCitizen(phoneId, currentUser);
   }
 
   @Post('dossier/citizen/:id/cards')
   @Roles(...WRITE_ROLES)
   addCardToCitizen(
-    @Param('id') citizenId: string,
-    @Body()
-    body: {
-      card_number: string;
-      expire_date?: string;
-      bank_id?: string;
-      bank_name?: string;
-      full_name?: string;
-    },
+    @Param('id', ParseUUIDPipe) citizenId: string,
+    @Body() body: AddCardToCitizenDto,
     @CurrentUser() currentUser?: JwtAccessPayload,
   ) {
     return this.intelligenceService.addCardToCitizen(citizenId, body, currentUser);
@@ -170,7 +208,7 @@ export class IntelligenceController {
   @Patch('cards/:cardId/unlink-citizen')
   @Roles(...WRITE_ROLES)
   unlinkCardFromCitizen(
-    @Param('cardId') cardId: string,
+    @Param('cardId', ParseUUIDPipe) cardId: string,
     @CurrentUser() currentUser?: JwtAccessPayload,
   ) {
     return this.intelligenceService.unlinkCardFromCitizen(cardId, currentUser);
@@ -179,8 +217,8 @@ export class IntelligenceController {
   @Post('dossier/citizen/:id/identifiers')
   @Roles(...WRITE_ROLES)
   addIdentifierToCitizen(
-    @Param('id') citizenId: string,
-    @Body() body: { type: string; value: string; type_label?: string; notes?: string },
+    @Param('id', ParseUUIDPipe) citizenId: string,
+    @Body() body: AddIdentifierToCitizenDto,
     @CurrentUser() currentUser?: JwtAccessPayload,
   ) {
     return this.intelligenceService.addIdentifierToCitizen(citizenId, body, currentUser);
@@ -189,7 +227,7 @@ export class IntelligenceController {
   @Delete('identifiers/:identifierId')
   @Roles(...WRITE_ROLES)
   removeIdentifier(
-    @Param('identifierId') identifierId: string,
+    @Param('identifierId', ParseUUIDPipe) identifierId: string,
     @CurrentUser() currentUser?: JwtAccessPayload,
   ) {
     return this.intelligenceService.removeIdentifierFromCitizen(identifierId, currentUser);
@@ -198,12 +236,7 @@ export class IntelligenceController {
   @Post('bind-to-citizen')
   @Roles(...WRITE_ROLES)
   bindEntityToCitizen(
-    @Body()
-    body: {
-      entity_type: 'card' | 'phone' | 'identifier';
-      entity_id: string;
-      citizen_id: string;
-    },
+    @Body() body: BindEntityToCitizenDto,
     @CurrentUser() currentUser?: JwtAccessPayload,
   ) {
     return this.intelligenceService.bindEntityToCitizen(body, currentUser);
@@ -212,28 +245,7 @@ export class IntelligenceController {
   @Post('transfers/transit')
   @Roles(...WRITE_ROLES)
   createTransitTransfer(
-    @Body()
-    body: {
-      sender_card_id?: string;
-      sender_card_number?: string;
-      sender_owner_name?: string;
-      receiver_card_id?: string;
-      receiver_card_number?: string;
-      receiver_owner_name?: string;
-      amount: number;
-      currency?: string;
-      transfer_date?: string;
-      transfer_time?: string;
-      payment_provider_id?: string;
-      payment_provider_name?: string;
-      transaction_id?: string;
-      application_id?: string;
-      destination_type?: string;
-      destination_platform?: string;
-      destination_value?: string;
-      destination_label?: string;
-      destination_details?: Record<string, unknown>;
-    },
+    @Body() body: CreateTransitTransferDto,
     @CurrentUser() currentUser?: JwtAccessPayload,
   ) {
     return this.intelligenceService.createTransitTransfer(body, currentUser);
@@ -242,13 +254,7 @@ export class IntelligenceController {
   @Post('application-role-link')
   @Roles(...WRITE_ROLES)
   linkCitizenRoleToApplication(
-    @Body()
-    body: {
-      application_id: string;
-      citizen_id: string;
-      role: EntityLinkRole;
-      note?: string;
-    },
+    @Body() body: LinkCitizenRoleDto,
     @CurrentUser() currentUser?: JwtAccessPayload,
   ) {
     return this.intelligenceService.linkCitizenRoleToApplication(body, currentUser);
@@ -257,7 +263,7 @@ export class IntelligenceController {
   @Post('confirm-match')
   @Roles(...WRITE_ROLES)
   confirmProbableMatch(
-    @Body() body: { citizen_id: string; card_id: string },
+    @Body() body: ConfirmProbableMatchDto,
     @CurrentUser() currentUser?: JwtAccessPayload,
   ) {
     return this.intelligenceService.confirmProbableMatch(body, currentUser);

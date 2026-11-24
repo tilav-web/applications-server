@@ -22,15 +22,15 @@ export class UpdateProfileDto {
 
   @IsOptional()
   @IsString({ message: "Yangi parol satr bo'lishi kerak" })
-  @MinLength(4, {
-    message: "Parol kamida 4 ta belgidan iborat bo'lishi kerak",
+  @MinLength(8, {
+    message: "Parol kamida 8 ta belgidan iborat bo'lishi kerak",
   })
   password?: string;
 
   @IsOptional()
   @IsString({ message: "Yangi parol satr bo'lishi kerak" })
-  @MinLength(4, {
-    message: "Yangi parol kamida 4 ta belgidan iborat bo'lishi kerak",
+  @MinLength(8, {
+    message: "Yangi parol kamida 8 ta belgidan iborat bo'lishi kerak",
   })
   new_password?: string;
 

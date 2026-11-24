@@ -1,5 +1,5 @@
 import { Type } from 'class-transformer';
-import { IsDateString, IsNumber, IsOptional, IsString, Min } from 'class-validator';
+import { IsDateString, IsNumber, IsOptional, IsString, Max, Min } from 'class-validator';
 
 export class OperationalMatrixQueryDto {
   @IsOptional()
@@ -76,5 +76,6 @@ export class RegistryReportQueryDto {
   @Type(() => Number)
   @IsNumber()
   @Min(1)
+  @Max(500)
   limit?: number = 50;
 }

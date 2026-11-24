@@ -6,11 +6,12 @@ import { Bank } from '../applications/transfers/banks/bank.entity';
 import { Card } from '../applications/transfers/cards/card.entity';
 import { Transfer } from '../applications/transfers/transfer.entity';
 import { AuthModule } from '../auth/auth.module';
+import { User } from '../users/user.entity';
 import { FinancialFlowController } from './financial-flow.controller';
 import { FinancialFlowService } from './financial-flow.service';
 
 @Module({
-  imports: [TypeOrmModule.forFeature([Card, Transfer, Application, Bank]), AuthModule],
+  imports: [TypeOrmModule.forFeature([Card, Transfer, Application, Bank, User]), AuthModule],
   controllers: [FinancialFlowController],
   providers: [FinancialFlowService],
   exports: [FinancialFlowService],

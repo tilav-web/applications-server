@@ -5,6 +5,9 @@ export interface JwtAccessPayload {
   username: string;
   role: Role;
   is_root?: boolean;
+  issued_at_ms?: number;
+  iat?: number;
+  exp?: number;
 }
 
 export interface JwtRefreshPayload {

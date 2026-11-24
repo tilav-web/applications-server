@@ -30,7 +30,12 @@ export class SlaQueueService implements OnModuleInit, OnModuleDestroy {
   private workerConnection: IORedis | null = null;
   private queue: Queue<SlaJobData> | null = null;
   private worker: Worker<SlaJobData> | null = null;
-  private isReady = false;
+  private queueReady = false;
+  private workerReady = false;
+
+  private get isReady(): boolean {
+    return this.queueReady && this.workerReady && Boolean(this.queue);
+  }
 
   constructor(
     private readonly configService: ConfigService,
@@ -57,22 +62,42 @@ export class SlaQueueService implements OnModuleInit, OnModuleDestroy {
         enableReadyCheck: false,
         lazyConnect: true,
         retryStrategy: (times: number) => {
-          if (times > 5) {
-            return null;
+          const delay = Math.min(250 * Math.pow(2, Math.min(times - 1, 6)), 10_000);
+          if (times === 1 || times % 5 === 0) {
+            this.logger.warn(`BullMQ Redis qayta ulanish (${times}-urinish, ${delay}ms)...`);
           }
-          return Math.min(times * 500, 3000);
+          return delay;
         },
       };
 
       this.queueConnection = new IORedis(baseOpts);
       this.workerConnection = new IORedis(baseOpts);
 
+      this.queueConnection.on('ready', () => {
+        this.queueReady = true;
+      });
+      this.queueConnection.on('close', () => {
+        this.queueReady = false;
+      });
+      this.queueConnection.on('end', () => {
+        this.queueReady = false;
+      });
       this.queueConnection.on('error', (err) => {
-        this.isReady = false;
+        this.queueReady = false;
         this.logger.warn(`BullMQ Queue Redis xatosi: ${err.message}`);
       });
+
+      this.workerConnection.on('ready', () => {
+        this.workerReady = true;
+      });
+      this.workerConnection.on('close', () => {
+        this.workerReady = false;
+      });
+      this.workerConnection.on('end', () => {
+        this.workerReady = false;
+      });
       this.workerConnection.on('error', (err) => {
-        this.isReady = false;
+        this.workerReady = false;
         this.logger.warn(`BullMQ Worker Redis xatosi: ${err.message}`);
       });
 
@@ -106,15 +131,17 @@ export class SlaQueueService implements OnModuleInit, OnModuleDestroy {
         this.logger.warn(`SLA job bajarilmadi [${job?.id}]: ${err.message}`);
       });
 
-      this.isReady = true;
+      this.queueReady = true;
+      this.workerReady = true;
       this.logger.log(`BullMQ SLA navbati ishga tushdi (${host}:${port})`);
 
-      // Mavjud ochiq arizalarning joblarini fon rejimida sinxronlash
+      // Mavjud ochiq ariza va aniqlangan jinoyatlarning joblarini fon rejimida sinxronlash
       setTimeout(() => {
         void this.reconcileAllOpenApplications();
       }, 3000);
     } catch (err) {
-      this.isReady = false;
+      this.queueReady = false;
+      this.workerReady = false;
       this.logger.warn(
         `BullMQ SLA navbatini ishga tushirib bo'lmadi (Redis ulanmagan bo'lishi mumkin): ${(err as Error).message}`,
       );
@@ -136,10 +163,13 @@ export class SlaQueueService implements OnModuleInit, OnModuleDestroy {
     entityId: string,
     stage: SlaStage,
     entityType: SlaEntityType = 'APPLICATION',
+    deadlineMs?: number,
   ): string {
-    return entityType === 'DETECTED_CRIME'
-      ? `sla__dc__${entityId}__${stage}`
-      : `sla__${entityId}__${stage}`;
+    const base =
+      entityType === 'DETECTED_CRIME'
+        ? `sla__dc__${entityId}__${stage}`
+        : `sla__${entityId}__${stage}`;
+    return deadlineMs ? `${base}__${deadlineMs}` : base;
   }
 
   private async getSettingNumber(key: string, fallback: number): Promise<number> {
@@ -148,13 +178,32 @@ export class SlaQueueService implements OnModuleInit, OnModuleDestroy {
     return Number.isFinite(parsed) && parsed >= 0 ? parsed : fallback;
   }
 
-  async cancelForApplication(applicationId: string): Promise<void> {
+  private async loadSlaThresholds(): Promise<{
+    warnHours: number;
+    urgentHours: number;
+    escalateHours: number;
+  }> {
+    const [warnHours, urgentHours, escalateHours] = await Promise.all([
+      this.getSettingNumber('sla_warn_hours_before', 72),
+      this.getSettingNumber('sla_urgent_hours_before', 24),
+      this.getSettingNumber('sla_escalate_hours_after', 24),
+    ]);
+    return { warnHours, urgentHours, escalateHours };
+  }
+
+  async cancelForApplication(applicationId: string, deadlineMs?: number): Promise<void> {
     if (!this.queue || !this.isReady) return;
     try {
       for (const stage of ALL_STAGES) {
-        const job = await this.queue.getJob(this.buildJobId(applicationId, stage, 'APPLICATION'));
-        if (job) {
-          await job.remove().catch(() => {});
+        const candidateIds = [this.buildJobId(applicationId, stage, 'APPLICATION')];
+        if (deadlineMs) {
+          candidateIds.push(this.buildJobId(applicationId, stage, 'APPLICATION', deadlineMs));
+        }
+        for (const jobId of candidateIds) {
+          const job = await this.queue.getJob(jobId);
+          if (job) {
+            await job.remove().catch(() => {});
+          }
         }
       }
     } catch (err) {
@@ -164,13 +213,19 @@ export class SlaQueueService implements OnModuleInit, OnModuleDestroy {
     }
   }
 
-  async cancelForDetectedCrime(crimeId: string): Promise<void> {
+  async cancelForDetectedCrime(crimeId: string, deadlineMs?: number): Promise<void> {
     if (!this.queue || !this.isReady) return;
     try {
       for (const stage of ALL_STAGES) {
-        const job = await this.queue.getJob(this.buildJobId(crimeId, stage, 'DETECTED_CRIME'));
-        if (job) {
-          await job.remove().catch(() => {});
+        const candidateIds = [this.buildJobId(crimeId, stage, 'DETECTED_CRIME')];
+        if (deadlineMs) {
+          candidateIds.push(this.buildJobId(crimeId, stage, 'DETECTED_CRIME', deadlineMs));
+        }
+        for (const jobId of candidateIds) {
+          const job = await this.queue.getJob(jobId);
+          if (job) {
+            await job.remove().catch(() => {});
+          }
         }
       }
     } catch (err) {
@@ -180,24 +235,26 @@ export class SlaQueueService implements OnModuleInit, OnModuleDestroy {
     }
   }
 
-  async scheduleForDetectedCrime(crimeId: string): Promise<void> {
+  async scheduleForDetectedCrime(
+    crimeId: string,
+    preloadedThresholds?: { warnHours: number; urgentHours: number; escalateHours: number },
+  ): Promise<void> {
     if (!this.queue || !this.isReady) return;
     try {
-      await this.cancelForDetectedCrime(crimeId);
-
       const dc = await this.detectedCrimeRepo.findOne({
         where: { id: crimeId },
         relations: { application_status: true },
       });
 
-      if (!dc || dc.is_deleted || !dc.deadline_at) return;
+      const deadlineMs = dc?.deadline_at ? new Date(dc.deadline_at).getTime() : undefined;
+      await this.cancelForDetectedCrime(crimeId, deadlineMs);
+
+      if (!dc || dc.is_deleted || dc.closed_at || !dc.deadline_at || !deadlineMs) return;
       if (dc.application_status && !dc.application_status.tracks_sla) return;
 
-      const warnHours = await this.getSettingNumber('sla_warn_hours_before', 72);
-      const urgentHours = await this.getSettingNumber('sla_urgent_hours_before', 24);
-      const escalateHours = await this.getSettingNumber('sla_escalate_hours_after', 24);
+      const { warnHours, urgentHours, escalateHours } =
+        preloadedThresholds || (await this.loadSlaThresholds());
 
-      const deadlineMs = new Date(dc.deadline_at).getTime();
       const deadlineIso = new Date(dc.deadline_at).toISOString();
       const nowMs = Date.now();
 
@@ -220,7 +277,7 @@ export class SlaQueueService implements OnModuleInit, OnModuleDestroy {
           item.stage,
           { entityType: 'DETECTED_CRIME', applicationId: crimeId, stage: item.stage, deadlineIso },
           {
-            jobId: this.buildJobId(crimeId, item.stage, 'DETECTED_CRIME'),
+            jobId: this.buildJobId(crimeId, item.stage, 'DETECTED_CRIME', deadlineMs),
             delay,
           },
         );
@@ -232,24 +289,26 @@ export class SlaQueueService implements OnModuleInit, OnModuleDestroy {
     }
   }
 
-  async scheduleForApplication(applicationId: string): Promise<void> {
+  async scheduleForApplication(
+    applicationId: string,
+    preloadedThresholds?: { warnHours: number; urgentHours: number; escalateHours: number },
+  ): Promise<void> {
     if (!this.queue || !this.isReady) return;
     try {
-      await this.cancelForApplication(applicationId);
-
       const app = await this.applicationRepo.findOne({
         where: { id: applicationId },
         relations: { application_status: true },
       });
 
-      if (!app || app.is_deleted || !app.deadline_at) return;
+      const deadlineMs = app?.deadline_at ? new Date(app.deadline_at).getTime() : undefined;
+      await this.cancelForApplication(applicationId, deadlineMs);
+
+      if (!app || app.is_deleted || app.closed_at || !app.deadline_at || !deadlineMs) return;
       if (app.application_status && !app.application_status.tracks_sla) return;
 
-      const warnHours = await this.getSettingNumber('sla_warn_hours_before', 72);
-      const urgentHours = await this.getSettingNumber('sla_urgent_hours_before', 24);
-      const escalateHours = await this.getSettingNumber('sla_escalate_hours_after', 24);
+      const { warnHours, urgentHours, escalateHours } =
+        preloadedThresholds || (await this.loadSlaThresholds());
 
-      const deadlineMs = new Date(app.deadline_at).getTime();
       const deadlineIso = new Date(app.deadline_at).toISOString();
       const nowMs = Date.now();
 
@@ -272,7 +331,7 @@ export class SlaQueueService implements OnModuleInit, OnModuleDestroy {
           item.stage,
           { applicationId, stage: item.stage, deadlineIso },
           {
-            jobId: this.buildJobId(applicationId, item.stage),
+            jobId: this.buildJobId(applicationId, item.stage, 'APPLICATION', deadlineMs),
             delay,
           },
         );
@@ -284,29 +343,62 @@ export class SlaQueueService implements OnModuleInit, OnModuleDestroy {
     }
   }
 
-  async reconcileAllOpenApplications(): Promise<{ scheduled: number }> {
-    if (!this.queue || !this.isReady) return { scheduled: 0 };
+  async reconcileAllOpenApplications(): Promise<{ scheduled: number; detectedCrimes: number }> {
+    if (!this.queue || !this.isReady) return { scheduled: 0, detectedCrimes: 0 };
     try {
-      const openApps = await this.applicationRepo
-        .createQueryBuilder('app')
-        .leftJoinAndSelect('app.application_status', 'st')
-        .where('app.is_deleted = false')
-        .andWhere('app.deadline_at IS NOT NULL')
-        .andWhere('(st.tracks_sla = true OR st.id IS NULL)')
-        .select(['app.id', 'app.deadline_at', 'st.id', 'st.tracks_sla'])
-        .getMany();
+      const thresholds = await this.loadSlaThresholds();
 
+      const [openApps, openCrimes] = await Promise.all([
+        this.applicationRepo
+          .createQueryBuilder('app')
+          .leftJoinAndSelect('app.application_status', 'st')
+          .where('app.is_deleted = false')
+          .andWhere('app.closed_at IS NULL')
+          .andWhere('app.deadline_at IS NOT NULL')
+          .andWhere('(st.tracks_sla = true OR st.id IS NULL)')
+          .select(['app.id', 'app.deadline_at', 'st.id', 'st.tracks_sla'])
+          .getMany(),
+        this.detectedCrimeRepo
+          .createQueryBuilder('dc')
+          .leftJoinAndSelect('dc.application_status', 'st')
+          .where('dc.is_deleted = false')
+          .andWhere('dc.closed_at IS NULL')
+          .andWhere('dc.deadline_at IS NOT NULL')
+          .andWhere('(st.tracks_sla = true OR st.id IS NULL)')
+          .select(['dc.id', 'dc.deadline_at', 'st.id', 'st.tracks_sla'])
+          .getMany(),
+      ]);
+
+      const CHUNK_SIZE = 10;
       let scheduled = 0;
-      for (const app of openApps) {
-        await this.scheduleForApplication(app.id);
-        scheduled++;
+      for (let i = 0; i < openApps.length; i += CHUNK_SIZE) {
+        const chunk = openApps.slice(i, i + CHUNK_SIZE);
+        await Promise.all(
+          chunk.map(async (app) => {
+            await this.scheduleForApplication(app.id, thresholds);
+            scheduled++;
+          }),
+        );
       }
 
-      this.logger.log(`BullMQ SLA sinxronizatsiyasi tugadi: ${scheduled} ta faol ariza`);
-      return { scheduled };
+      let detectedCrimes = 0;
+      for (let i = 0; i < openCrimes.length; i += CHUNK_SIZE) {
+        const chunk = openCrimes.slice(i, i + CHUNK_SIZE);
+        await Promise.all(
+          chunk.map(async (dc) => {
+            await this.scheduleForDetectedCrime(dc.id, thresholds);
+            detectedCrimes++;
+          }),
+        );
+      }
+
+      this.logger.log(
+        `BullMQ SLA sinxronizatsiyasi tugadi: ${scheduled} ta faol ariza, ${detectedCrimes} ta aniqlangan jinoyat`,
+      );
+      return { scheduled, detectedCrimes };
     } catch (err) {
       this.logger.warn(`SLA reconcile xatosi: ${(err as Error).message}`);
-      return { scheduled: 0 };
+      return { scheduled: 0, detectedCrimes: 0 };
     }
   }
 
@@ -347,7 +439,7 @@ export class SlaQueueService implements OnModuleInit, OnModuleDestroy {
           detected_by: true,
         },
       });
-      if (!dc || dc.is_deleted || !dc.deadline_at) return;
+      if (!dc || dc.is_deleted || dc.closed_at || !dc.deadline_at) return;
       if (dc.application_status && !dc.application_status.tracks_sla) return;
       if (new Date(dc.deadline_at).toISOString() !== deadlineIso) return;
 
@@ -365,7 +457,7 @@ export class SlaQueueService implements OnModuleInit, OnModuleDestroy {
       },
     });
 
-    if (!app || app.is_deleted || !app.deadline_at) return;
+    if (!app || app.is_deleted || app.closed_at || !app.deadline_at) return;
     if (app.application_status && !app.application_status.tracks_sla) return;
 
     // Agar ariza muddati o'zgargan bo'lsa, bu eskirgan job — o'tkazib yuboramiz

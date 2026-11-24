@@ -1,16 +1,20 @@
-import { Injectable, NotFoundException } from '@nestjs/common';
+import { ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import type { Response } from 'express';
 import { In, Repository } from 'typeorm';
 
+import { assertNoDependencies } from '../../../common/database/dependency-guard.util';
 import { TransferDestinationType } from '../../../common/enums/transfer-destination-type.enum';
 import { TransferStatus } from '../../../common/enums/transfer-status.enum';
 import type { PaginatedResult } from '../../../common/interfaces/pagination.interface';
+import type { JwtAccessPayload } from '../../../common/types/jwt-payload.interface';
+import { getAllowedDistrictIds } from '../../../common/utils/district-scope.util';
 import { DigitalIdentifierEntity } from '../../intelligence/entities/digital-identifier.entity';
 import {
   getIdentifierTypeLabel,
   normalizeIdentifierValue,
 } from '../../intelligence/utils/identifier-normalizer.util';
+import { User } from '../../users/user.entity';
 import { TransferCustomField } from './custom-fields/transfer-custom-field.entity';
 import type { CreateTransferDto } from './dto/create-transfer.dto';
 import type { UpdateTransferDto } from './dto/update-transfer.dto';
@@ -26,6 +30,8 @@ export class TransfersService {
     private readonly customFieldRepo: Repository<TransferCustomField>,
     @InjectRepository(DigitalIdentifierEntity)
     private readonly identifierRepo: Repository<DigitalIdentifierEntity>,
+    @InjectRepository(User)
+    private readonly userRepo: Repository<User>,
     private readonly excelService: TransfersExcelService,
   ) {}
 
@@ -233,6 +239,26 @@ export class TransfersService {
     return qb;
   }
 
+  private applyDistrictScope(
+    qb: ReturnType<Repository<Transfer>['createQueryBuilder']>,
+    allowedDistrictIds: string[] | null,
+  ): void {
+    if (allowedDistrictIds === null) return;
+    if (allowedDistrictIds.length === 0) {
+      qb.andWhere('1 = 0');
+      return;
+    }
+    qb.andWhere(
+      `EXISTS (
+        SELECT 1 FROM applications a
+        WHERE (a.id = transfer.application_id OR a.transfer_id = transfer.id)
+          AND a.is_deleted = false
+          AND a.district_id IN (:...allowedDistrictIds)
+      )`,
+      { allowedDistrictIds },
+    );
+  }
+
   async findAll(
     page = 1,
     limit = 10,
@@ -246,11 +272,14 @@ export class TransfersService {
       receiverCardNumber?: string;
       transferDate?: string;
     },
+    currentUser?: JwtAccessPayload,
   ): Promise<PaginatedResult<Transfer>> {
+    const allowedDistrictIds = await getAllowedDistrictIds(this.userRepo, currentUser);
     const take = limit;
     const skip = (page - 1) * limit;
 
     const qb = this.buildTransfersFilterQuery(search, filters);
+    this.applyDistrictScope(qb, allowedDistrictIds);
     const [matched, total] = await qb
       .select(['transfer.id', 'transfer.created_at'])
       .skip(skip)
@@ -289,7 +318,21 @@ export class TransfersService {
     };
   }
 
-  async findOne(id: string): Promise<Transfer> {
+  async findOne(id: string, currentUser?: JwtAccessPayload): Promise<Transfer> {
+    const allowedDistrictIds = await getAllowedDistrictIds(this.userRepo, currentUser);
+    if (allowedDistrictIds !== null) {
+      const checkQb = this.transferRepo
+        .createQueryBuilder('transfer')
+        .where('transfer.id = :id', { id });
+      this.applyDistrictScope(checkQb, allowedDistrictIds);
+      const accessible = await checkQb.select('transfer.id').getOne();
+      if (!accessible) {
+        throw new ForbiddenException(
+          "Siz faqat o'zingizga biriktirilgan tuman(lar) o'tkazmalarini ko'rishingiz mumkin",
+        );
+      }
+    }
+
     const transfer = await this.transferRepo.findOne({
       where: { id },
       relations: {
@@ -310,8 +353,12 @@ export class TransfersService {
     return transfer;
   }
 
-  async update(id: string, dto: UpdateTransferDto): Promise<Transfer> {
-    const transfer = await this.findOne(id);
+  async update(
+    id: string,
+    dto: UpdateTransferDto,
+    currentUser?: JwtAccessPayload,
+  ): Promise<Transfer> {
+    const transfer = await this.findOne(id, currentUser);
     const {
       custom_fields,
       destination_platform,
@@ -359,27 +406,50 @@ export class TransfersService {
     delete (transfer as unknown as Record<string, unknown>).application;
     delete (transfer as unknown as Record<string, unknown>).custom_fields;
 
-    await this.transferRepo.save(transfer);
+    await this.transferRepo.manager.transaction(async (manager) => {
+      const txTransferRepo = manager.getRepository(Transfer);
+      const txFieldRepo = manager.getRepository(TransferCustomField);
 
-    if (custom_fields !== undefined) {
-      // Mavjud maydonlarni yangilash yoki almashtirish
-      await this.customFieldRepo.delete({ transfer_id: id });
-      if (custom_fields.length > 0) {
-        const fieldEntities = custom_fields.map((f) =>
-          this.customFieldRepo.create({
-            ...f,
-            transfer_id: id,
-          }),
-        );
-        await this.customFieldRepo.save(fieldEntities);
+      await txTransferRepo.save(transfer);
+
+      if (custom_fields !== undefined) {
+        // Mavjud maydonlarni tranzaksiya ichida yangilash yoki almashtirish
+        await txFieldRepo.delete({ transfer_id: id });
+        if (custom_fields.length > 0) {
+          const fieldEntities = custom_fields.map((f) =>
+            txFieldRepo.create({
+              ...f,
+              transfer_id: id,
+            }),
+          );
+          await txFieldRepo.save(fieldEntities);
+        }
       }
-    }
+    });
 
     return this.findOne(id);
   }
 
   async remove(id: string): Promise<{ success: boolean; message: string }> {
     const transfer = await this.findOne(id);
+    await assertNoDependencies(
+      this.transferRepo.manager,
+      `«${transfer.transaction_id || transfer.id.slice(0, 8)}» pul o'tkazmasi`,
+      transfer.id,
+      [
+        {
+          table: 'applications',
+          column: 'transfer_id',
+          label: 'ariza',
+          extraWhere: 'is_deleted = false',
+        },
+        {
+          table: 'application_custom_fields',
+          column: 'transfer_id',
+          label: "ariza qo'shimcha maydoni",
+        },
+      ],
+    );
     await this.transferRepo.remove(transfer);
     return {
       success: true,
@@ -399,8 +469,11 @@ export class TransfersService {
       receiverCardNumber?: string;
       transferDate?: string;
     },
+    currentUser?: JwtAccessPayload,
   ): Promise<void> {
+    const allowedDistrictIds = await getAllowedDistrictIds(this.userRepo, currentUser);
     const qb = this.buildTransfersFilterQuery(search, filters);
+    this.applyDistrictScope(qb, allowedDistrictIds);
     const matched = await qb.select(['transfer.id', 'transfer.created_at']).take(10000).getMany();
     const ids = matched.map((t) => t.id);
     const items =

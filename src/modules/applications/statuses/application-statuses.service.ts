@@ -285,10 +285,6 @@ export class ApplicationStatusesService implements OnApplicationBootstrap {
       throw new BadRequestException(`"${trimmedName}" nomli yoki kodli status allaqachon mavjud`);
     }
 
-    if (dto.is_default) {
-      await this.statusRepo.update({}, { is_default: false });
-    }
-
     const code = dto.code
       ? dto.code.trim().toUpperCase()
       : trimmedName
@@ -301,23 +297,30 @@ export class ApplicationStatusesService implements OnApplicationBootstrap {
       category === ApplicationStatusCategory.CLOSED ||
       category === ApplicationStatusCategory.PAUSED;
 
-    const status = this.statusRepo.create({
-      ...dto,
-      name: trimmedName,
-      code,
-      color: dto.color || 'blue',
-      category,
-      tracks_sla: dto.tracks_sla !== undefined ? dto.tracks_sla : !isClosedOrPaused,
-      default_sla_days:
-        dto.default_sla_days !== undefined ? dto.default_sla_days : isClosedOrPaused ? null : 10,
-      legal_article: dto.legal_article?.trim() || null,
-      requires_decision: Boolean(dto.requires_decision),
-      requires_rejection_reason: Boolean(dto.requires_rejection_reason),
-      is_default: Boolean(dto.is_default),
-      sort_order: dto.sort_order ?? 0,
-    });
+    return this.statusRepo.manager.transaction(async (manager) => {
+      const repo = manager.getRepository(ApplicationStatus);
+      if (dto.is_default) {
+        await repo.update({ is_default: true }, { is_default: false });
+      }
 
-    return this.statusRepo.save(status);
+      const status = repo.create({
+        ...dto,
+        name: trimmedName,
+        code,
+        color: dto.color || 'blue',
+        category,
+        tracks_sla: dto.tracks_sla !== undefined ? dto.tracks_sla : !isClosedOrPaused,
+        default_sla_days:
+          dto.default_sla_days !== undefined ? dto.default_sla_days : isClosedOrPaused ? null : 10,
+        legal_article: dto.legal_article?.trim() || null,
+        requires_decision: Boolean(dto.requires_decision),
+        requires_rejection_reason: Boolean(dto.requires_rejection_reason),
+        is_default: Boolean(dto.is_default),
+        sort_order: dto.sort_order ?? 0,
+      });
+
+      return repo.save(status);
+    });
   }
 
   async findAll(
@@ -390,14 +393,17 @@ export class ApplicationStatusesService implements OnApplicationBootstrap {
     }
     if (dto.sort_order !== undefined) status.sort_order = dto.sort_order;
 
-    if (dto.is_default !== undefined) {
-      if (dto.is_default && !status.is_default) {
-        await this.statusRepo.update({}, { is_default: false });
+    return this.statusRepo.manager.transaction(async (manager) => {
+      const repo = manager.getRepository(ApplicationStatus);
+      if (dto.is_default !== undefined) {
+        if (dto.is_default && !status.is_default) {
+          await repo.update({ is_default: true }, { is_default: false });
+        }
+        status.is_default = dto.is_default;
       }
-      status.is_default = dto.is_default;
-    }
 
-    return this.statusRepo.save(status);
+      return repo.save(status);
+    });
   }
 
   async remove(id: string): Promise<{ success: boolean; message: string }> {

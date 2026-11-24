@@ -14,14 +14,29 @@ import {
 import type { Response } from 'express';
 
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
+import { Roles } from '../../common/decorators/roles.decorator';
+import { Role } from '../../common/enums/role.enum';
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
+import { RolesGuard } from '../../common/guards/roles.guard';
 import type { JwtAccessPayload } from '../../common/types/jwt-payload.interface';
+import { normalizePagination } from '../../common/utils/pagination.util';
 import { DetectedCrimeStatusesService } from './detected-crime-statuses.service';
-import { DetectedCrimesService, type SaveDetectedCrimeInput } from './detected-crimes.service';
+import { DetectedCrimesService } from './detected-crimes.service';
 import { DetectionSourcesService } from './detection-sources.service';
+import {
+  CreateDetectedCrimeStatusDto,
+  CreateDetectionSourceDto,
+  ExtendDetectedCrimeDeadlineDto,
+  SaveDetectedCrimeDto,
+  UpdateDetectedCrimeDto,
+  UpdateDetectedCrimeStatusDto,
+  UpdateDetectionSourceDto,
+} from './dto/detected-crimes.dto';
+
+const REF_WRITE_ROLES = [Role.SUPER_ADMIN, Role.ADMIN, Role.STAFF, Role.INSPECTOR];
 
 @Controller('detected-crime-statuses')
-@UseGuards(JwtAuthGuard)
+@UseGuards(JwtAuthGuard, RolesGuard)
 export class DetectedCrimeStatusesController {
   constructor(private readonly service: DetectedCrimeStatusesService) {}
 
@@ -31,46 +46,26 @@ export class DetectedCrimeStatusesController {
   }
 
   @Post()
-  create(
-    @Body()
-    body: {
-      name: string;
-      code?: string;
-      color?: string;
-      is_default?: boolean;
-      is_final?: boolean;
-      sort_order?: number;
-      is_active?: boolean;
-    },
-  ) {
+  @Roles(...REF_WRITE_ROLES)
+  create(@Body() body: CreateDetectedCrimeStatusDto) {
     return this.service.create(body);
   }
 
   @Patch(':id')
-  update(
-    @Param('id', ParseUUIDPipe) id: string,
-    @Body()
-    body: {
-      name?: string;
-      code?: string;
-      color?: string;
-      is_default?: boolean;
-      is_final?: boolean;
-      sort_order?: number;
-      is_active?: boolean;
-    },
-  ) {
+  @Roles(...REF_WRITE_ROLES)
+  update(@Param('id', ParseUUIDPipe) id: string, @Body() body: UpdateDetectedCrimeStatusDto) {
     return this.service.update(id, body);
   }
 
   @Delete(':id')
+  @Roles(Role.SUPER_ADMIN, Role.ADMIN)
   remove(@Param('id', ParseUUIDPipe) id: string) {
     return this.service.remove(id);
   }
 }
 
 @Controller('detection-sources')
-@UseGuards(JwtAuthGuard)
+@UseGuards(JwtAuthGuard, RolesGuard)
 export class DetectionSourcesController {
   constructor(private readonly service: DetectionSourcesService) {}
 
@@ -80,42 +75,26 @@ export class DetectionSourcesController {
   }
 
   @Post()
-  create(
-    @Body()
-    body: {
-      name: string;
-      code?: string;
-      description?: string;
-      sort_order?: number;
-      is_active?: boolean;
-    },
-  ) {
+  @Roles(...REF_WRITE_ROLES)
+  create(@Body() body: CreateDetectionSourceDto) {
     return this.service.create(body);
   }
 
   @Patch(':id')
-  update(
-    @Param('id', ParseUUIDPipe) id: string,
-    @Body()
-    body: {
-      name?: string;
-      code?: string;
-      description?: string;
-      sort_order?: number;
-      is_active?: boolean;
-    },
-  ) {
+  @Roles(...REF_WRITE_ROLES)
+  update(@Param('id', ParseUUIDPipe) id: string, @Body() body: UpdateDetectionSourceDto) {
     return this.service.update(id, body);
   }
 
   @Delete(':id')
+  @Roles(Role.SUPER_ADMIN, Role.ADMIN)
   remove(@Param('id', ParseUUIDPipe) id: string) {
     return this.service.remove(id);
   }
 }
 
 @Controller('detected-crimes')
-@UseGuards(JwtAuthGuard)
+@UseGuards(JwtAuthGuard, RolesGuard)
 export class DetectedCrimesController {
   constructor(private readonly service: DetectedCrimesService) {}
 
@@ -132,10 +111,11 @@ export class DetectedCrimesController {
     @Query('qualification_type') qualification_type?: string,
     @CurrentUser() currentUser?: JwtAccessPayload,
   ) {
+    const pagination = normalizePagination(page, limit, 15, 200);
     return this.service.findAll(
       {
-        page: Number(page) || 1,
-        limit: Number(limit) || 15,
+        page: pagination.page,
+        limit: pagination.limit,
         search,
         district_id,
         crime_id,
@@ -163,16 +143,20 @@ export class DetectedCrimesController {
   }
 
   @Get('citizen/:citizenId')
-  getByCitizen(@Param('citizenId', ParseUUIDPipe) citizenId: string) {
-    return this.service.findByCitizenId(citizenId);
+  getByCitizen(
+    @Param('citizenId', ParseUUIDPipe) citizenId: string,
+    @CurrentUser() currentUser?: JwtAccessPayload,
+  ) {
+    return this.service.findByCitizenId(citizenId, currentUser);
   }
 
   @Get('citizen/:citizenId/repeat-check')
   checkRepeat(
     @Param('citizenId', ParseUUIDPipe) citizenId: string,
     @Query('exclude_id') excludeId?: string,
+    @CurrentUser() currentUser?: JwtAccessPayload,
   ) {
-    return this.service.checkCitizenRepeatHistory(citizenId, excludeId);
+    return this.service.checkCitizenRepeatHistory(citizenId, excludeId, currentUser);
   }
 
   @Get('export/excel')
@@ -207,14 +191,14 @@ export class DetectedCrimesController {
   }
 
   @Post()
-  create(@Body() body: SaveDetectedCrimeInput, @CurrentUser() currentUser?: JwtAccessPayload) {
+  create(@Body() body: SaveDetectedCrimeDto, @CurrentUser() currentUser?: JwtAccessPayload) {
     return this.service.create(body, currentUser);
   }
 
   @Patch(':id')
   update(
     @Param('id', ParseUUIDPipe) id: string,
-    @Body() body: Partial<SaveDetectedCrimeInput>,
+    @Body() body: UpdateDetectedCrimeDto,
     @CurrentUser() currentUser?: JwtAccessPayload,
   ) {
     return this.service.update(id, body, currentUser);
@@ -223,7 +207,7 @@ export class DetectedCrimesController {
   @Post(':id/extend-deadline')
   extendDeadline(
     @Param('id', ParseUUIDPipe) id: string,
-    @Body() body: { extend_days?: number; reason: string; prosecutor_approval_number?: string },
+    @Body() body: ExtendDetectedCrimeDeadlineDto,
     @CurrentUser() currentUser?: JwtAccessPayload,
   ) {
     return this.service.extendDeadline(id, body, currentUser);

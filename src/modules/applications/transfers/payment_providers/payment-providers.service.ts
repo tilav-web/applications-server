@@ -1,9 +1,10 @@
-import { Injectable, NotFoundException, OnModuleInit } from '@nestjs/common';
+import { BadRequestException, Injectable, NotFoundException, OnModuleInit } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { FindOptionsWhere, ILike, Repository } from 'typeorm';
 
 import { assertNoDependencies } from '../../../../common/database/dependency-guard.util';
 import type { PaginatedResult } from '../../../../common/interfaces/pagination.interface';
+import { isPgUniqueViolation } from '../../../../common/utils/normalization.util';
 import type { CreatePaymentProviderDto } from './dto/create-payment-provider.dto';
 import type { UpdatePaymentProviderDto } from './dto/update-payment-provider.dto';
 import { PaymentProvider } from './payment_provider.entity';
@@ -74,8 +75,32 @@ export class PaymentProvidersService implements OnModuleInit {
   }
 
   async create(dto: CreatePaymentProviderDto): Promise<PaymentProvider> {
-    const provider = this.providerRepo.create(dto);
-    return this.providerRepo.save(provider);
+    const cleanName = dto.name?.trim() || '';
+    const cleanCode = dto.code?.trim().toLowerCase() || null;
+    if (!cleanName) throw new BadRequestException("To'lov provayderi nomi kiritilishi shart");
+
+    const findExisting = () =>
+      this.providerRepo.findOne({
+        where: [{ name: ILike(cleanName) }, ...(cleanCode ? [{ code: cleanCode }] : [])],
+      });
+
+    const existing = await findExisting();
+    if (existing) return existing;
+
+    const provider = this.providerRepo.create({
+      ...dto,
+      name: cleanName,
+      code: cleanCode || cleanName.toLowerCase().replace(/\s+/g, '_').slice(0, 50),
+    });
+    try {
+      return await this.providerRepo.save(provider);
+    } catch (err) {
+      if (isPgUniqueViolation(err)) {
+        const raceExisting = await findExisting();
+        if (raceExisting) return raceExisting;
+      }
+      throw err;
+    }
   }
 
   async findAll(page = 1, limit = 50, search?: string): Promise<PaginatedResult<PaymentProvider>> {
@@ -124,7 +149,26 @@ export class PaymentProvidersService implements OnModuleInit {
 
   async update(id: string, dto: UpdatePaymentProviderDto): Promise<PaymentProvider> {
     const provider = await this.findOne(id);
-    Object.assign(provider, dto);
+    if (dto.name !== undefined) {
+      const cleanName = dto.name.trim();
+      if (!cleanName)
+        throw new BadRequestException("To'lov provayderi nomi bo'sh bo'lishi mumkin emas");
+      const existing = await this.providerRepo.findOne({ where: { name: ILike(cleanName) } });
+      if (existing && existing.id !== id) {
+        throw new BadRequestException(`"${cleanName}" nomli provayder allaqachon mavjud`);
+      }
+      provider.name = cleanName;
+    }
+    if (dto.code !== undefined) {
+      const cleanCode = dto.code.trim().toLowerCase();
+      if (cleanCode) {
+        const existingCode = await this.providerRepo.findOne({ where: { code: cleanCode } });
+        if (existingCode && existingCode.id !== id) {
+          throw new BadRequestException(`"${cleanCode}" kodli provayder allaqachon mavjud`);
+        }
+        provider.code = cleanCode;
+      }
+    }
     return this.providerRepo.save(provider);
   }
 
@@ -134,7 +178,14 @@ export class PaymentProvidersService implements OnModuleInit {
       this.providerRepo.manager,
       `«${provider.name}» to'lov provayderi`,
       provider.id,
-      [{ table: 'transfers', column: 'payment_provider_id', label: "o'tkazma" }],
+      [
+        { table: 'transfers', column: 'payment_provider_id', label: "o'tkazma" },
+        {
+          table: 'transfer_custom_fields',
+          column: 'payment_provider_id',
+          label: "o'tkazma qo'shimcha maydoni",
+        },
+      ],
     );
     await this.providerRepo.remove(provider);
     return {

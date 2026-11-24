@@ -1,7 +1,8 @@
-import { Injectable, Logger, OnApplicationBootstrap } from '@nestjs/common';
+import { Injectable, Logger } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 
+import { isPgUniqueViolation } from '../../common/utils/normalization.util';
 import { Application } from '../applications/application.entity';
 import { Citizen } from '../applications/citizens/citizen.entity';
 import { Bank } from '../applications/transfers/banks/bank.entity';
@@ -26,8 +27,13 @@ interface NormalizedSuspectRow {
 }
 
 @Injectable()
-export class IntelligenceSyncService implements OnApplicationBootstrap {
+export class IntelligenceSyncService {
   private readonly logger = new Logger(IntelligenceSyncService.name);
+  private syncAllInFlight: Promise<{
+    syncedCitizens: number;
+    syncedApplications: number;
+  }> | null = null;
+  private readonly syncingApps = new Map<string, Promise<void>>();
 
   constructor(
     @InjectRepository(PhoneEntity)
@@ -48,43 +54,46 @@ export class IntelligenceSyncService implements OnApplicationBootstrap {
     private readonly transferRepo: Repository<Transfer>,
   ) {}
 
-  async onApplicationBootstrap(): Promise<void> {
-    try {
-      await this.syncAllExistingData();
-    } catch (err) {
-      this.logger.warn(`Bootstrap intelligence sync ogohlantirish: ${(err as Error)?.message}`);
-    }
-  }
-
   /**
-   * Tizimdagi barcha mavjud Fuqaro va Arizalarni master jadvallarga dublikatsiz sinxronlash
+   * Tizimdagi barcha mavjud Fuqaro va Arizalarni master jadvallarga dublikatsiz sinxronlash.
+   * Bir vaqtda bir nechta sinxronizatsiya so'rovi kelganda bitta mutex orqali boshqariladi.
    */
   async syncAllExistingData(): Promise<{
     syncedCitizens: number;
     syncedApplications: number;
   }> {
-    const citizens = await this.citizenRepo.find();
-    for (const cit of citizens) {
-      await this.syncCitizenEntity(cit);
+    if (this.syncAllInFlight) {
+      return this.syncAllInFlight;
     }
 
-    const apps = await this.appRepo.find({
-      where: { is_deleted: false },
-      select: { id: true },
+    this.syncAllInFlight = (async () => {
+      const citizens = await this.citizenRepo.find();
+      for (const cit of citizens) {
+        await this.syncCitizenEntity(cit);
+      }
+
+      const apps = await this.appRepo.find({
+        where: { is_deleted: false },
+        select: { id: true },
+      });
+
+      for (const a of apps) {
+        await this.syncApplicationById(a.id);
+      }
+
+      this.logger.log(
+        `Intelligence Sync yakunlandi: ${citizens.length} ta fuqaro, ${apps.length} ta ariza indekslandi.`,
+      );
+
+      return {
+        syncedCitizens: citizens.length,
+        syncedApplications: apps.length,
+      };
+    })().finally(() => {
+      this.syncAllInFlight = null;
     });
 
-    for (const a of apps) {
-      await this.syncApplicationById(a.id);
-    }
-
-    this.logger.log(
-      `Intelligence Sync yakunlandi: ${citizens.length} ta fuqaro, ${apps.length} ta ariza indekslandi.`,
-    );
-
-    return {
-      syncedCitizens: citizens.length,
-      syncedApplications: apps.length,
-    };
+    return this.syncAllInFlight;
   }
 
   /**
@@ -113,7 +122,15 @@ export class IntelligenceSyncService implements OnApplicationBootstrap {
         label: opts?.label || null,
         notes: opts?.notes || null,
       });
-      return this.phoneRepo.save(phone);
+      try {
+        return await this.phoneRepo.save(phone);
+      } catch (err) {
+        if (isPgUniqueViolation(err)) {
+          phone = await this.phoneRepo.findOne({ where: { phone_number: clean } });
+          if (phone) return phone;
+        }
+        throw err;
+      }
     }
 
     let changed = false;
@@ -173,7 +190,17 @@ export class IntelligenceSyncService implements OnApplicationBootstrap {
         citizen_id: opts?.citizenId || null,
         notes: opts?.notes || null,
       });
-      return this.identifierRepo.save(ident);
+      try {
+        return await this.identifierRepo.save(ident);
+      } catch (err) {
+        if (isPgUniqueViolation(err)) {
+          ident = await this.identifierRepo.findOne({
+            where: { type: cleanType, normalized_value: normalized },
+          });
+          if (ident) return ident;
+        }
+        throw err;
+      }
     }
 
     let changed = false;
@@ -215,7 +242,15 @@ export class IntelligenceSyncService implements OnApplicationBootstrap {
         expire_date: opts?.expireDate || null,
         bank_id: opts?.bankId || null,
       });
-      return this.cardRepo.save(card);
+      try {
+        return await this.cardRepo.save(card);
+      } catch (err) {
+        if (isPgUniqueViolation(err)) {
+          card = await this.cardRepo.findOne({ where: { card_number: clean } });
+          if (card) return card;
+        }
+        throw err;
+      }
     }
 
     let changed = false;
@@ -339,9 +374,24 @@ export class IntelligenceSyncService implements OnApplicationBootstrap {
   }
 
   /**
-   * Arizaning barcha bog'langan ob'ektlarini 'entity_application_links' va master jadvallarga sinxronlash
+   * Arizaning barcha bog'langan ob'ektlarini 'entity_application_links' va master jadvallarga sinxronlash.
+   * Bir vaqtdagi chaqiruvlar bitta per-app mutex orqali ketma-ket bajariladi va
+   * tranzaksiya + ON CONFLICT DO NOTHING bilan MANUAL_OFFICER / CONFIRMED_MATCH bilan kolliziya bermaydi.
    */
   async syncApplicationById(applicationId: string): Promise<void> {
+    const existing = this.syncingApps.get(applicationId);
+    if (existing) {
+      return existing;
+    }
+
+    const promise = this.performSyncApplicationById(applicationId).finally(() => {
+      this.syncingApps.delete(applicationId);
+    });
+    this.syncingApps.set(applicationId, promise);
+    return promise;
+  }
+
+  private async performSyncApplicationById(applicationId: string): Promise<void> {
     const app = await this.appRepo.findOne({
       where: { id: applicationId },
       relations: {
@@ -350,6 +400,7 @@ export class IntelligenceSyncService implements OnApplicationBootstrap {
         transfer: {
           sender_card: true,
           receiver_card: true,
+          receiver_identifier: true,
           card: true,
           custom_fields: { card: true, citizen: true },
         },
@@ -359,6 +410,7 @@ export class IntelligenceSyncService implements OnApplicationBootstrap {
           transfer: {
             sender_card: true,
             receiver_card: true,
+            receiver_identifier: true,
           },
         },
       },
@@ -371,13 +423,16 @@ export class IntelligenceSyncService implements OnApplicationBootstrap {
       return;
     }
 
-    // Faqat AUTO_SYNC yozuvlarni yangilaymiz; xodim qo'lda biriktirgan MANUAL_OFFICER / CONFIRMED_MATCH saqlanib qoladi
-    await this.linkRepo.delete({
-      application_id: app.id,
-      source: 'AUTO_SYNC',
-    });
-
-    const newLinks: EntityApplicationLink[] = [];
+    const newLinks: Array<{
+      application_id: string;
+      citizen_id: string | null;
+      card_id: string | null;
+      phone_id: string | null;
+      identifier_id: string | null;
+      role: EntityLinkRole;
+      source: 'AUTO_SYNC';
+      note: string | null;
+    }> = [];
     const seenKeys = new Set<string>();
 
     const pushLink = (partial: {
@@ -392,18 +447,16 @@ export class IntelligenceSyncService implements OnApplicationBootstrap {
       if (seenKeys.has(key)) return;
       seenKeys.add(key);
 
-      newLinks.push(
-        this.linkRepo.create({
-          application_id: app.id,
-          citizen_id: partial.citizen_id || null,
-          card_id: partial.card_id || null,
-          phone_id: partial.phone_id || null,
-          identifier_id: partial.identifier_id || null,
-          role: partial.role,
-          source: 'AUTO_SYNC',
-          note: partial.note || null,
-        }),
-      );
+      newLinks.push({
+        application_id: app.id,
+        citizen_id: partial.citizen_id || null,
+        card_id: partial.card_id || null,
+        phone_id: partial.phone_id || null,
+        identifier_id: partial.identifier_id || null,
+        role: partial.role,
+        source: 'AUTO_SYNC',
+        note: partial.note ? partial.note.slice(0, 255) : null,
+      });
     };
 
     // 1. Asosiy Jabrlanuvchi Fuqaro va uning telefoni
@@ -447,7 +500,7 @@ export class IntelligenceSyncService implements OnApplicationBootstrap {
 
     const extraAppTransfers = await this.transferRepo.find({
       where: { application_id: app.id },
-      relations: { sender_card: true, receiver_card: true, card: true },
+      relations: { sender_card: true, receiver_card: true, receiver_identifier: true, card: true },
     });
     for (const et of extraAppTransfers) {
       if (!appTransfers.some((t) => t.id === et.id)) {
@@ -479,6 +532,14 @@ export class IntelligenceSyncService implements OnApplicationBootstrap {
             note: 'Qabul qiluvchi karta egasi (Dropper)',
           });
         }
+      }
+      if (tr.receiver_identifier) {
+        pushLink({
+          identifier_id: tr.receiver_identifier.id,
+          citizen_id: tr.receiver_identifier.citizen_id || null,
+          role: 'DROPPER',
+          note: tr.destination_label || 'Oʻtkazma qabul qiluvchi raqamli manzil',
+        });
       }
     }
 
@@ -539,6 +600,14 @@ export class IntelligenceSyncService implements OnApplicationBootstrap {
                 note: 'Qoʻshimcha qabul qiluvchi karta egasi',
               });
             }
+          }
+          if (cf.transfer.receiver_identifier) {
+            pushLink({
+              identifier_id: cf.transfer.receiver_identifier.id,
+              citizen_id: cf.transfer.receiver_identifier.citizen_id || null,
+              role: 'DROPPER',
+              note: cf.transfer.destination_label || cf.label || 'Qoʻshimcha chiqish manzili',
+            });
           }
         }
       }
@@ -611,8 +680,23 @@ export class IntelligenceSyncService implements OnApplicationBootstrap {
       }
     }
 
-    if (newLinks.length > 0) {
-      await this.linkRepo.save(newLinks);
-    }
+    // Tranzaksiya ichida eski AUTO_SYNC yozuvlarini tozalab, ON CONFLICT DO NOTHING bilan yangilaymiz
+    // (MANUAL_OFFICER / CONFIRMED_MATCH yozuvlari saqlanib qoladi va 23505 crash bo'lmaydi)
+    await this.linkRepo.manager.transaction(async (manager) => {
+      await manager.delete(EntityApplicationLink, {
+        application_id: app.id,
+        source: 'AUTO_SYNC',
+      });
+
+      if (newLinks.length > 0) {
+        await manager
+          .createQueryBuilder()
+          .insert()
+          .into(EntityApplicationLink)
+          .values(newLinks)
+          .orIgnore()
+          .execute();
+      }
+    });
   }
 }

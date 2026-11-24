@@ -15,6 +15,7 @@ import { gzipSync } from 'zlib';
 import type { JwtAccessPayload } from '../../common/types/jwt-payload.interface';
 import {
   applyExcelAutoFilter,
+  sanitizeExcelRow,
   styleExcelDataRow,
   styleExcelHeaderRow,
 } from '../../common/utils/excel-style.util';
@@ -561,19 +562,21 @@ export class AuditService implements OnModuleInit, OnModuleDestroy {
     };
 
     logs.forEach((log, idx) => {
-      const row = sheet.addRow({
-        idx: idx + 1,
-        created_at: new Date(log.created_at).toISOString().slice(0, 19).replace('T', ' '),
-        username: log.username || 'Anonim',
-        role: log.role || '—',
-        action: log.action,
-        severity: severityMap[(log.severity || '').toUpperCase()] || log.severity || '—',
-        entity_type: log.entity_type || '—',
-        summary: log.summary || '—',
-        ip: log.ip || '—',
-        status_code: log.status_code,
-        path: `${log.method} ${log.path}`,
-      });
+      const row = sheet.addRow(
+        sanitizeExcelRow({
+          idx: idx + 1,
+          created_at: new Date(log.created_at).toISOString().slice(0, 19).replace('T', ' '),
+          username: log.username || 'Anonim',
+          role: log.role || '—',
+          action: log.action,
+          severity: severityMap[(log.severity || '').toUpperCase()] || log.severity || '—',
+          entity_type: log.entity_type || '—',
+          summary: log.summary || '—',
+          ip: log.ip || '—',
+          status_code: log.status_code,
+          path: `${log.method} ${log.path}`,
+        }),
+      );
       styleExcelDataRow(row, ['summary']);
       row.getCell('ip').numFmt = '@';
       row.getCell('status_code').alignment = { horizontal: 'center', vertical: 'middle' };

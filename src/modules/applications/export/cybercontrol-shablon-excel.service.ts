@@ -4,6 +4,7 @@ import * as path from 'node:path';
 import { Injectable, InternalServerErrorException } from '@nestjs/common';
 import * as ExcelJS from 'exceljs';
 
+import { sanitizeExcelValue } from '../../../common/utils/excel-style.util';
 import { Application, SuspectTreeNode } from '../application.entity';
 import { Transfer } from '../transfers/transfer.entity';
 
@@ -86,7 +87,7 @@ export class CyberControlShablonExcelService {
       for (let col = 1; col <= 17; col++) {
         const cell = row.getCell(col);
         const val = values[col - 1];
-        cell.value = val === '' ? null : val;
+        cell.value = val === '' ? null : typeof val === 'string' ? sanitizeExcelValue(val) : val;
 
         const dv = colValidations.get(col);
         if (dv) {
@@ -229,8 +230,8 @@ export class CyberControlShablonExcelService {
     // 15. Zarar (so'm)
     const totalLoss = this.calculateTotalLoss(app, extraTransfers);
 
-    // 16. Holat
-    const holatVal = refs.holatlar.includes('Yangi') ? 'Yangi' : refs.holatlar[0] || 'Yangi';
+    // 16. Holat (real ariza statusiga moslashtiramiz, sun'iy "Yangi" yozmaymiz)
+    const holatVal = this.resolveStatus(app, refs.holatlar);
 
     // 17. Fabula
     const fabulaVal = (app.description?.trim() || app.officer_notes?.trim() || '').replace(
@@ -307,7 +308,39 @@ export class CyberControlShablonExcelService {
     if (/\b\w+(ova|eva|ovna|evna|qizi)\b/.test(full)) return 'Ayol';
     if (/\b\w+(ov|ev|ovich|evich|ogli)\b/.test(full)) return 'Erkak';
 
-    return citizen.first_name || citizen.last_name ? 'Erkak' : '';
+    return '';
+  }
+
+  private resolveStatus(app: Application, options: string[]): string {
+    const rawName = (app.application_status?.name || '').trim();
+    const code = (app.application_status?.code || app.status || '').toUpperCase();
+    const category = String(app.application_status?.category || '').toUpperCase();
+
+    if (rawName && options.length > 0) {
+      const exact = options.find((o) => this.toAscii(o) === this.toAscii(rawName));
+      if (exact) return exact;
+    }
+
+    const findOpt = (substr: string) => options.find((o) => this.toAscii(o).includes(substr));
+
+    if (code === 'HAL_QILINDI' || code.includes('HAL') || code.includes('JI_')) {
+      return findOpt('hal') || findOpt('qozgat') || findOpt('yopil') || rawName || '';
+    }
+    if (code === 'RAD_ETILDI' || code.includes('RAD')) {
+      return findOpt('rad') || rawName || '';
+    }
+    if (
+      code === 'JARAYONDA' ||
+      code.includes('JARAYON') ||
+      category === 'IN_PROGRESS' ||
+      category === 'EXTENDED'
+    ) {
+      return findOpt('jarayon') || findOpt('tekshir') || rawName || '';
+    }
+    if (code === 'YANGI' || category === 'NEW') {
+      return findOpt('yangi') || rawName || '';
+    }
+    return rawName || '';
   }
 
   private resolveAge(
@@ -642,7 +675,7 @@ export class CyberControlShablonExcelService {
       return pick('Telegram');
     }
 
-    return pick('Telegram');
+    return '';
   }
 
   private flattenSuspectTree(nodes?: SuspectTreeNode[] | null): string {

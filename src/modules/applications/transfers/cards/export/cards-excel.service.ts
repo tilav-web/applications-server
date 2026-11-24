@@ -3,6 +3,7 @@ import * as ExcelJS from 'exceljs';
 
 import {
   applyExcelAutoFilter,
+  sanitizeExcelRow,
   styleExcelDataRow,
   styleExcelHeaderRow,
   styleExcelTotalRow,
@@ -91,23 +92,25 @@ export class CardsExcelService {
         ? new Date(card.created_at).toISOString().slice(0, 16).replace('T', ' ')
         : '—';
 
-      const row = ws.addRow({
-        idx: index + 1,
-        card_number: card.card_number || card.masked_number || '—',
-        bank_name: card.bank?.name || '—',
-        role: roleStr,
-        owner_name: ownerName,
-        owner_phone: ownerPhone,
-        owner_doc: ownerDoc,
-        expire_date: card.expire_date || '—',
-        in_count: inCount,
-        in_amount: inAmount,
-        out_count: outCount,
-        out_amount: outAmount,
-        apps_list: appNums.join(', ') || '—',
-        apps_count: appNums.length,
-        created_at: createdDateStr,
-      });
+      const row = ws.addRow(
+        sanitizeExcelRow({
+          idx: index + 1,
+          card_number: card.card_number || card.masked_number || '—',
+          bank_name: card.bank?.name || '—',
+          role: roleStr,
+          owner_name: ownerName,
+          owner_phone: ownerPhone,
+          owner_doc: ownerDoc,
+          expire_date: card.expire_date || '—',
+          in_count: inCount,
+          in_amount: inAmount,
+          out_count: outCount,
+          out_amount: outAmount,
+          apps_list: appNums.join(', ') || '—',
+          apps_count: appNums.length,
+          created_at: createdDateStr,
+        }),
+      );
 
       styleExcelDataRow(row, ['apps_list']);
 

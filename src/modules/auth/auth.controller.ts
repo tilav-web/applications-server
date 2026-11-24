@@ -68,6 +68,12 @@ export class AuthController {
     return this.authService.updateProfile(authId, dto);
   }
 
+  @Throttle({
+    default: {
+      limit: 20,
+      ttl: 60000,
+    },
+  })
   @Post('refresh')
   @HttpCode(HttpStatus.OK)
   async refresh(@Req() req: Request, @Res({ passthrough: true }) res: Response) {

@@ -14,24 +14,52 @@ interface DocxtemplaterError {
   };
 }
 
+const FORBIDDEN_TAG_SEGMENTS = new Set(['__proto__', 'constructor', 'prototype']);
+const MAX_DOCX_ENTRIES = 500;
+const MAX_DOCX_UNCOMPRESSED_BYTES = 50 * 1024 * 1024; // 50 MB ZIP-bomb himoyasi
+
 @Injectable()
 export class DocxEngineService {
   private readonly logger = new Logger(DocxEngineService.name);
 
+  private assertSafeZip(zip: PizZip): void {
+    const fileNames = Object.keys(zip.files);
+    if (fileNames.length > MAX_DOCX_ENTRIES) {
+      throw new Error('Shablon fayli ruxsat etilgan ichki elementlar sonidan oshib ketdi');
+    }
+    let totalSize = 0;
+    for (const name of fileNames) {
+      const entry = zip.files[name];
+      if (!entry || entry.dir) continue;
+      const content = entry.asUint8Array();
+      totalSize += content.byteLength;
+      if (totalSize > MAX_DOCX_UNCOMPRESSED_BYTES) {
+        throw new Error('Shablon fayli ochilgandagi hajmi ruxsat etilgan limitdan oshib ketdi');
+      }
+    }
+  }
+
   private createDocxParser(tag: string) {
     return {
       get: (scope: Record<string, unknown> | null | undefined): unknown => {
-        if (!scope) return '';
+        if (!scope || typeof scope !== 'object') return '';
         if (tag === '.') return scope;
+        if (FORBIDDEN_TAG_SEGMENTS.has(tag)) return '';
         // 1. Agar to'g'ridan-to'g'ri kalit mavjud bo'lsa (flat key)
-        if (scope[tag] !== undefined && scope[tag] !== null) {
+        if (
+          Object.prototype.hasOwnProperty.call(scope, tag) &&
+          scope[tag] !== undefined &&
+          scope[tag] !== null
+        ) {
           return scope[tag];
         }
         // 2. Nuqta orqali bog'langan yo'l bo'lsa (nested property path, masalan: citizen.district.name)
         const parts = tag.split('.');
         let val: unknown = scope;
         for (const part of parts) {
+          if (FORBIDDEN_TAG_SEGMENTS.has(part)) return '';
           if (val === null || val === undefined || typeof val !== 'object') return '';
+          if (!Object.prototype.hasOwnProperty.call(val, part)) return '';
           val = (val as Record<string, unknown>)[part];
         }
         return val !== undefined && val !== null ? val : '';
@@ -45,6 +73,7 @@ export class DocxEngineService {
   renderTemplate(templateBuffer: Buffer, contextData: Record<string, unknown>): Buffer {
     try {
       const zip = new PizZip(templateBuffer);
+      this.assertSafeZip(zip);
       const doc = new Docxtemplater(zip, {
         delimiters: { start: '{{', end: '}}' },
         paragraphLoop: true,
@@ -81,6 +110,7 @@ export class DocxEngineService {
   extractTags(templateBuffer: Buffer): string[] {
     try {
       const zip = new PizZip(templateBuffer);
+      this.assertSafeZip(zip);
       new Docxtemplater(zip, {
         delimiters: { start: '{{', end: '}}' },
         paragraphLoop: true,
@@ -121,6 +151,7 @@ export class DocxEngineService {
 
     try {
       const zip = new PizZip(templateBuffer);
+      this.assertSafeZip(zip);
       const doc = new Docxtemplater(zip, {
         delimiters: { start: '{{', end: '}}' },
         paragraphLoop: true,

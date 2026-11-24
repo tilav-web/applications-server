@@ -8,6 +8,7 @@ import {
 import { InjectRepository } from '@nestjs/typeorm';
 import { ILike, In, Repository } from 'typeorm';
 
+import { assertNoDependencies } from '../../../../common/database/dependency-guard.util';
 import type { PaginatedResult } from '../../../../common/interfaces/pagination.interface';
 import { Crime } from '../crime.entity';
 import { CrimeMethod } from './crime-method.entity';
@@ -396,8 +397,12 @@ export class CrimeMethodsService implements OnApplicationBootstrap {
     return this.sortMethodFields(item);
   }
 
-  private async syncMethodFields(methodId: string, fields: CrimeMethodFieldDto[]): Promise<void> {
-    await this.fieldRepo.delete({ crime_method_id: methodId });
+  private async syncMethodFields(
+    methodId: string,
+    fields: CrimeMethodFieldDto[],
+    fieldRepo: Repository<CrimeMethodField> = this.fieldRepo,
+  ): Promise<void> {
+    await fieldRepo.delete({ crime_method_id: methodId });
     if (!fields || fields.length === 0) return;
 
     const usedKeys = new Set<string>();
@@ -410,7 +415,7 @@ export class CrimeMethodsService implements OnApplicationBootstrap {
         }
         usedKeys.add(key);
 
-        return this.fieldRepo.create({
+        return fieldRepo.create({
           crime_method_id: methodId,
           key,
           label: f.label.trim(),
@@ -426,7 +431,7 @@ export class CrimeMethodsService implements OnApplicationBootstrap {
       });
 
     if (entities.length > 0) {
-      await this.fieldRepo.save(entities);
+      await fieldRepo.save(entities);
     }
   }
 
@@ -486,17 +491,39 @@ export class CrimeMethodsService implements OnApplicationBootstrap {
         dto.crime_ids.length > 0 ? await this.crimeRepo.findBy({ id: In(dto.crime_ids) }) : [];
     }
 
-    await this.repo.save(item);
-
-    if (dto.fields !== undefined) {
-      await this.syncMethodFields(item.id, dto.fields);
-    }
+    await this.repo.manager.transaction(async (manager) => {
+      const txRepo = manager.getRepository(CrimeMethod);
+      const txFieldRepo = manager.getRepository(CrimeMethodField);
+      await txRepo.save(item);
+      if (dto.fields !== undefined) {
+        await this.syncMethodFields(item.id, dto.fields, txFieldRepo);
+      }
+    });
 
     return this.findOne(item.id);
   }
 
   async remove(id: string): Promise<{ success: boolean; message: string }> {
     const item = await this.findOne(id);
+    await assertNoDependencies(
+      this.repo.manager,
+      `«${item.name}» jinoyat sodir etish usuli`,
+      item.id,
+      [
+        {
+          table: 'applications',
+          column: 'crime_method_id',
+          label: 'ariza',
+          extraWhere: 'is_deleted = false',
+        },
+        {
+          table: 'detected_crimes',
+          column: 'crime_method_id',
+          label: 'aniqlangan jinoyat',
+          extraWhere: 'is_deleted = false',
+        },
+      ],
+    );
     await this.repo.remove(item);
     return { success: true, message: `Jinoyat usuli o‘chirildi: "${item.name}"` };
   }

@@ -7,6 +7,9 @@ import { Application } from './application.entity';
 import { ApplicationStatusHistory } from './application-status-history.entity';
 import { ApplicationsController } from './applications.controller';
 import { ApplicationsService } from './applications.service';
+import { ApplicationsRelationsService } from './applications-relations.service';
+import { ApplicationsResolverService } from './applications-resolver.service';
+import { ApplicationsStatisticsService } from './applications-statistics.service';
 import { Citizen } from './citizens/citizen.entity';
 import { CitizensModule } from './citizens/citizens.module';
 import { Crime } from './crimes/crime.entity';
@@ -104,12 +107,18 @@ import { WorkplacesModule } from './workplaces/workplaces.module';
   controllers: [ApplicationsController, ApplicationsReportsController],
   providers: [
     ApplicationsService,
+    ApplicationsResolverService,
+    ApplicationsRelationsService,
+    ApplicationsStatisticsService,
     ApplicationsExcelService,
     CyberControlShablonExcelService,
     ApplicationsReportsService,
   ],
   exports: [
     ApplicationsService,
+    ApplicationsResolverService,
+    ApplicationsRelationsService,
+    ApplicationsStatisticsService,
     ApplicationsExcelService,
     CyberControlShablonExcelService,
     ApplicationsReportsService,

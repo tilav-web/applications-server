@@ -1,6 +1,40 @@
 import type * as ExcelJS from 'exceljs';
 
 /**
+ * Excel Formula Injection (CSV/XLSX injection) himoyasi:
+ * `=`, `+`, `-`, `@`, `\t`, `\r` bilan boshlanuvchi foydalanuvchi satrlarini
+ * apostrof (`'`) bilan zararsizlantiradi.
+ */
+export function sanitizeExcelValue<T>(val: T): T {
+  if (typeof val !== 'string') return val;
+  if (val.length === 0) return val;
+  const trimmedLeading = val.replace(/^[\t\r\n ]+/, '');
+  if (/^[=+\-@\t\r]/.test(val) || (trimmedLeading.length > 0 && /^[=+\-@]/.test(trimmedLeading))) {
+    return `'${val}` as unknown as T;
+  }
+  return val;
+}
+
+/**
+ * Obyekt yoki massivdagi barcha satr qiymatlarini Excel formula in'yeksiyasidan tozalaydi
+ * (ExcelJS `{ formula: '...' }` obyektlarini o'zgartirmaydi).
+ */
+export function sanitizeExcelRow<T extends Record<string, unknown>>(row: T): T {
+  const out: Record<string, unknown> = {};
+  for (const [k, v] of Object.entries(row)) {
+    out[k] = typeof v === 'string' ? sanitizeExcelValue(v) : v;
+  }
+  return out as T;
+}
+
+/**
+ * Excel COUNTIF/SUMIF kriteria matnida wildcard (*, ?, ~) va qo'shtirnoqlarni xavfsiz escape qiladi.
+ */
+export function escapeExcelCriteriaLiteral(raw: string): string {
+  return raw.replace(/~/g, '~~').replace(/\*/g, '~*').replace(/\?/g, '~?').replace(/"/g, '""');
+}
+
+/**
  * Barcha Excel eksportlari uchun yagona rasmiy monoxrom (oq-qora audit) stil va formatlash helperlari.
  */
 export function styleExcelHeaderRow(row: ExcelJS.Row): void {

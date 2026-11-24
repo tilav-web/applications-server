@@ -6,6 +6,7 @@ import {
   formatDestinationType,
   formatTransferDateTime,
   formatTransferStatus,
+  sanitizeExcelRow,
   styleExcelDataRow,
   styleExcelHeaderRow,
   styleExcelSubTotalRow,
@@ -82,24 +83,26 @@ export class TransfersExcelService {
         t.application?.application_number ||
         (t.application_id ? `AR-${t.application_id.slice(0, 8)}` : '—');
 
-      const row = ws.addRow({
-        idx: index + 1,
-        tx_id: t.transaction_id || '—',
-        app_num: appNum,
-        district: t.application?.district?.name || '—',
-        sender_name: senderName,
-        sender_card: senderCard?.card_number || senderCard?.masked_number || '—',
-        sender_bank: senderCard?.bank?.name || '—',
-        amount: Number(t.amount) || 0,
-        currency: t.currency || 'UZS',
-        provider: t.payment_provider?.name || '—',
-        transfer_date: formatTransferDateTime(t.transfer_date, t.transfer_time, t.created_at),
-        dest_type: formatDestinationType(t.destination_type),
-        receiver_card: receiverAccount,
-        receiver_bank: receiverCard?.bank?.name || '—',
-        receiver_name: receiverName,
-        status: formatTransferStatus(t.status),
-      });
+      const row = ws.addRow(
+        sanitizeExcelRow({
+          idx: index + 1,
+          tx_id: t.transaction_id || '—',
+          app_num: appNum,
+          district: t.application?.district?.name || '—',
+          sender_name: senderName,
+          sender_card: senderCard?.card_number || senderCard?.masked_number || '—',
+          sender_bank: senderCard?.bank?.name || '—',
+          amount: Number(t.amount) || 0,
+          currency: t.currency || 'UZS',
+          provider: t.payment_provider?.name || '—',
+          transfer_date: formatTransferDateTime(t.transfer_date, t.transfer_time, t.created_at),
+          dest_type: formatDestinationType(t.destination_type),
+          receiver_card: receiverAccount,
+          receiver_bank: receiverCard?.bank?.name || '—',
+          receiver_name: receiverName,
+          status: formatTransferStatus(t.status),
+        }),
+      );
 
       styleExcelDataRow(row);
 

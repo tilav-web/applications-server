@@ -6,13 +6,14 @@ import {
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import * as bcrypt from 'bcrypt';
-import { In, Repository } from 'typeorm';
+import { DataSource, In, Repository } from 'typeorm';
 
 import { Role } from '../../common/enums/role.enum';
 import type { PaginatedResult } from '../../common/interfaces/pagination.interface';
 import type { JwtAccessPayload } from '../../common/types/jwt-payload.interface';
 import { District } from '../applications/districts/district.entity';
 import { Auth } from '../auth/auth.entity';
+import { AuthService } from '../auth/auth.service';
 import type { CreateUserDto } from './dto/create-user.dto';
 import type { UpdateUserDto } from './dto/update-user.dto';
 import { User } from './user.entity';
@@ -39,6 +40,8 @@ export class UsersService {
     private readonly authRepository: Repository<Auth>,
     @InjectRepository(District)
     private readonly districtRepository: Repository<District>,
+    private readonly dataSource: DataSource,
+    private readonly authService: AuthService,
   ) {}
 
   private async assertRootSuperAdmin(currentUser?: JwtAccessPayload): Promise<void> {
@@ -192,31 +195,40 @@ export class UsersService {
     }
 
     const hashedPassword = await bcrypt.hash(dto.password, 10);
-    const auth = this.authRepository.create({
-      username: dto.username,
-      password: hashedPassword,
-      role: dto.role || Role.STAFF,
-      is_root: false,
-    });
-    const savedAuth = await this.authRepository.save(auth);
 
-    let assignedDistricts: District[] = [];
-    if (dto.assigned_district_ids && dto.assigned_district_ids.length > 0) {
-      assignedDistricts = await this.districtRepository.findBy({
-        id: In(dto.assigned_district_ids),
+    const savedAuthId = await this.dataSource.transaction(async (manager) => {
+      const authRepo = manager.getRepository(Auth);
+      const userRepo = manager.getRepository(User);
+      const districtRepo = manager.getRepository(District);
+
+      const auth = authRepo.create({
+        username: dto.username,
+        password: hashedPassword,
+        role: dto.role || Role.STAFF,
+        is_root: false,
       });
-    }
+      const savedAuth = await authRepo.save(auth);
 
-    const user = this.userRepository.create({
-      auth_id: savedAuth.id,
-      first_name: dto.first_name || null,
-      last_name: dto.last_name || null,
-      phone_number: dto.phone_number || null,
-      assigned_districts: assignedDistricts,
+      let assignedDistricts: District[] = [];
+      if (dto.assigned_district_ids && dto.assigned_district_ids.length > 0) {
+        assignedDistricts = await districtRepo.findBy({
+          id: In(dto.assigned_district_ids),
+        });
+      }
+
+      const user = userRepo.create({
+        auth_id: savedAuth.id,
+        first_name: dto.first_name || null,
+        last_name: dto.last_name || null,
+        phone_number: dto.phone_number || null,
+        assigned_districts: assignedDistricts,
+      });
+      await userRepo.save(user);
+
+      return savedAuth.id;
     });
-    await this.userRepository.save(user);
 
-    return this.getUserViewById(savedAuth.id);
+    return this.getUserViewById(savedAuthId);
   }
 
   async update(id: string, dto: UpdateUserDto, currentUser?: JwtAccessPayload): Promise<UserView> {
@@ -241,21 +253,31 @@ export class UsersService {
       }
     }
 
+    let shouldRevokeSessions = false;
+
     if (dto.username && dto.username !== auth.username) {
       const existing = await this.authRepository.findOne({ where: { username: dto.username } });
       if (existing) {
         throw new BadRequestException('Ushbu login band');
       }
       auth.username = dto.username;
+      shouldRevokeSessions = true;
     }
 
     if (dto.password) {
       auth.password = await bcrypt.hash(dto.password, 10);
       auth.hashed_refresh_token = null;
+      shouldRevokeSessions = true;
     }
 
-    if (dto.role) {
+    if (dto.role && dto.role !== auth.role) {
       auth.role = dto.role;
+      auth.hashed_refresh_token = null;
+      shouldRevokeSessions = true;
+    }
+
+    if (shouldRevokeSessions) {
+      auth.hashed_refresh_token = null;
     }
 
     await this.authRepository.save(auth);
@@ -283,6 +305,12 @@ export class UsersService {
 
     await this.userRepository.save(user);
 
+    if (shouldRevokeSessions) {
+      await this.authService.revokeUserTokens(auth.id);
+    } else {
+      await this.authService.invalidateProfileCache(auth.id);
+    }
+
     return this.getUserViewById(auth.id);
   }
 
@@ -303,6 +331,7 @@ export class UsersService {
       throw new ForbiddenException("O'zingizning hisobingizni o'chira olmaysiz");
     }
     await this.authRepository.remove(auth);
+    await this.authService.revokeUserTokens(id);
     return { success: true, message: "Hodim o'chirildi" };
   }
 }

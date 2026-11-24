@@ -1,10 +1,11 @@
-import { Injectable, NotFoundException, OnModuleInit } from '@nestjs/common';
+import { BadRequestException, Injectable, NotFoundException, OnModuleInit } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { FindOptionsWhere, ILike, Repository } from 'typeorm';
 
 import { assertNoDependencies } from '../../../../common/database/dependency-guard.util';
 import type { PaginatedResult } from '../../../../common/interfaces/pagination.interface';
 import { formatTitleCase } from '../../../../common/utils/name-formatter.util';
+import { isPgUniqueViolation } from '../../../../common/utils/normalization.util';
 import { Bank } from './bank.entity';
 import type { CreateBankDto } from './dto/create-bank.dto';
 import type { UpdateBankDto } from './dto/update-bank.dto';
@@ -91,11 +92,32 @@ export class BanksService implements OnModuleInit {
   }
 
   async create(dto: CreateBankDto): Promise<Bank> {
+    const cleanName = dto.name ? formatTitleCase(dto.name.trim()) : '';
+    const cleanMfo = dto.mfo?.trim() || null;
+    if (!cleanName) throw new BadRequestException('Bank nomi kiritilishi shart');
+
+    const findExisting = () =>
+      this.bankRepo.findOne({
+        where: [{ name: ILike(cleanName) }, ...(cleanMfo ? [{ mfo: cleanMfo }] : [])],
+      });
+
+    const existing = await findExisting();
+    if (existing) return existing;
+
     const bank = this.bankRepo.create({
       ...dto,
-      name: dto.name ? formatTitleCase(dto.name) : '',
+      name: cleanName,
+      mfo: cleanMfo,
     });
-    return this.bankRepo.save(bank);
+    try {
+      return await this.bankRepo.save(bank);
+    } catch (err) {
+      if (isPgUniqueViolation(err)) {
+        const raceExisting = await findExisting();
+        if (raceExisting) return raceExisting;
+      }
+      throw err;
+    }
   }
 
   async findAll(page = 1, limit = 50, search?: string): Promise<PaginatedResult<Bank>> {
@@ -147,7 +169,21 @@ export class BanksService implements OnModuleInit {
     const bank = await this.findOne(id);
     const updatedData: Partial<Bank> = { ...dto };
     if (dto.name !== undefined) {
-      updatedData.name = dto.name ? formatTitleCase(dto.name) : '';
+      const nextName = dto.name ? formatTitleCase(dto.name.trim()) : '';
+      if (!nextName) throw new BadRequestException("Bank nomi bo'sh bo'lishi mumkin emas");
+      const existing = await this.bankRepo.findOne({ where: { name: ILike(nextName) } });
+      if (existing && existing.id !== id) {
+        throw new BadRequestException(`"${nextName}" nomli bank allaqachon mavjud`);
+      }
+      updatedData.name = nextName;
+    }
+    if (dto.mfo !== undefined && dto.mfo?.trim()) {
+      const cleanMfo = dto.mfo.trim();
+      const existingMfo = await this.bankRepo.findOne({ where: { mfo: cleanMfo } });
+      if (existingMfo && existingMfo.id !== id) {
+        throw new BadRequestException(`"${cleanMfo}" MFO kodli bank allaqachon mavjud`);
+      }
+      updatedData.mfo = cleanMfo;
     }
     Object.assign(bank, updatedData);
     return this.bankRepo.save(bank);
@@ -157,6 +193,11 @@ export class BanksService implements OnModuleInit {
     const bank = await this.findOne(id);
     await assertNoDependencies(this.bankRepo.manager, `«${bank.name}» banki`, bank.id, [
       { table: 'cards', column: 'bank_id', label: 'plastik karta' },
+      {
+        table: 'transfer_custom_fields',
+        column: 'bank_id',
+        label: "o'tkazma qo'shimcha maydoni",
+      },
     ]);
     await this.bankRepo.remove(bank);
     return { success: true, message: "Bank muvaffaqiyatli o'chirildi" };

@@ -36,7 +36,6 @@
     "@nestjs/platform-express": "^11.0.1",
     "@nestjs/throttler": "^6.7.1",
     "@nestjs/typeorm": "^12.0.2",
-    "@types/jszip": "^3.4.0",
     "bcrypt": "^6.0.0",
     "bullmq": "^6.7.8",
     "class-transformer": "^0.5.1",
@@ -70,6 +69,7 @@
     "@types/express": "^5.0.0",
     "@types/ioredis": "^4.28.10",
     "@types/jest": "^30.0.0",
+    "@types/jszip": "^3.4.0",
     "@types/minio": "^7.1.0",
     "@types/multer": "^2.3.0",
     "@types/node": "^22.10.7",
@@ -103,8 +103,24 @@
     "rootDir": "src",
     "testRegex": ".*\\.spec\\.ts$",
     "transform": {
-      "^.+\\.(t|j)s$": "ts-jest"
+      "^.+\\.(t|j)s$": [
+        "ts-jest",
+        {
+          "tsconfig": {
+            "allowJs": true,
+            "module": "commonjs",
+            "moduleResolution": "node",
+            "resolvePackageJsonExports": false
+          }
+        }
+      ]
     },
+    "moduleNameMapper": {
+      "typeorm-compat(\\.js)?$": "<rootDir>/../test/mocks/typeorm-compat.ts"
+    },
+    "transformIgnorePatterns": [
+      "node_modules/(?!(@nestjs/(config|jwt|typeorm)|typeorm)/)"
+    ],
     "collectCoverageFrom": [
       "**/*.(t|j)s"
     ],

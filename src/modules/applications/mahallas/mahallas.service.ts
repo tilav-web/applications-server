@@ -1,9 +1,16 @@
-import { Injectable, Logger, NotFoundException, OnApplicationBootstrap } from '@nestjs/common';
+import {
+  BadRequestException,
+  Injectable,
+  Logger,
+  NotFoundException,
+  OnApplicationBootstrap,
+} from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { FindOptionsWhere, ILike, Repository } from 'typeorm';
 
 import { assertNoDependencies } from '../../../common/database/dependency-guard.util';
 import type { PaginatedResult } from '../../../common/interfaces/pagination.interface';
+import { isPgUniqueViolation } from '../../../common/utils/normalization.util';
 import { District } from '../districts/district.entity';
 import { DEFAULT_QASHQADARYO_MAHALLAS } from '../seeds/qashqadaryo-data';
 import type { CreateMahallaDto } from './dto/create-mahalla.dto';
@@ -84,11 +91,28 @@ export class MahallasService implements OnApplicationBootstrap {
   }
 
   async create(dto: CreateMahallaDto): Promise<Mahalla> {
+    const cleanName = dto.name.trim();
+    if (!cleanName) throw new BadRequestException('Mahalla nomi kiritilishi shart');
+    const existing = await this.mahallaRepo.findOne({
+      where: { district_id: dto.district_id, name: ILike(cleanName) },
+    });
+    if (existing) return existing;
+
     const mahalla = this.mahallaRepo.create({
-      name: dto.name.trim(),
+      name: cleanName,
       district_id: dto.district_id,
     });
-    return this.mahallaRepo.save(mahalla);
+    try {
+      return await this.mahallaRepo.save(mahalla);
+    } catch (err) {
+      if (isPgUniqueViolation(err)) {
+        const raceExisting = await this.mahallaRepo.findOne({
+          where: { district_id: dto.district_id, name: ILike(cleanName) },
+        });
+        if (raceExisting) return raceExisting;
+      }
+      throw err;
+    }
   }
 
   async findAll(
@@ -159,11 +183,22 @@ export class MahallasService implements OnApplicationBootstrap {
 
   async update(id: string, dto: UpdateMahallaDto): Promise<Mahalla> {
     const mahalla = await this.findOne(id);
+    const nextName = dto.name !== undefined ? dto.name.trim() : mahalla.name;
+    const nextDistrictId = dto.district_id !== undefined ? dto.district_id : mahalla.district_id;
+    if (!nextName) throw new BadRequestException("Mahalla nomi bo'sh bo'lishi mumkin emas");
+
+    const existing = await this.mahallaRepo.findOne({
+      where: { district_id: nextDistrictId, name: ILike(nextName) },
+    });
+    if (existing && existing.id !== id) {
+      throw new BadRequestException(`Bu tumanda "${nextName}" mahallasi allaqachon mavjud`);
+    }
+
     if (dto.name !== undefined) {
-      mahalla.name = dto.name.trim();
+      mahalla.name = nextName;
     }
     if (dto.district_id !== undefined) {
-      mahalla.district_id = dto.district_id;
+      mahalla.district_id = nextDistrictId;
       delete (mahalla as unknown as Record<string, unknown>).district;
     }
     await this.mahallaRepo.save(mahalla);

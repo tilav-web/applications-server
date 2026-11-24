@@ -12,10 +12,12 @@ import {
 } from '@nestjs/common';
 import type { Response } from 'express';
 
+import { CurrentUser } from '../../../common/decorators/current-user.decorator';
 import { Roles } from '../../../common/decorators/roles.decorator';
 import { Role } from '../../../common/enums/role.enum';
 import { JwtAuthGuard } from '../../../common/guards/jwt-auth.guard';
 import { RolesGuard } from '../../../common/guards/roles.guard';
+import type { JwtAccessPayload } from '../../../common/types/jwt-payload.interface';
 import { normalizePagination } from '../../../common/utils/pagination.util';
 import { CreateTransferDto } from './dto/create-transfer.dto';
 import { UpdateTransferDto } from './dto/update-transfer.dto';
@@ -53,17 +55,24 @@ export class TransfersController {
     @Query('sender_card_number') senderCardNumber?: string,
     @Query('receiver_card_number') receiverCardNumber?: string,
     @Query('transfer_date') transferDate?: string,
+    @CurrentUser() currentUser?: JwtAccessPayload,
   ) {
     const pagination = normalizePagination(page, limit, 10);
-    return this.transfersService.findAll(pagination.page, pagination.limit, search, {
-      applicationId,
-      status,
-      providerId,
-      transactionId,
-      senderCardNumber,
-      receiverCardNumber,
-      transferDate,
-    });
+    return this.transfersService.findAll(
+      pagination.page,
+      pagination.limit,
+      search,
+      {
+        applicationId,
+        status,
+        providerId,
+        transactionId,
+        senderCardNumber,
+        receiverCardNumber,
+        transferDate,
+      },
+      currentUser,
+    );
   }
 
   @Get('export/excel')
@@ -77,27 +86,37 @@ export class TransfersController {
     @Query('sender_card_number') senderCardNumber?: string,
     @Query('receiver_card_number') receiverCardNumber?: string,
     @Query('transfer_date') transferDate?: string,
+    @CurrentUser() currentUser?: JwtAccessPayload,
   ) {
-    return this.transfersService.exportToExcel(search, res, {
-      applicationId,
-      status,
-      providerId,
-      transactionId,
-      senderCardNumber,
-      receiverCardNumber,
-      transferDate,
-    });
+    return this.transfersService.exportToExcel(
+      search,
+      res,
+      {
+        applicationId,
+        status,
+        providerId,
+        transactionId,
+        senderCardNumber,
+        receiverCardNumber,
+        transferDate,
+      },
+      currentUser,
+    );
   }
 
   @Get(':id')
-  findOne(@Param('id') id: string) {
-    return this.transfersService.findOne(id);
+  findOne(@Param('id') id: string, @CurrentUser() currentUser?: JwtAccessPayload) {
+    return this.transfersService.findOne(id, currentUser);
   }
 
   @Patch(':id')
   @Roles(...WRITE_ROLES)
-  update(@Param('id') id: string, @Body() dto: UpdateTransferDto) {
-    return this.transfersService.update(id, dto);
+  update(
+    @Param('id') id: string,
+    @Body() dto: UpdateTransferDto,
+    @CurrentUser() currentUser?: JwtAccessPayload,
+  ) {
+    return this.transfersService.update(id, dto, currentUser);
   }
 
   @Delete(':id')

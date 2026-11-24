@@ -7,11 +7,16 @@ import {
 import { InjectRepository } from '@nestjs/typeorm';
 import * as ExcelJS from 'exceljs';
 import type { Response } from 'express';
-import { Repository } from 'typeorm';
+import { type EntityManager, Repository } from 'typeorm';
 
 import { Role } from '../../common/enums/role.enum';
 import type { PaginatedResult } from '../../common/interfaces/pagination.interface';
 import type { JwtAccessPayload } from '../../common/types/jwt-payload.interface';
+import {
+  assertDistrictAccess,
+  getAllowedDistrictIds,
+} from '../../common/utils/district-scope.util';
+import { sanitizeExcelRow } from '../../common/utils/excel-style.util';
 import type { SuspectTreeNode } from '../applications/application.entity';
 import { Citizen } from '../applications/citizens/citizen.entity';
 import { District } from '../applications/districts/district.entity';
@@ -19,6 +24,8 @@ import {
   ApplicationStatus,
   ApplicationStatusCategory,
 } from '../applications/statuses/application-status.entity';
+import { NotificationsService } from '../notifications/notifications.service';
+import { SlaQueueService } from '../notifications/sla-queue.service';
 import { User } from '../users/user.entity';
 import {
   DetectedCrime,
@@ -101,6 +108,8 @@ export class DetectedCrimesService {
     private readonly citizenRepo: Repository<Citizen>,
     @InjectRepository(User)
     private readonly userRepo: Repository<User>,
+    private readonly slaQueueService: SlaQueueService,
+    private readonly notificationsService: NotificationsService,
   ) {}
 
   private async getUserWithDistricts(currentUser?: JwtAccessPayload): Promise<User | null> {
@@ -111,20 +120,32 @@ export class DetectedCrimesService {
     });
   }
 
-  private async generateCaseNumber(): Promise<string> {
+  private async generateCaseNumber(manager: EntityManager): Promise<string> {
     const year = new Date().getFullYear();
-    const count = await this.repo
-      .createQueryBuilder('dc')
-      .where('EXTRACT(YEAR FROM dc.created_at) = :year', { year })
-      .getCount();
-    const seq = String(count + 1).padStart(4, '0');
-    return `AJ-${year}-${seq}`;
+    const lockKey = `detected_crimes_case_number_${year}`;
+    await manager.query(`SELECT pg_advisory_xact_lock(hashtext($1))`, [lockKey]);
+
+    const prefix = `AJ-${year}-`;
+    const rows: Array<{ max_seq: number | null }> = await manager.query(
+      `SELECT MAX(CAST(SUBSTRING(case_number FROM $1) AS INTEGER)) AS max_seq
+       FROM detected_crimes
+       WHERE case_number LIKE $2`,
+      [`^AJ-${year}-([0-9]+)$`, `${prefix}%`],
+    );
+    const nextSeq = Number(rows[0]?.max_seq || 0) + 1;
+    return `${prefix}${String(nextSeq).padStart(4, '0')}`;
   }
 
   /**
    * Fuqaro oldin boshqa aniqlangan jinoyat/MJTK da qayd etilganini tekshiradi
    */
-  async checkCitizenRepeatHistory(citizenId: string, excludeCrimeId?: string) {
+  async checkCitizenRepeatHistory(
+    citizenId: string,
+    excludeCrimeId?: string,
+    currentUser?: JwtAccessPayload,
+  ) {
+    const allowedDistrictIds = await getAllowedDistrictIds(this.userRepo, currentUser);
+
     const qb = this.suspectRepo
       .createQueryBuilder('s')
       .innerJoinAndSelect('s.detected_crime', 'dc')
@@ -134,6 +155,13 @@ export class DetectedCrimesService {
 
     if (excludeCrimeId) {
       qb.andWhere('dc.id != :excludeCrimeId', { excludeCrimeId });
+    }
+
+    if (allowedDistrictIds !== null) {
+      if (allowedDistrictIds.length === 0) {
+        return { isRepeat: false, count: 0, items: [] };
+      }
+      qb.andWhere('dc.district_id IN (:...allowedDistrictIds)', { allowedDistrictIds });
     }
 
     const priors = await qb.orderBy('dc.detected_at', 'DESC').getMany();
@@ -152,8 +180,13 @@ export class DetectedCrimesService {
     };
   }
 
-  async findByCitizenId(citizenId: string) {
-    const rows = await this.suspectRepo
+  async findByCitizenId(citizenId: string, currentUser?: JwtAccessPayload) {
+    const allowedDistrictIds = await getAllowedDistrictIds(this.userRepo, currentUser);
+    if (allowedDistrictIds !== null && allowedDistrictIds.length === 0) {
+      return [];
+    }
+
+    const qb = this.suspectRepo
       .createQueryBuilder('s')
       .innerJoinAndSelect('s.detected_crime', 'dc')
       .leftJoinAndSelect('dc.crime', 'crime')
@@ -162,9 +195,13 @@ export class DetectedCrimesService {
       .leftJoinAndSelect('dc.application_status', 'st')
       .leftJoinAndSelect('dc.detection_source', 'src')
       .where('s.citizen_id = :citizenId', { citizenId })
-      .andWhere('dc.is_deleted = false')
-      .orderBy('dc.detected_at', 'DESC')
-      .getMany();
+      .andWhere('dc.is_deleted = false');
+
+    if (allowedDistrictIds !== null) {
+      qb.andWhere('dc.district_id IN (:...allowedDistrictIds)', { allowedDistrictIds });
+    }
+
+    const rows = await qb.orderBy('dc.detected_at', 'DESC').getMany();
 
     return rows.map((r) => ({
       id: r.detected_crime.id,
@@ -201,11 +238,11 @@ export class DetectedCrimesService {
     const user = await this.getUserWithDistricts(currentUser);
     if (currentUser?.role === Role.DISTRICT_OFFICER) {
       const assigned = user?.assigned_districts?.map((d) => d.id) || [];
-      if (dto.district_id && !assigned.includes(dto.district_id)) {
-        throw new ForbiddenException(
-          "Siz faqat o'zingizga biriktirilgan tuman(lar) bo'yicha ma'lumot kirita olasiz",
-        );
-      }
+      assertDistrictAccess(
+        assigned,
+        dto.district_id,
+        "Siz faqat o'zingizga biriktirilgan tuman(lar) bo'yicha ma'lumot kirita olasiz",
+      );
     }
 
     let crimeStatusId = dto.crime_status_id || null;
@@ -221,64 +258,73 @@ export class DetectedCrimesService {
     }
 
     const detectedAt = dto.detected_at ? new Date(dto.detected_at) : new Date();
-    const caseNumber = dto.case_number?.trim() || (await this.generateCaseNumber());
     const isFinal = Boolean(crimeStatusObj?.is_final);
 
-    const entity = this.repo.create({
-      case_number: caseNumber,
-      title,
-      description: dto.description?.trim() || null,
-      report_number: dto.report_number?.trim() || null,
-      report_date: dto.report_date ? new Date(dto.report_date) : null,
-      kusp_number: dto.kusp_number?.trim() || null,
-      detected_at: detectedAt,
-      qualification_type: dto.qualification_type || DetectedCrimeQualification.CRIMINAL,
-      crime_id: dto.crime_id || null,
-      crime_method_id: dto.crime_method_id || null,
-      mjtk_article: dto.mjtk_article?.trim() || null,
-      detection_source_id: dto.detection_source_id || null,
-      district_id: dto.district_id || null,
-      department_service_id: dto.department_service_id || null,
-      platform: dto.platform?.trim() || null,
-      channel_or_source_url: dto.channel_or_source_url?.trim() || null,
-      suspect_tree: dto.suspect_tree || [],
-      measures: Array.isArray(dto.measures) ? dto.measures : [],
-      estimated_damage:
-        dto.estimated_damage !== undefined && dto.estimated_damage !== null
-          ? Number(dto.estimated_damage)
-          : null,
-      officer_notes: dto.officer_notes?.trim() || null,
-      crime_status_id: crimeStatusId,
-      decision_type_id: dto.decision_type_id || null,
-      decision_number: dto.decision_number?.trim() || null,
-      decision_date: dto.decision_date ? new Date(dto.decision_date) : null,
-      decision_note: dto.decision_note?.trim() || null,
-      deadline_at: null,
-      sla_days: null,
-      closed_at: isFinal ? new Date() : null,
-      detected_by_id: user?.id || null,
-      created_by_id: user?.id || null,
-      is_deleted: false,
+    const savedId = await this.repo.manager.transaction(async (manager) => {
+      const txRepo = manager.getRepository(DetectedCrime);
+      const caseNumber = dto.case_number?.trim() || (await this.generateCaseNumber(manager));
+
+      const entity = txRepo.create({
+        case_number: caseNumber,
+        title,
+        description: dto.description?.trim() || null,
+        report_number: dto.report_number?.trim() || null,
+        report_date: dto.report_date ? new Date(dto.report_date) : null,
+        kusp_number: dto.kusp_number?.trim() || null,
+        detected_at: detectedAt,
+        qualification_type: dto.qualification_type || DetectedCrimeQualification.CRIMINAL,
+        crime_id: dto.crime_id || null,
+        crime_method_id: dto.crime_method_id || null,
+        mjtk_article: dto.mjtk_article?.trim() || null,
+        detection_source_id: dto.detection_source_id || null,
+        district_id: dto.district_id || null,
+        department_service_id: dto.department_service_id || null,
+        platform: dto.platform?.trim() || null,
+        channel_or_source_url: dto.channel_or_source_url?.trim() || null,
+        suspect_tree: dto.suspect_tree || [],
+        measures: Array.isArray(dto.measures) ? dto.measures : [],
+        estimated_damage:
+          dto.estimated_damage !== undefined && dto.estimated_damage !== null
+            ? Number(dto.estimated_damage)
+            : null,
+        officer_notes: dto.officer_notes?.trim() || null,
+        crime_status_id: crimeStatusId,
+        decision_type_id: dto.decision_type_id || null,
+        decision_number: dto.decision_number?.trim() || null,
+        decision_date: dto.decision_date ? new Date(dto.decision_date) : null,
+        decision_note: dto.decision_note?.trim() || null,
+        deadline_at: null,
+        sla_days: null,
+        closed_at: isFinal ? new Date() : null,
+        detected_by_id: user?.id || null,
+        created_by_id: user?.id || null,
+        is_deleted: false,
+      });
+
+      const saved = await txRepo.save(entity);
+
+      if (Array.isArray(dto.suspects) && dto.suspects.length > 0) {
+        await this.syncSuspects(saved.id, dto.suspects, manager);
+      }
+
+      if (Array.isArray(dto.evidences) && dto.evidences.length > 0) {
+        await this.syncEvidences(saved.id, dto.evidences, manager);
+      }
+
+      return saved.id;
     });
 
-    const saved = await this.repo.save(entity);
-
-    if (Array.isArray(dto.suspects) && dto.suspects.length > 0) {
-      await this.syncSuspects(saved.id, dto.suspects);
-    }
-
-    if (Array.isArray(dto.evidences) && dto.evidences.length > 0) {
-      await this.syncEvidences(saved.id, dto.evidences);
-    }
-
-    return this.findOne(saved.id, currentUser);
+    void this.slaQueueService.scheduleForDetectedCrime(savedId);
+    return this.findOne(savedId, currentUser);
   }
 
   private async syncSuspects(
     crimeId: string,
     suspects: NonNullable<SaveDetectedCrimeInput['suspects']>,
+    manager: EntityManager = this.suspectRepo.manager,
   ): Promise<void> {
-    await this.suspectRepo.delete({ detected_crime_id: crimeId });
+    const txSuspectRepo = manager.getRepository(DetectedCrimeSuspect);
+    await txSuspectRepo.delete({ detected_crime_id: crimeId });
     const seen = new Set<string>();
     const rows: DetectedCrimeSuspect[] = [];
     for (const s of suspects) {
@@ -286,7 +332,7 @@ export class DetectedCrimesService {
       seen.add(s.citizen_id);
       const prior = await this.checkCitizenRepeatHistory(s.citizen_id, crimeId);
       rows.push(
-        this.suspectRepo.create({
+        txSuspectRepo.create({
           detected_crime_id: crimeId,
           citizen_id: s.citizen_id,
           role_in_crime: s.role_in_crime || 'IJROCHI',
@@ -297,20 +343,22 @@ export class DetectedCrimesService {
       );
     }
     if (rows.length > 0) {
-      await this.suspectRepo.save(rows);
+      await txSuspectRepo.save(rows);
     }
   }
 
   private async syncEvidences(
     crimeId: string,
     evidences: NonNullable<SaveDetectedCrimeInput['evidences']>,
+    manager: EntityManager = this.evidenceRepo.manager,
   ): Promise<void> {
-    await this.evidenceRepo.delete({ detected_crime_id: crimeId });
+    const txEvidenceRepo = manager.getRepository(DetectedCrimeEvidence);
+    await txEvidenceRepo.delete({ detected_crime_id: crimeId });
     const rows: DetectedCrimeEvidence[] = [];
     for (const e of evidences) {
       if (!e.title?.trim()) continue;
       rows.push(
-        this.evidenceRepo.create({
+        txEvidenceRepo.create({
           detected_crime_id: crimeId,
           evidence_type: e.evidence_type || 'OTHER',
           title: e.title.trim(),
@@ -324,7 +372,7 @@ export class DetectedCrimesService {
       );
     }
     if (rows.length > 0) {
-      await this.evidenceRepo.save(rows);
+      await txEvidenceRepo.save(rows);
     }
   }
 
@@ -429,11 +477,11 @@ export class DetectedCrimesService {
     if (currentUser?.role === Role.DISTRICT_OFFICER) {
       const user = await this.getUserWithDistricts(currentUser);
       const assigned = user?.assigned_districts?.map((d) => d.id) || [];
-      if (item.district_id && !assigned.includes(item.district_id)) {
-        throw new ForbiddenException(
-          "Siz faqat o'zingizga biriktirilgan tuman(lar) ma'lumotlarini ko'ra olasiz",
-        );
-      }
+      assertDistrictAccess(
+        assigned,
+        item.district_id,
+        "Siz faqat o'zingizga biriktirilgan tuman(lar) ma'lumotlarini ko'ra olasiz",
+      );
     }
     return item;
   }
@@ -446,6 +494,15 @@ export class DetectedCrimesService {
     const item = await this.findOne(id, currentUser);
     if (currentUser?.role === Role.BOSS) {
       throw new ForbiddenException("Rahbar (Boss) hisobi faqat ko'rish rejimida ishlaydi");
+    }
+
+    if (currentUser?.role === Role.DISTRICT_OFFICER && dto.district_id !== undefined) {
+      const allowed = await getAllowedDistrictIds(this.userRepo, currentUser);
+      assertDistrictAccess(
+        allowed,
+        dto.district_id,
+        "Siz jinoyat yozuvini boshqa tumanga o'tkaza olmaysiz",
+      );
     }
 
     const { suspects, evidences, ...fields } = dto;
@@ -517,13 +574,24 @@ export class DetectedCrimesService {
     if (fields.decision_note !== undefined)
       item.decision_note = fields.decision_note?.trim() || null;
 
-    await this.repo.save(item);
+    await this.repo.manager.transaction(async (manager) => {
+      await manager.getRepository(DetectedCrime).save(item);
 
-    if (suspects !== undefined) {
-      await this.syncSuspects(id, suspects);
-    }
-    if (evidences !== undefined) {
-      await this.syncEvidences(id, evidences);
+      if (suspects !== undefined) {
+        await this.syncSuspects(id, suspects, manager);
+      }
+      if (evidences !== undefined) {
+        await this.syncEvidences(id, evidences, manager);
+      }
+    });
+
+    if (item.closed_at) {
+      void this.slaQueueService.cancelForDetectedCrime(
+        id,
+        item.deadline_at ? new Date(item.deadline_at).getTime() : undefined,
+      );
+    } else if (item.deadline_at) {
+      void this.slaQueueService.scheduleForDetectedCrime(id);
     }
 
     return this.findOne(id, currentUser);
@@ -559,7 +627,15 @@ export class DetectedCrimesService {
       ...(extStatus ? { status_id: extStatus.id } : {}),
     });
 
-    return this.findOne(id, currentUser);
+    const updated = await this.findOne(id, currentUser);
+    void this.slaQueueService.scheduleForDetectedCrime(id);
+    void this.notificationsService.onDetectedCrimeDeadlineExtended(
+      updated,
+      newDeadline,
+      dto.reason.trim(),
+      currentUser?.sub,
+    );
+    return updated;
   }
 
   async remove(id: string, currentUser?: JwtAccessPayload) {
@@ -567,11 +643,16 @@ export class DetectedCrimesService {
     if (currentUser?.role === Role.BOSS) {
       throw new ForbiddenException("Rahbar (Boss) hisobi faqat ko'rish rejimida ishlaydi");
     }
+    const actorUser = await this.getUserWithDistricts(currentUser);
     await this.repo.update(item.id, {
       is_deleted: true,
       deleted_at: new Date(),
-      deleted_by_id: currentUser?.sub || null,
+      deleted_by_id: actorUser?.id || null,
     });
+    void this.slaQueueService.cancelForDetectedCrime(
+      item.id,
+      item.deadline_at ? new Date(item.deadline_at).getTime() : undefined,
+    );
     return { success: true, message: "Aniqlangan jinoyat o'chirildi" };
   }
 
@@ -587,37 +668,55 @@ export class DetectedCrimesService {
       if (assigned.length > 0) {
         qb.andWhere('dc.district_id IN (:...assigned)', { assigned });
       } else {
-        qb.andWhere('1 = 0');
+        return {
+          total: 0,
+          criminalCount: 0,
+          adminCount: 0,
+          preInvCount: 0,
+          finalCount: 0,
+          inProgressCount: 0,
+          overdueCount: 0,
+        };
       }
     }
 
-    const rows = await qb
-      .select(['dc.id', 'dc.qualification_type', 'cst.is_final', 'cst.code'])
-      .getMany();
+    const raw = await qb
+      .select('COUNT(dc.id)::int', 'total')
+      .addSelect(`COUNT(dc.id) FILTER (WHERE dc.qualification_type = :qCrim)::int`, 'criminalCount')
+      .addSelect(`COUNT(dc.id) FILTER (WHERE dc.qualification_type = :qAdm)::int`, 'adminCount')
+      .addSelect(
+        `COUNT(dc.id) FILTER (WHERE dc.qualification_type NOT IN (:qCrim, :qAdm) OR dc.qualification_type IS NULL)::int`,
+        'preInvCount',
+      )
+      .addSelect(`COUNT(dc.id) FILTER (WHERE cst.is_final = true)::int`, 'finalCount')
+      .addSelect(
+        `COUNT(dc.id) FILTER (WHERE dc.deadline_at IS NOT NULL AND dc.deadline_at < NOW() AND dc.closed_at IS NULL AND COALESCE(cst.is_final, false) = false)::int`,
+        'overdueCount',
+      )
+      .setParameters({
+        qCrim: DetectedCrimeQualification.CRIMINAL,
+        qAdm: DetectedCrimeQualification.ADMINISTRATIVE,
+      })
+      .getRawOne<{
+        total?: string | number;
+        criminalCount?: string | number;
+        adminCount?: string | number;
+        preInvCount?: string | number;
+        finalCount?: string | number;
+        overdueCount?: string | number;
+      }>();
 
-    let criminalCount = 0;
-    let adminCount = 0;
-    let preInvCount = 0;
-    let finalCount = 0;
-
-    for (const r of rows) {
-      if (r.qualification_type === DetectedCrimeQualification.CRIMINAL) criminalCount++;
-      else if (r.qualification_type === DetectedCrimeQualification.ADMINISTRATIVE) adminCount++;
-      else preInvCount++;
-
-      if (r.crime_status?.is_final) {
-        finalCount++;
-      }
-    }
+    const total = Number(raw?.total || 0);
+    const finalCount = Number(raw?.finalCount || 0);
 
     return {
-      total: rows.length,
-      criminalCount,
-      adminCount,
-      preInvCount,
+      total,
+      criminalCount: Number(raw?.criminalCount || 0),
+      adminCount: Number(raw?.adminCount || 0),
+      preInvCount: Number(raw?.preInvCount || 0),
       finalCount,
-      inProgressCount: rows.length - finalCount,
-      overdueCount: 0,
+      inProgressCount: Math.max(0, total - finalCount),
+      overdueCount: Number(raw?.overdueCount || 0),
     };
   }
 
@@ -925,26 +1024,30 @@ export class DetectedCrimesService {
           ? `№ ${item.decision_number}`
           : '—';
 
-      const row = ws1.addRow({
-        idx: idx + 1,
-        case_number: item.case_number || '—',
-        detected_at: item.detected_at ? new Date(item.detected_at).toISOString().slice(0, 10) : '—',
-        title: item.title,
-        qualification: qualMap[item.qualification_type] || item.qualification_type,
-        article: item.crime?.article || item.mjtk_article || '—',
-        district: item.district?.name || '—',
-        source: item.detection_source?.name || '—',
-        dept: item.department_service?.short_name || item.department_service?.name || '—',
-        platform: [item.platform, item.channel_or_source_url].filter(Boolean).join(' — ') || '—',
-        report: [item.report_number, item.kusp_number].filter(Boolean).join(' / ') || '—',
-        suspects_count: item.suspects?.length || 0,
-        evidences_count: item.evidences?.length || 0,
-        damage: Number(item.estimated_damage) || 0,
-        status: item.crime_status?.name || item.application_status?.name || 'Fosh etildi',
-        measures: measuresStr,
-        decision: decisionStr,
-        description: item.description || '—',
-      });
+      const row = ws1.addRow(
+        sanitizeExcelRow({
+          idx: idx + 1,
+          case_number: item.case_number || '—',
+          detected_at: item.detected_at
+            ? new Date(item.detected_at).toISOString().slice(0, 10)
+            : '—',
+          title: item.title,
+          qualification: qualMap[item.qualification_type] || item.qualification_type,
+          article: item.crime?.article || item.mjtk_article || '—',
+          district: item.district?.name || '—',
+          source: item.detection_source?.name || '—',
+          dept: item.department_service?.short_name || item.department_service?.name || '—',
+          platform: [item.platform, item.channel_or_source_url].filter(Boolean).join(' — ') || '—',
+          report: [item.report_number, item.kusp_number].filter(Boolean).join(' / ') || '—',
+          suspects_count: item.suspects?.length || 0,
+          evidences_count: item.evidences?.length || 0,
+          damage: Number(item.estimated_damage) || 0,
+          status: item.crime_status?.name || item.application_status?.name || 'Fosh etildi',
+          measures: measuresStr,
+          decision: decisionStr,
+          description: item.description || '—',
+        }),
+      );
       styleData(row);
       row.getCell('case_number').numFmt = '@';
       row.getCell('report').numFmt = '@';
@@ -1002,20 +1105,22 @@ export class DetectedCrimesService {
           : '—';
         const regionStr =
           [s.citizen?.district?.name, s.citizen?.mahalla?.name].filter(Boolean).join(', ') || '—';
-        const row = ws2.addRow({
-          idx: sIdx,
-          case_number: item.case_number || '—',
-          name: fullName,
-          passport: s.citizen?.passport || '—',
-          phone: s.citizen?.phone_number || '—',
-          region: regionStr,
-          occupation: s.citizen?.occupation?.name || '—',
-          workplace: s.citizen?.workplace?.name || '—',
-          role: roleMap[s.role_in_crime] || s.role_in_crime,
-          detention: detentionMap[s.detention_status] || s.detention_status,
-          repeat: s.is_repeat_offender ? 'Ha (Takroriy)' : "Yo'q",
-          notes: s.notes || '—',
-        });
+        const row = ws2.addRow(
+          sanitizeExcelRow({
+            idx: sIdx,
+            case_number: item.case_number || '—',
+            name: fullName,
+            passport: s.citizen?.passport || '—',
+            phone: s.citizen?.phone_number || '—',
+            region: regionStr,
+            occupation: s.citizen?.occupation?.name || '—',
+            workplace: s.citizen?.workplace?.name || '—',
+            role: roleMap[s.role_in_crime] || s.role_in_crime,
+            detention: detentionMap[s.detention_status] || s.detention_status,
+            repeat: s.is_repeat_offender ? 'Ha (Takroriy)' : "Yo'q",
+            notes: s.notes || '—',
+          }),
+        );
         styleData(row);
         row.getCell('case_number').numFmt = '@';
         row.getCell('passport').numFmt = '@';
@@ -1043,15 +1148,17 @@ export class DetectedCrimesService {
     for (const item of items) {
       for (const ev of item.evidences || []) {
         eIdx++;
-        const row = ws3.addRow({
-          idx: eIdx,
-          case_number: item.case_number || '—',
-          type: evidenceTypeMap[ev.evidence_type] || ev.evidence_type,
-          title: ev.title,
-          identifier: ev.identifier_value || '—',
-          file_name: ev.file_name || '—',
-          notes: ev.notes || '—',
-        });
+        const row = ws3.addRow(
+          sanitizeExcelRow({
+            idx: eIdx,
+            case_number: item.case_number || '—',
+            type: evidenceTypeMap[ev.evidence_type] || ev.evidence_type,
+            title: ev.title,
+            identifier: ev.identifier_value || '—',
+            file_name: ev.file_name || '—',
+            notes: ev.notes || '—',
+          }),
+        );
         styleData(row);
         row.getCell('case_number').numFmt = '@';
         row.getCell('identifier').numFmt = '@';

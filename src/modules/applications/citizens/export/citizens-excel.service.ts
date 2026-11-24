@@ -3,6 +3,7 @@ import * as ExcelJS from 'exceljs';
 
 import {
   applyExcelAutoFilter,
+  sanitizeExcelRow,
   styleExcelDataRow,
   styleExcelHeaderRow,
   styleExcelTotalRow,
@@ -85,28 +86,30 @@ export class CitizensExcelService {
         ? new Date(citizen.created_at).toISOString().slice(0, 16).replace('T', ' ')
         : '—';
 
-      const row = ws.addRow({
-        idx: index + 1,
-        full_name: fullName,
-        gender: genderStr,
-        birth_date: birthDateStr,
-        passport: citizen.passport || '—',
-        pinfl: citizen.pinfl || '—',
-        phone: primaryPhone || '—',
-        extra_phones: extraPhonesList.join(', ') || '—',
-        district: citizen.district?.name || '—',
-        mahalla: citizen.mahalla?.name || '—',
-        address: citizen.address || '—',
-        occ_category: citizen.occupation_category?.name || '—',
-        occupation: citizen.occupation?.name || '—',
-        workplace: citizen.workplace?.name || '—',
-        work_position: citizen.work_position || '—',
-        cards_list: cardsListStr,
-        cards_count: cards.length,
-        apps_list: appsListStr,
-        apps_count: apps.length,
-        created_at: createdDateStr,
-      });
+      const row = ws.addRow(
+        sanitizeExcelRow({
+          idx: index + 1,
+          full_name: fullName,
+          gender: genderStr,
+          birth_date: birthDateStr,
+          passport: citizen.passport || '—',
+          pinfl: citizen.pinfl || '—',
+          phone: primaryPhone || '—',
+          extra_phones: extraPhonesList.join(', ') || '—',
+          district: citizen.district?.name || '—',
+          mahalla: citizen.mahalla?.name || '—',
+          address: citizen.address || '—',
+          occ_category: citizen.occupation_category?.name || '—',
+          occupation: citizen.occupation?.name || '—',
+          workplace: citizen.workplace?.name || '—',
+          work_position: citizen.work_position || '—',
+          cards_list: cardsListStr,
+          cards_count: cards.length,
+          apps_list: appsListStr,
+          apps_count: apps.length,
+          created_at: createdDateStr,
+        }),
+      );
 
       styleExcelDataRow(row, ['address', 'cards_list', 'apps_list']);
 

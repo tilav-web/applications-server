@@ -12,10 +12,12 @@ import {
 } from '@nestjs/common';
 import type { Response } from 'express';
 
+import { CurrentUser } from '../../../common/decorators/current-user.decorator';
 import { Roles } from '../../../common/decorators/roles.decorator';
 import { Role } from '../../../common/enums/role.enum';
 import { JwtAuthGuard } from '../../../common/guards/jwt-auth.guard';
 import { RolesGuard } from '../../../common/guards/roles.guard';
+import type { JwtAccessPayload } from '../../../common/types/jwt-payload.interface';
 import { normalizePagination } from '../../../common/utils/pagination.util';
 import { CitizensService } from './citizens.service';
 import { CreateCitizenDto } from './dto/create-citizen.dto';
@@ -57,21 +59,28 @@ export class CitizensController {
     @Query('gender') gender?: string,
     @Query('birth_date') birthDate?: string,
     @Query('district_id') districtId?: string,
+    @CurrentUser() currentUser?: JwtAccessPayload,
   ) {
     const pagination = normalizePagination(page, limit, 10);
-    return this.citizensService.findAll(pagination.page, pagination.limit, search, {
-      fullName,
-      firstName,
-      lastName,
-      middleName,
-      passport,
-      phoneNumber,
-      cardNumber,
-      pinfl,
-      gender,
-      birthDate,
-      districtId,
-    });
+    return this.citizensService.findAll(
+      pagination.page,
+      pagination.limit,
+      search,
+      {
+        fullName,
+        firstName,
+        lastName,
+        middleName,
+        passport,
+        phoneNumber,
+        cardNumber,
+        pinfl,
+        gender,
+        birthDate,
+        districtId,
+      },
+      currentUser,
+    );
   }
 
   @Get('export/excel')
@@ -89,6 +98,7 @@ export class CitizensController {
     @Query('gender') gender?: string,
     @Query('birth_date') birthDate?: string,
     @Query('district_id') districtId?: string,
+    @CurrentUser() currentUser?: JwtAccessPayload,
   ) {
     return this.citizensService.exportToExcel(
       search,
@@ -106,18 +116,23 @@ export class CitizensController {
         districtId,
       },
       res,
+      currentUser,
     );
   }
 
   @Get(':id')
-  findOne(@Param('id') id: string) {
-    return this.citizensService.findOne(id);
+  findOne(@Param('id') id: string, @CurrentUser() currentUser?: JwtAccessPayload) {
+    return this.citizensService.findOne(id, currentUser);
   }
 
   @Patch(':id')
   @Roles(...WRITE_ROLES)
-  update(@Param('id') id: string, @Body() dto: UpdateCitizenDto) {
-    return this.citizensService.update(id, dto);
+  update(
+    @Param('id') id: string,
+    @Body() dto: UpdateCitizenDto,
+    @CurrentUser() currentUser?: JwtAccessPayload,
+  ) {
+    return this.citizensService.update(id, dto, currentUser);
   }
 
   @Delete(':id')

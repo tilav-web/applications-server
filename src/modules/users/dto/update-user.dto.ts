@@ -1,4 +1,4 @@
-import { IsEnum, IsOptional, IsString, MinLength } from 'class-validator';
+import { IsArray, IsEnum, IsOptional, IsString, IsUUID, MinLength } from 'class-validator';
 
 import { Role } from '../../../common/enums/role.enum';
 
@@ -9,7 +9,7 @@ export class UpdateUserDto {
 
   @IsOptional()
   @IsString()
-  @MinLength(6, { message: "Parol kamida 6 ta belgidan iborat bo'lishi kerak" })
+  @MinLength(8, { message: "Parol kamida 8 ta belgidan iborat bo'lishi kerak" })
   password?: string;
 
   @IsOptional()
@@ -29,5 +29,7 @@ export class UpdateUserDto {
   phone_number?: string;
 
   @IsOptional()
+  @IsArray()
+  @IsUUID('4', { each: true })
   assigned_district_ids?: string[];
 }

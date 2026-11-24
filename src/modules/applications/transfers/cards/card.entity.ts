@@ -91,12 +91,14 @@ export class Card extends BaseEntity {
     if (this.card_number) {
       // Bo'shliqlar va chiziqchalarni olib tashlaymiz
       const cleaned = this.card_number.replace(/\D/g, '');
-      this.card_number = cleaned;
+      this.card_number = cleaned.length > 0 ? cleaned : null;
 
-      // Agar niqoblangan raqam ko'rsatilmagan bo'lsa va raqam uzunligi 16 bo'lsa, avtomatik yaratamiz (masalan: 8600 **** **** 1290)
-      if (!this.masked_number && cleaned.length === 16) {
+      // 16 xonali karta raqami o'zgarganda masked_number ni har doim moslab yangilaymiz
+      if (cleaned.length === 16) {
         this.masked_number = `${cleaned.substring(0, 4)} **** **** ${cleaned.substring(12, 16)}`;
       }
+    } else {
+      this.card_number = null;
     }
   }
 }

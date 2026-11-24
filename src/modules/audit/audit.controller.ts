@@ -19,6 +19,7 @@ import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
 import { RolesGuard } from '../../common/guards/roles.guard';
 import type { JwtAccessPayload } from '../../common/types/jwt-payload.interface';
 import { type AuditLogQuery, AuditService } from './audit.service';
+import { BlockIpDto, UpdateAuditSettingsDto } from './dto/audit.dto';
 
 @Controller('audit')
 @UseGuards(JwtAuthGuard, RolesGuard)
@@ -48,7 +49,7 @@ export class AuditController {
 
   @Patch('settings')
   updateSettings(
-    @Body() body: { audit_retention_days?: number; audit_archive_to_minio?: boolean },
+    @Body() body: UpdateAuditSettingsDto,
     @CurrentUser() currentUser: JwtAccessPayload,
   ) {
     return this.auditService.updateSettings(body, currentUser);
@@ -65,10 +66,7 @@ export class AuditController {
   }
 
   @Post('traffic/block-ip')
-  blockIp(
-    @Body() body: { ip: string; reason?: string; duration_hours?: number },
-    @CurrentUser() currentUser: JwtAccessPayload,
-  ) {
+  blockIp(@Body() body: BlockIpDto, @CurrentUser() currentUser: JwtAccessPayload) {
     return this.auditService.blockIp(
       body.ip,
       body.reason || 'Super Admin tomonidan bloklandi',

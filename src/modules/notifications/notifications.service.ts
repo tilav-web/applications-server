@@ -1,13 +1,15 @@
 import { Injectable, Logger, OnModuleDestroy, OnModuleInit } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import * as crypto from 'crypto';
-import { In, Repository } from 'typeorm';
+import { Repository } from 'typeorm';
 
 import { ApplicationStatus } from '../../common/enums/application-status.enum';
 import { Role } from '../../common/enums/role.enum';
+import { maskCardNumberForAlert } from '../../common/utils/district-scope.util';
 import { Application } from '../applications/application.entity';
 import { SystemSetting } from '../audit/system-setting.entity';
 import { DetectedCrime } from '../detected-crimes/entities/detected-crime.entity';
+import { RedisService } from '../redis/redis.service';
 import { User } from '../users/user.entity';
 import {
   Notification,
@@ -43,7 +45,6 @@ export class NotificationsService implements OnModuleInit, OnModuleDestroy {
   private readonly logger = new Logger(NotificationsService.name);
   private schedulerTimer: ReturnType<typeof setInterval> | null = null;
   private lastDigestDate = '';
-  private lastSlaCheckDate = '';
 
   constructor(
     @InjectRepository(Notification)
@@ -55,6 +56,7 @@ export class NotificationsService implements OnModuleInit, OnModuleDestroy {
     @InjectRepository(Application)
     private readonly applicationRepo: Repository<Application>,
     private readonly telegramBot: TelegramBotService,
+    private readonly redisService: RedisService,
   ) {}
 
   onModuleInit(): void {
@@ -265,10 +267,9 @@ export class NotificationsService implements OnModuleInit, OnModuleDestroy {
           .getMany();
 
         if (matchedApps.length >= 2) {
-          const cardNum =
-            app.transfer?.receiver_card?.card_number ||
-            app.transfer?.receiver_card?.masked_number ||
-            'Karta';
+          const cardNum = maskCardNumberForAlert(
+            app.transfer?.receiver_card?.masked_number || app.transfer?.receiver_card?.card_number,
+          );
           const districts = Array.from(
             new Set(matchedApps.map((m) => m.district?.name).filter(Boolean)),
           );
@@ -577,6 +578,7 @@ export class NotificationsService implements OnModuleInit, OnModuleDestroy {
       }
     } catch (err) {
       this.logger.warn(`dispatchSlaStageNotification xatosi: ${(err as Error).message}`);
+      throw err;
     }
   }
 
@@ -699,6 +701,7 @@ export class NotificationsService implements OnModuleInit, OnModuleDestroy {
       }
     } catch (err) {
       this.logger.warn(`dispatchDetectedCrimeSlaNotification xatosi: ${(err as Error).message}`);
+      throw err;
     }
   }
 
@@ -741,10 +744,17 @@ export class NotificationsService implements OnModuleInit, OnModuleDestroy {
     try {
       const { dateStr: todayKey, hour: uzHour } = this.getTashkentNowParts();
 
-      // 1. Kunlik svodka (O'zbekiston vaqti bilan)
+      // 1. Kunlik svodka (O'zbekiston vaqti bilan, Redis distributed lock bilan dublikatsiz)
       const digestEnabled = await this.getSettingBool('notif_daily_digest_enabled', true);
       const digestHour = await this.getSettingNumber('notif_daily_digest_hour', 18);
       if (digestEnabled && uzHour === digestHour && this.lastDigestDate !== todayKey) {
+        const lockKey = `notif:daily_digest_lock:${todayKey}`;
+        const hasRedis = Boolean(this.redisService.getClient());
+        const acquired = hasRedis ? await this.redisService.setNx(lockKey, '1', 23 * 3600) : true;
+        if (!acquired) {
+          this.lastDigestDate = todayKey;
+          return;
+        }
         this.lastDigestDate = todayKey;
         await this.sendDailyDigest();
       }
@@ -752,61 +762,6 @@ export class NotificationsService implements OnModuleInit, OnModuleDestroy {
       // 2. SLA muddat nazorati endi BullMQ (SlaQueueService) delayed joblari orqali sekundigacha aniq ishlaydi
     } catch (err) {
       this.logger.warn(`Scheduled notification check xatosi: ${(err as Error).message}`);
-    }
-  }
-
-  async checkSlaDeadlines(): Promise<void> {
-    const slaDays = await this.getSettingNumber('notif_sla_days', 10);
-    if (slaDays <= 0) return;
-
-    const openApps = await this.applicationRepo.find({
-      where: {
-        is_deleted: false,
-        status: In([ApplicationStatus.YANGI, ApplicationStatus.JARAYONDA]),
-      },
-      relations: { district: true },
-    });
-
-    const nowMs = Date.now();
-    const bosses = await this.findUsersByRoles([Role.BOSS]);
-
-    for (const app of openApps) {
-      const baseDate = app.date || app.created_at;
-      const ageDays = Math.floor((nowMs - new Date(baseDate).getTime()) / (1000 * 60 * 60 * 24));
-      const daysLeft = slaDays - ageDays;
-
-      if (daysLeft === 2 || daysLeft === 1) {
-        if (app.district_id) {
-          const officers = await this.findUsersByRoles([Role.DISTRICT_OFFICER], app.district_id);
-          for (const u of officers) {
-            await this.notifyUser(u, {
-              type: 'SLA_WARNING',
-              priority: 'WARNING',
-              title: `Muddat yaqinlashmoqda (${daysLeft} kun qoldi)`,
-              message: `Ariza № ${app.application_number || 'Raqamsiz'} (${app.district?.name || '—'}) ko‘rib chiqish muddati tugashiga ${daysLeft} kun qoldi.`,
-              link_url: `/applications/${app.id}`,
-            });
-          }
-        }
-      } else if (daysLeft === 0 || daysLeft === -1) {
-        const recipients = [...bosses];
-        if (app.district_id) {
-          const officers = await this.findUsersByRoles([Role.DISTRICT_OFFICER], app.district_id);
-          recipients.push(...officers);
-        }
-        const unique = new Map<string, User>();
-        recipients.forEach((u) => unique.set(u.id, u));
-
-        for (const u of unique.values()) {
-          await this.notifyUser(u, {
-            type: 'SLA_OVERDUE',
-            priority: 'CRITICAL',
-            title: `Ariza muddati o'tdi: № ${app.application_number || 'Raqamsiz'}`,
-            message: `Hudud: ${app.district?.name || '—'} | Ochilganiga ${ageDays} kun bo‘ldi (limit: ${slaDays} kun).`,
-            link_url: `/applications/${app.id}`,
-          });
-        }
-      }
     }
   }
 

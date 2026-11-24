@@ -7,10 +7,8 @@ export function normalizePhoneDigits(raw?: string | null): string {
   let digits = String(raw).replace(/\D/g, '');
   if (digits.length === 9) {
     digits = `998${digits}`;
-  } else if (digits.length === 8 && /^(90|91|93|94|95|97|98|99|33|50|77|88|20)/.test(digits)) {
-    digits = `998${digits}`;
   }
-  return digits;
+  return digits.slice(0, 20);
 }
 
 export function formatPhoneDisplay(digits?: string | null): string {
@@ -80,26 +78,30 @@ export function normalizeIdentifierValue(type: string, raw?: string | null): str
   }
   if (t.includes('telegram_username') || t.includes('instagram') || t.includes('username')) {
     return trimmed
-      .replace(/^https?:\/\/(t\.me|telegram\.me|instagram\.com)\//i, '')
+      .replace(/^https?:\/\/(www\.)?(t\.me|telegram\.me|telegram\.dog|instagram\.com)\//i, '')
+      .replace(/[?#].*$/, '')
       .replace(/^@+/, '')
       .replace(/\/+$/, '')
       .trim()
-      .toLowerCase();
+      .toLowerCase()
+      .slice(0, 255);
   }
   if (t.includes('telegram_id') || t.includes('imei')) {
     const onlyDigits = trimmed.replace(/\D/g, '');
-    return onlyDigits || trimmed.toLowerCase();
+    return (onlyDigits || trimmed.toLowerCase()).slice(0, 255);
   }
   if (t.includes('ip')) {
-    return trimmed.toLowerCase().replace(/\s+/g, '');
+    return trimmed.toLowerCase().replace(/\s+/g, '').slice(0, 255);
   }
   if (t.includes('car') || t.includes('avto')) {
-    return trimmed.replace(/\s+/g, '').toUpperCase();
+    return trimmed.replace(/\s+/g, '').toUpperCase().slice(0, 64);
   }
   if (t.includes('crypto') || t.includes('wallet')) {
-    return trimmed.replace(/\s+/g, '');
+    const compact = trimmed.replace(/\s+/g, '');
+    // EVM (Ethereum/BSC/Polygon) manzillari case-insensitive hex — kichik harfga keltiramiz
+    return (/^0x[0-9a-f]{40}$/i.test(compact) ? compact.toLowerCase() : compact).slice(0, 255);
   }
-  return trimmed.toLowerCase().replace(/\s+/g, ' ');
+  return trimmed.toLowerCase().replace(/\s+/g, ' ').slice(0, 255);
 }
 
 export function getIdentifierTypeLabel(type: string, customLabel?: string | null): string {

@@ -1,11 +1,18 @@
-import { Injectable, NotFoundException } from '@nestjs/common';
+import { ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import type { Response } from 'express';
 import { In, Repository } from 'typeorm';
 
 import { assertNoDependencies } from '../../../../common/database/dependency-guard.util';
 import type { PaginatedResult } from '../../../../common/interfaces/pagination.interface';
+import type { JwtAccessPayload } from '../../../../common/types/jwt-payload.interface';
+import { getAllowedDistrictIds } from '../../../../common/utils/district-scope.util';
 import { formatUzbekName } from '../../../../common/utils/name-formatter.util';
+import {
+  isPgUniqueViolation,
+  normalizeCardNumber,
+} from '../../../../common/utils/normalization.util';
+import { User } from '../../../users/user.entity';
 import { Card } from './card.entity';
 import type { CreateCardDto } from './dto/create-card.dto';
 import type { UpdateCardDto } from './dto/update-card.dto';
@@ -16,44 +23,57 @@ export class CardsService {
   constructor(
     @InjectRepository(Card)
     private readonly cardRepo: Repository<Card>,
+    @InjectRepository(User)
+    private readonly userRepo: Repository<User>,
     private readonly excelService: CardsExcelService,
   ) {}
 
   async create(dto: CreateCardDto): Promise<Card> {
-    const cleanNum = dto.card_number ? dto.card_number.replace(/\D/g, '') : '';
-    if (cleanNum.length >= 8) {
+    const cleanNum = normalizeCardNumber(dto.card_number) || '';
+    const attachIfExisting = async (): Promise<Card | null> => {
+      if (cleanNum.length < 8) return null;
       const existing = await this.cardRepo.findOne({
         where: { card_number: cleanNum },
         relations: { citizen: true, bank: true },
       });
-      if (existing) {
-        let changed = false;
-        if (dto.citizen_id && !existing.citizen_id) {
-          existing.citizen_id = dto.citizen_id;
-          changed = true;
-        }
-        if (dto.bank_id && !existing.bank_id) {
-          existing.bank_id = dto.bank_id;
-          changed = true;
-        }
-        if (dto.full_name && !existing.full_name) {
-          existing.full_name = formatUzbekName(dto.full_name);
-          changed = true;
-        }
-        if (dto.expire_date && !existing.expire_date) {
-          existing.expire_date = dto.expire_date;
-          changed = true;
-        }
-        return changed ? this.cardRepo.save(existing) : existing;
+      if (!existing) return null;
+      let changed = false;
+      if (dto.citizen_id && !existing.citizen_id) {
+        existing.citizen_id = dto.citizen_id;
+        changed = true;
       }
-    }
+      if (dto.bank_id && !existing.bank_id) {
+        existing.bank_id = dto.bank_id;
+        changed = true;
+      }
+      if (dto.full_name && !existing.full_name) {
+        existing.full_name = formatUzbekName(dto.full_name);
+        changed = true;
+      }
+      if (dto.expire_date && !existing.expire_date) {
+        existing.expire_date = dto.expire_date;
+        changed = true;
+      }
+      return changed ? this.cardRepo.save(existing) : existing;
+    };
+
+    const existingBefore = await attachIfExisting();
+    if (existingBefore) return existingBefore;
 
     const card = this.cardRepo.create({
       ...dto,
       full_name: dto.full_name ? formatUzbekName(dto.full_name) : null,
-      card_number: cleanNum,
+      card_number: cleanNum || null,
     });
-    return this.cardRepo.save(card);
+    try {
+      return await this.cardRepo.save(card);
+    } catch (err) {
+      if (isPgUniqueViolation(err)) {
+        const raceExisting = await attachIfExisting();
+        if (raceExisting) return raceExisting;
+      }
+      throw err;
+    }
   }
 
   private buildCardsFilterQuery(
@@ -132,6 +152,36 @@ export class CardsService {
     return qb;
   }
 
+  private applyDistrictScope(
+    qb: ReturnType<Repository<Card>['createQueryBuilder']>,
+    allowedDistrictIds: string[] | null,
+  ): void {
+    if (allowedDistrictIds === null) return;
+    if (allowedDistrictIds.length === 0) {
+      qb.andWhere('1 = 0');
+      return;
+    }
+    qb.andWhere(
+      `(
+        citizen.district_id IN (:...allowedDistrictIds)
+        OR EXISTS (
+          SELECT 1 FROM applications a
+          WHERE a.card_id = card.id
+            AND a.is_deleted = false
+            AND a.district_id IN (:...allowedDistrictIds)
+        )
+        OR EXISTS (
+          SELECT 1 FROM transfers t
+          INNER JOIN applications a ON (a.id = t.application_id OR a.transfer_id = t.id)
+          WHERE (t.sender_card_id = card.id OR t.receiver_card_id = card.id OR t.card_id = card.id)
+            AND a.is_deleted = false
+            AND a.district_id IN (:...allowedDistrictIds)
+        )
+      )`,
+      { allowedDistrictIds },
+    );
+  }
+
   async findAll(
     page = 1,
     limit = 10,
@@ -145,11 +195,14 @@ export class CardsService {
       phoneNumber?: string;
       expireDate?: string;
     },
+    currentUser?: JwtAccessPayload,
   ): Promise<PaginatedResult<Card>> {
+    const allowedDistrictIds = await getAllowedDistrictIds(this.userRepo, currentUser);
     const take = limit;
     const skip = (page - 1) * limit;
 
     const qb = this.buildCardsFilterQuery(search, citizenId, filters);
+    this.applyDistrictScope(qb, allowedDistrictIds);
     const [matched, total] = await qb
       .select(['card.id', 'card.created_at'])
       .skip(skip)
@@ -181,7 +234,22 @@ export class CardsService {
     };
   }
 
-  async findOne(id: string): Promise<Card> {
+  async findOne(id: string, currentUser?: JwtAccessPayload): Promise<Card> {
+    const allowedDistrictIds = await getAllowedDistrictIds(this.userRepo, currentUser);
+    if (allowedDistrictIds !== null) {
+      const checkQb = this.cardRepo
+        .createQueryBuilder('card')
+        .leftJoin('card.citizen', 'citizen')
+        .where('card.id = :id', { id });
+      this.applyDistrictScope(checkQb, allowedDistrictIds);
+      const accessible = await checkQb.select('card.id').getOne();
+      if (!accessible) {
+        throw new ForbiddenException(
+          "Siz faqat o'zingizga biriktirilgan tuman(lar) kartalarini ko'rishingiz mumkin",
+        );
+      }
+    }
+
     const card = await this.cardRepo.findOne({
       where: { id },
       relations: { citizen: true, bank: true, applications: true },
@@ -191,11 +259,17 @@ export class CardsService {
       throw new NotFoundException(`Karta (ID: ${id}) topilmadi`);
     }
 
+    if (allowedDistrictIds !== null) {
+      card.applications = (card.applications || []).filter(
+        (a) => !a.is_deleted && a.district_id && allowedDistrictIds.includes(a.district_id),
+      );
+    }
+
     return card;
   }
 
-  async update(id: string, dto: UpdateCardDto): Promise<Card> {
-    const card = await this.findOne(id);
+  async update(id: string, dto: UpdateCardDto, currentUser?: JwtAccessPayload): Promise<Card> {
+    const card = await this.findOne(id, currentUser);
     const updatedData: Partial<Card> = { ...dto };
     if (dto.full_name !== undefined) {
       updatedData.full_name = dto.full_name ? formatUzbekName(dto.full_name) : null;
@@ -225,6 +299,17 @@ export class CardsService {
       },
       { table: 'transfers', column: 'sender_card_id', label: "yuboruvchi o'tkazma" },
       { table: 'transfers', column: 'receiver_card_id', label: "qabul qiluvchi o'tkazma" },
+      { table: 'transfers', column: 'card_id', label: "bog'langan o'tkazma" },
+      {
+        table: 'application_custom_fields',
+        column: 'card_id',
+        label: "ariza qo'shimcha maydoni",
+      },
+      {
+        table: 'transfer_custom_fields',
+        column: 'card_id',
+        label: "o'tkazma qo'shimcha maydoni",
+      },
     ]);
     await this.cardRepo.remove(card);
     return { success: true, message: "Karta muvaffaqiyatli o'chirildi" };
@@ -242,8 +327,11 @@ export class CardsService {
       phoneNumber?: string;
       expireDate?: string;
     },
+    currentUser?: JwtAccessPayload,
   ): Promise<void> {
+    const allowedDistrictIds = await getAllowedDistrictIds(this.userRepo, currentUser);
     const qb = this.buildCardsFilterQuery(search, citizenId, filters);
+    this.applyDistrictScope(qb, allowedDistrictIds);
     const matched = await qb.select(['card.id', 'card.created_at']).take(10000).getMany();
     const ids = matched.map((c) => c.id);
     const items =

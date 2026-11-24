@@ -1,5 +1,6 @@
 import {
   BadRequestException,
+  ConflictException,
   ForbiddenException,
   Injectable,
   NotFoundException,
@@ -120,8 +121,24 @@ export class IntelligenceService {
   ): boolean {
     if (!ctx.canMutate) return false;
     if (!ctx.isDistrictOfficer) return true;
-    if (!appDistrictId) return true;
+    if (!appDistrictId) return false;
     return ctx.assignedDistrictIds.includes(appDistrictId);
+  }
+
+  private assertCanReassignOwnership(
+    existingCitizenId: string | null | undefined,
+    targetCitizenId: string,
+    entityLabel: string,
+    currentUser?: JwtAccessPayload,
+  ): void {
+    if (!existingCitizenId || existingCitizenId === targetCitizenId) return;
+    const isPrivilegedAdmin =
+      currentUser?.role === Role.SUPER_ADMIN || currentUser?.role === Role.ADMIN;
+    if (!isPrivilegedAdmin) {
+      throw new ConflictException(
+        `Ushbu ${entityLabel} allaqachon boshqa fuqaroga biriktirilgan. Uni qayta biriktirish uchun Admin ruxsati talab etiladi`,
+      );
+    }
   }
 
   private normalizePersonName(name?: string | null): string {
@@ -164,6 +181,23 @@ export class IntelligenceService {
     if (!q) {
       return {
         query: '',
+        totalCount: 0,
+        items: [],
+        countsByCategory: {
+          citizens: 0,
+          cards: 0,
+          phones: 0,
+          identifiers: 0,
+          applications: 0,
+          transfers: 0,
+        },
+      };
+    }
+
+    const permCtx = await this.getUserPermissionsContext(currentUser);
+    if (permCtx.isDistrictOfficer && permCtx.assignedDistrictIds.length === 0) {
+      return {
+        query: q,
         totalCount: 0,
         items: [],
         countsByCategory: {
@@ -290,6 +324,31 @@ export class IntelligenceService {
       )
       .orderBy('tr.created_at', 'DESC')
       .take(15);
+
+    if (permCtx.isDistrictOfficer) {
+      const assignedIds = permCtx.assignedDistrictIds;
+      citizenQb.andWhere(
+        `(c.district_id IN (:...assignedIds) OR EXISTS (SELECT 1 FROM applications a_sc WHERE a_sc.citizen_id = c.id AND a_sc.is_deleted = false AND a_sc.district_id IN (:...assignedIds)))`,
+        { assignedIds },
+      );
+      cardQb.andWhere(
+        `(citizen.district_id IN (:...assignedIds) OR EXISTS (SELECT 1 FROM entity_application_links e_sc INNER JOIN applications a_sc ON a_sc.id = e_sc.application_id WHERE e_sc.card_id = card.id AND a_sc.is_deleted = false AND a_sc.district_id IN (:...assignedIds)))`,
+        { assignedIds },
+      );
+      phoneQb.andWhere(
+        `(citizen.district_id IN (:...assignedIds) OR EXISTS (SELECT 1 FROM entity_application_links e_sc INNER JOIN applications a_sc ON a_sc.id = e_sc.application_id WHERE e_sc.phone_id = p.id AND a_sc.is_deleted = false AND a_sc.district_id IN (:...assignedIds)))`,
+        { assignedIds },
+      );
+      identQb.andWhere(
+        `(citizen.district_id IN (:...assignedIds) OR EXISTS (SELECT 1 FROM entity_application_links e_sc INNER JOIN applications a_sc ON a_sc.id = e_sc.application_id WHERE e_sc.identifier_id = d.id AND a_sc.is_deleted = false AND a_sc.district_id IN (:...assignedIds)))`,
+        { assignedIds },
+      );
+      appQb.andWhere('a.district_id IN (:...assignedIds)', { assignedIds });
+      transferQb.andWhere(
+        `EXISTS (SELECT 1 FROM applications a_sc WHERE (a_sc.id = tr.application_id OR a_sc.transfer_id = tr.id) AND a_sc.is_deleted = false AND a_sc.district_id IN (:...assignedIds))`,
+        { assignedIds },
+      );
+    }
 
     const [citizens, cards, phones, identifiers, apps, transfers] = await Promise.all([
       citizenQb.getMany(),
@@ -526,9 +585,6 @@ export class IntelligenceService {
       return b.riskScore - a.riskScore;
     });
 
-    const _unusedUser = currentUser;
-    void _unusedUser;
-
     return {
       query: q,
       totalCount: items.length,
@@ -545,6 +601,7 @@ export class IntelligenceService {
     type: string,
     rawValue: string,
     excludeAppId?: string,
+    currentUser?: JwtAccessPayload,
   ): Promise<LiveRadarResponse> {
     const empty: LiveRadarResponse = {
       found: false,
@@ -647,13 +704,16 @@ export class IntelligenceService {
       const normalized = normalizeIdentifierValue(cleanType, rawValue);
       if (normalized.length < 3) return empty;
 
-      const ident = await this.identifierRepo.findOne({
-        where: [
-          { type: cleanType, normalized_value: normalized },
-          { normalized_value: normalized },
-        ],
+      const exactIdent = await this.identifierRepo.findOne({
+        where: { type: cleanType, normalized_value: normalized },
         relations: { citizen: true },
       });
+      const ident =
+        exactIdent ||
+        (await this.identifierRepo.findOne({
+          where: { normalized_value: normalized },
+          relations: { citizen: true },
+        }));
       if (!ident) return empty;
 
       entityType = 'identifier';
@@ -696,36 +756,58 @@ export class IntelligenceService {
       };
     }
 
+    const rolePriority: Record<EntityLinkRole, number> = {
+      SUSPECT: 5,
+      DROPPER: 4,
+      TRANSIT: 3,
+      VICTIM: 2,
+      WITNESS: 1,
+      RELATED: 0,
+    };
+
     const byApp = new Map<
       string,
       {
         id: string;
         application_number: string;
-        role: string;
+        role: EntityLinkRole;
         date: string | null;
         amount: number | null;
+        currency: string;
       }
     >();
-
-    let suspectCount = 0;
-    let victimCount = 0;
-    let totalLoss = 0;
 
     for (const l of filteredLinks) {
       const app = l.application;
       const amt = app.transfer?.amount ? Number(app.transfer.amount) : null;
-      if (!byApp.has(app.id)) {
+      const curr = (app.transfer?.currency || 'UZS').toUpperCase();
+      const existing = byApp.get(app.id);
+      if (!existing) {
         byApp.set(app.id, {
           id: app.id,
           application_number: app.application_number || 'Raqamsiz',
           role: l.role,
           date: app.date ? new Date(app.date).toISOString() : app.created_at.toISOString(),
           amount: amt,
+          currency: curr,
         });
-        totalLoss += amt || 0;
-        if (l.role === 'SUSPECT' || l.role === 'DROPPER') suspectCount++;
-        else if (l.role === 'VICTIM') victimCount++;
+      } else if (rolePriority[l.role] > rolePriority[existing.role]) {
+        existing.role = l.role;
       }
+    }
+
+    let suspectCount = 0;
+    let victimCount = 0;
+    let totalLoss = 0;
+    const hasUzsLoss = Array.from(byApp.values()).some(
+      (a) => a.currency === 'UZS' && (a.amount || 0) > 0,
+    );
+    for (const item of byApp.values()) {
+      if (!hasUzsLoss || item.currency === 'UZS') {
+        totalLoss += item.amount || 0;
+      }
+      if (item.role === 'SUSPECT' || item.role === 'DROPPER') suspectCount++;
+      else if (item.role === 'VICTIM') victimCount++;
     }
 
     const riskLevel: LiveRadarResponse['riskLevel'] =
@@ -736,6 +818,25 @@ export class IntelligenceService {
           : victimCount > 0
             ? 'MEDIUM'
             : 'LOW';
+
+    const permCtx = await this.getUserPermissionsContext(currentUser);
+    const recentApplications = Array.from(byApp.values())
+      .slice(0, 5)
+      .map((item) => {
+        if (permCtx.isDistrictOfficer) {
+          const linkedApp = links.find((l) => l.application?.id === item.id)?.application;
+          const allowed = Boolean(
+            linkedApp?.district_id && permCtx.assignedDistrictIds.includes(linkedApp.district_id),
+          );
+          if (!allowed) {
+            return {
+              ...item,
+              application_number: 'Boshqa tuman (yopiq)',
+            };
+          }
+        }
+        return item;
+      });
 
     return {
       found: true,
@@ -750,7 +851,7 @@ export class IntelligenceService {
       victimCount,
       totalLoss,
       riskLevel,
-      recentApplications: Array.from(byApp.values()).slice(0, 5),
+      recentApplications,
     };
   }
 
@@ -772,6 +873,10 @@ export class IntelligenceService {
     const providerMap = new Map<string, { name: string; count: number; amount: number }>();
     const allDates: number[] = [];
 
+    const hasUzsAppLoss = directApps.some(
+      (a) => (a.currency || 'UZS').toUpperCase() === 'UZS' && Number(a.transfer_amount || 0) > 0,
+    );
+
     for (const a of directApps) {
       if (a.role_in_app === 'VICTIM') victimAppsCount++;
       else if (a.role_in_app === 'SUSPECT' || a.role_in_app === 'DROPPER')
@@ -779,7 +884,10 @@ export class IntelligenceService {
       else if (a.role_in_app === 'WITNESS') witnessAppsCount++;
 
       const amt = Number(a.transfer_amount || 0);
-      totalLossInLinkedApps += amt;
+      const curr = (a.currency || 'UZS').toUpperCase();
+      if (!hasUzsAppLoss || curr === 'UZS') {
+        totalLossInLinkedApps += amt;
+      }
 
       if (a.date) {
         const ts = new Date(a.date).getTime();
@@ -793,7 +901,9 @@ export class IntelligenceService {
           loss: 0,
         };
         d.count++;
-        d.loss += amt;
+        if (!hasUzsAppLoss || curr === 'UZS') {
+          d.loss += amt;
+        }
         districtMap.set(a.district_name, d);
       }
 
@@ -807,21 +917,27 @@ export class IntelligenceService {
         crimeMap.set(a.crime_article, c);
       }
 
-      if (a.payment_provider) {
+      if (transfers.length === 0 && a.payment_provider) {
         const p = providerMap.get(a.payment_provider) || {
           name: a.payment_provider,
           count: 0,
           amount: 0,
         };
         p.count++;
-        p.amount += amt;
+        if (!hasUzsAppLoss || curr === 'UZS') {
+          p.amount += amt;
+        }
         providerMap.set(a.payment_provider, p);
       }
     }
 
     let totalIncomingAmount = 0;
     let totalOutgoingAmount = 0;
+    let totalInternalAmount = 0;
     let maxTransactionAmount = 0;
+    const hasUzsTransfer = transfers.some(
+      (t) => (t.currency || 'UZS').toUpperCase() === 'UZS' && Number(t.amount || 0) > 0,
+    );
 
     const hourlySlots = [
       { slot: '00:00–04:00', count: 0, amount: 0 },
@@ -834,26 +950,29 @@ export class IntelligenceService {
 
     for (const tr of transfers) {
       const amt = Number(tr.amount || 0);
-      if (tr.direction === 'INCOMING') totalIncomingAmount += amt;
-      else if (tr.direction === 'OUTGOING') totalOutgoingAmount += amt;
-      else {
-        totalIncomingAmount += amt;
-        totalOutgoingAmount += amt;
-      }
+      const curr = (tr.currency || 'UZS').toUpperCase();
+      const countableAmt = !hasUzsTransfer || curr === 'UZS' ? amt : 0;
 
-      if (amt > maxTransactionAmount) maxTransactionAmount = amt;
+      if (tr.direction === 'INCOMING') totalIncomingAmount += countableAmt;
+      else if (tr.direction === 'OUTGOING') totalOutgoingAmount += countableAmt;
+      else totalInternalAmount += countableAmt;
+
+      if (countableAmt > maxTransactionAmount) maxTransactionAmount = countableAmt;
 
       if (tr.transfer_date) {
         const ts = new Date(tr.transfer_date).getTime();
         if (!isNaN(ts)) allDates.push(ts);
       }
 
-      if (tr.payment_provider && !providerMap.has(tr.payment_provider)) {
-        providerMap.set(tr.payment_provider, {
+      if (tr.payment_provider) {
+        const p = providerMap.get(tr.payment_provider) || {
           name: tr.payment_provider,
-          count: 1,
-          amount: amt,
-        });
+          count: 0,
+          amount: 0,
+        };
+        p.count++;
+        p.amount += countableAmt;
+        providerMap.set(tr.payment_provider, p);
       }
 
       let hour: number | null = null;
@@ -864,11 +983,11 @@ export class IntelligenceService {
       if (hour !== null && hour >= 0 && hour < 24) {
         const idx = Math.min(Math.floor(hour / 4), 5);
         hourlySlots[idx].count++;
-        hourlySlots[idx].amount += amt;
+        hourlySlots[idx].amount += countableAmt;
       }
     }
 
-    const totalVolume = totalIncomingAmount + totalOutgoingAmount;
+    const totalVolume = totalIncomingAmount + totalOutgoingAmount + totalInternalAmount;
     const avgTransactionAmount =
       transfers.length > 0 ? Math.round(totalVolume / transfers.length) : 0;
 
@@ -1243,11 +1362,19 @@ export class IntelligenceService {
     reasons: string[],
     permCtx: { canMutate: boolean; isDistrictOfficer: boolean; assignedDistrictIds: string[] },
   ): DossierApplicationItem {
+    const isRestrictedCrossDistrict =
+      permCtx.isDistrictOfficer &&
+      (!app.district_id || !permCtx.assignedDistrictIds.includes(app.district_id));
+
     return {
       id: app.id,
-      application_number: app.application_number || 'Raqamsiz',
-      description: app.description || null,
-      officer_notes: app.officer_notes || null,
+      application_number: isRestrictedCrossDistrict
+        ? 'Boshqa tuman arizasi'
+        : app.application_number || 'Raqamsiz',
+      description: isRestrictedCrossDistrict
+        ? 'Boshqa tuman yurituvidagi ariza (maxfiy tafsilotlar yopiq)'
+        : app.description || null,
+      officer_notes: isRestrictedCrossDistrict ? null : app.officer_notes || null,
       status: app.status,
       status_label: app.application_status?.name || app.status || 'YANGI',
       status_color: app.application_status?.color || '#3b82f6',
@@ -1256,8 +1383,12 @@ export class IntelligenceService {
       district_name: app.district?.name || null,
       crime_article: app.crime?.article || null,
       crime_method: app.crime_method?.name || null,
-      victim_name: app.citizen ? this.formatCitizenFullName(app.citizen) : null,
-      victim_phone: app.citizen?.phone_number || null,
+      victim_name: isRestrictedCrossDistrict
+        ? 'Boshqa tuman fuqarosi'
+        : app.citizen
+          ? this.formatCitizenFullName(app.citizen)
+          : null,
+      victim_phone: isRestrictedCrossDistrict ? null : app.citizen?.phone_number || null,
       role_in_app: role,
       link_source: source,
       match_reasons: reasons,
@@ -1271,12 +1402,24 @@ export class IntelligenceService {
   private mapTransfersForCardSet(
     rawTransfers: Transfer[],
     ownedCardIds: Set<string>,
+    opts?: {
+      ownedIdentifierId?: string | null;
+      defaultDirection?: DossierTransferItem['direction'];
+    },
   ): DossierTransferItem[] {
     return rawTransfers.map((tr) => {
       const sOwned = tr.sender_card_id ? ownedCardIds.has(tr.sender_card_id) : false;
-      const rOwned = tr.receiver_card_id ? ownedCardIds.has(tr.receiver_card_id) : false;
+      const rOwned =
+        (tr.receiver_card_id ? ownedCardIds.has(tr.receiver_card_id) : false) ||
+        Boolean(opts?.ownedIdentifierId && tr.receiver_identifier_id === opts.ownedIdentifierId);
       const direction: DossierTransferItem['direction'] =
-        sOwned && rOwned ? 'INTERNAL' : rOwned ? 'INCOMING' : 'OUTGOING';
+        sOwned && rOwned
+          ? 'INTERNAL'
+          : rOwned
+            ? 'INCOMING'
+            : sOwned
+              ? 'OUTGOING'
+              : opts?.defaultDirection || 'INTERNAL';
 
       const images: string[] = [];
       for (const cf of tr.custom_fields || []) {
@@ -1346,7 +1489,6 @@ export class IntelligenceService {
       throw new NotFoundException(`Fuqaro (ID: ${citizenId}) topilmadi`);
     }
 
-    await this.syncService.syncCitizenEntity(citizen);
     const permCtx = await this.getUserPermissionsContext(currentUser);
 
     const [ownedCards, ownedPhones, ownedIdentifiers] = await Promise.all([
@@ -1855,13 +1997,25 @@ export class IntelligenceService {
       where: { card_id: card.id },
     });
 
+    const rolePriority: Record<EntityLinkRole, number> = {
+      SUSPECT: 5,
+      DROPPER: 4,
+      TRANSIT: 3,
+      VICTIM: 2,
+      WITNESS: 1,
+      RELATED: 0,
+    };
+
     const appRoleMap = new Map<string, { role: EntityLinkRole; source: string; note?: string }>();
     for (const l of directLinks) {
-      appRoleMap.set(l.application_id, {
-        role: l.role,
-        source: l.source,
-        note: l.note || undefined,
-      });
+      const existing = appRoleMap.get(l.application_id);
+      if (!existing || rolePriority[l.role] > rolePriority[existing.role]) {
+        appRoleMap.set(l.application_id, {
+          role: l.role,
+          source: l.source,
+          note: l.note || existing?.note || undefined,
+        });
+      }
     }
 
     const rawTransfers = await this.transferRepo.find({
@@ -2160,13 +2314,25 @@ export class IntelligenceService {
     const permCtx = await this.getUserPermissionsContext(currentUser);
     const links = await this.linkRepo.find({ where: { phone_id: phone.id } });
 
+    const rolePriority: Record<EntityLinkRole, number> = {
+      SUSPECT: 5,
+      DROPPER: 4,
+      TRANSIT: 3,
+      VICTIM: 2,
+      WITNESS: 1,
+      RELATED: 0,
+    };
+
     const appRoleMap = new Map<string, { role: EntityLinkRole; source: string; note?: string }>();
     for (const l of links) {
-      appRoleMap.set(l.application_id, {
-        role: l.role,
-        source: l.source,
-        note: l.note || undefined,
-      });
+      const existing = appRoleMap.get(l.application_id);
+      if (!existing || rolePriority[l.role] > rolePriority[existing.role]) {
+        appRoleMap.set(l.application_id, {
+          role: l.role,
+          source: l.source,
+          note: l.note || existing?.note || undefined,
+        });
+      }
     }
 
     const directAppIds = Array.from(appRoleMap.keys());
@@ -2217,7 +2383,12 @@ export class IntelligenceService {
     }
 
     const cardSet = new Set(ownedCards.map((c) => c.id));
-    const transfers = this.mapTransfersForCardSet(rawTransfers, cardSet);
+    const hasSuspectPhoneRole = directApplications.some(
+      (a) => a.role_in_app === 'SUSPECT' || a.role_in_app === 'DROPPER',
+    );
+    const transfers = this.mapTransfersForCardSet(rawTransfers, cardSet, {
+      defaultDirection: hasSuspectPhoneRole ? 'INCOMING' : 'OUTGOING',
+    });
     const coOccurringClues = await this.computeCoOccurringClues(
       directAppIds,
       new Set([`phone:${phone.id}`]),
@@ -2358,13 +2529,25 @@ export class IntelligenceService {
     const permCtx = await this.getUserPermissionsContext(currentUser);
     const links = await this.linkRepo.find({ where: { identifier_id: identifier.id } });
 
+    const rolePriority: Record<EntityLinkRole, number> = {
+      SUSPECT: 5,
+      DROPPER: 4,
+      TRANSIT: 3,
+      VICTIM: 2,
+      WITNESS: 1,
+      RELATED: 0,
+    };
+
     const appRoleMap = new Map<string, { role: EntityLinkRole; source: string; note?: string }>();
     for (const l of links) {
-      appRoleMap.set(l.application_id, {
-        role: l.role,
-        source: l.source,
-        note: l.note || undefined,
-      });
+      const existing = appRoleMap.get(l.application_id);
+      if (!existing || rolePriority[l.role] > rolePriority[existing.role]) {
+        appRoleMap.set(l.application_id, {
+          role: l.role,
+          source: l.source,
+          note: l.note || existing?.note || undefined,
+        });
+      }
     }
 
     const directAppIds = Array.from(appRoleMap.keys());
@@ -2380,10 +2563,31 @@ export class IntelligenceService {
       );
     });
 
-    const rawTransfers = directAppEntities
-      .map((a) => a.transfer)
-      .filter((t): t is Transfer => Boolean(t));
-    const transfers = this.mapTransfersForCardSet(rawTransfers, new Set());
+    const directIdentTransfers = await this.transferRepo.find({
+      where: { receiver_identifier_id: identifier.id },
+      relations: {
+        payment_provider: true,
+        sender_card: { bank: true, citizen: true },
+        receiver_card: { bank: true, citizen: true },
+        application: true,
+        custom_fields: true,
+      },
+      order: { created_at: 'DESC' },
+    });
+    const transferById = new Map<string, Transfer>();
+    for (const tr of directIdentTransfers) {
+      transferById.set(tr.id, tr);
+    }
+    for (const a of directAppEntities) {
+      if (a.transfer && !transferById.has(a.transfer.id)) {
+        transferById.set(a.transfer.id, a.transfer);
+      }
+    }
+    const rawTransfers = Array.from(transferById.values());
+    const transfers = this.mapTransfersForCardSet(rawTransfers, new Set(), {
+      ownedIdentifierId: identifier.id,
+      defaultDirection: 'INCOMING',
+    });
     const coOccurringClues = await this.computeCoOccurringClues(
       directAppIds,
       new Set([`identifier:${identifier.id}`]),
@@ -2527,6 +2731,12 @@ export class IntelligenceService {
     }
 
     const existingBefore = await this.phoneRepo.findOne({ where: { phone_number: clean } });
+    this.assertCanReassignOwnership(
+      existingBefore?.citizen_id,
+      citizen.id,
+      'telefon raqami',
+      currentUser,
+    );
     const phone = await this.syncService.upsertPhone(clean, {
       citizenId: citizen.id,
       isPrimary: dto.is_primary,
@@ -2614,6 +2824,12 @@ export class IntelligenceService {
     }
 
     const existingBefore = await this.cardRepo.findOne({ where: { card_number: clean } });
+    this.assertCanReassignOwnership(
+      existingBefore?.citizen_id,
+      citizen.id,
+      'plastik karta',
+      currentUser,
+    );
     const defaultHolderName = dto.full_name
       ? formatUzbekName(dto.full_name)
       : this.formatCitizenFullName(citizen);
@@ -2678,6 +2894,7 @@ export class IntelligenceService {
       throw new BadRequestException('Qiymat juda qisqa yoki notoʻgʻri');
     }
 
+    this.assertCanReassignOwnership(ident.citizen_id, citizen.id, 'raqamli iz', currentUser);
     if (ident.citizen_id !== citizen.id) {
       ident.citizen_id = citizen.id;
       await this.identifierRepo.save(ident);
@@ -2730,6 +2947,7 @@ export class IntelligenceService {
     if (dto.entity_type === 'card') {
       const card = await this.cardRepo.findOne({ where: { id: dto.entity_id } });
       if (!card) throw new NotFoundException('Karta topilmadi');
+      this.assertCanReassignOwnership(card.citizen_id, citizen.id, 'plastik karta', currentUser);
       card.citizen_id = citizen.id;
       if (!card.full_name) card.full_name = this.formatCitizenFullName(citizen);
       await this.cardRepo.save(card);
@@ -2744,6 +2962,7 @@ export class IntelligenceService {
     if (dto.entity_type === 'phone') {
       const phone = await this.phoneRepo.findOne({ where: { id: dto.entity_id } });
       if (!phone) throw new NotFoundException('Telefon topilmadi');
+      this.assertCanReassignOwnership(phone.citizen_id, citizen.id, 'telefon raqami', currentUser);
       phone.citizen_id = citizen.id;
       await this.phoneRepo.save(phone);
 
@@ -2760,6 +2979,7 @@ export class IntelligenceService {
 
     const ident = await this.identifierRepo.findOne({ where: { id: dto.entity_id } });
     if (!ident) throw new NotFoundException('Raqamli iz topilmadi');
+    this.assertCanReassignOwnership(ident.citizen_id, citizen.id, 'raqamli iz', currentUser);
     ident.citizen_id = citizen.id;
     await this.identifierRepo.save(ident);
 
@@ -2970,30 +3190,42 @@ export class IntelligenceService {
   // 8. DOUBLE-CLICK EXPAND NODE (INTERAKTIV GRAF KENGAYTIRGICHI)
   // ===========================================================================
 
-  async expandGraphNode(nodeType: string, entityId: string): Promise<INetworkGraph> {
+  async expandGraphNode(
+    nodeType: string,
+    entityId: string,
+    currentUser?: JwtAccessPayload,
+  ): Promise<INetworkGraph> {
     const t = nodeType.toUpperCase();
     if (t === 'CITIZEN') {
-      const d = await this.getCitizenDossier(entityId);
+      const d = await this.getCitizenDossier(entityId, currentUser);
       return d.networkGraph;
     }
     if (t === 'CARD') {
-      const d = await this.getCardDossier(entityId);
+      const d = await this.getCardDossier(entityId, currentUser);
       return d.networkGraph;
     }
     if (t === 'PHONE') {
-      const d = await this.getPhoneDossier(entityId);
+      const d = await this.getPhoneDossier(entityId, currentUser);
       return d.networkGraph;
     }
     if (t === 'IDENTIFIER') {
-      const d = await this.getIdentifierDossier(entityId);
+      const d = await this.getIdentifierDossier(entityId, currentUser);
       return d.networkGraph;
     }
     if (t === 'APPLICATION') {
       const app = await this.appRepo.findOne({
-        where: { id: entityId },
+        where: { id: entityId, is_deleted: false },
         relations: { citizen: true, district: true, transfer: true },
       });
       if (!app) return { nodes: [], edges: [] };
+
+      const permCtx = await this.getUserPermissionsContext(currentUser);
+      if (
+        permCtx.isDistrictOfficer &&
+        (!app.district_id || !permCtx.assignedDistrictIds.includes(app.district_id))
+      ) {
+        return { nodes: [], edges: [] };
+      }
 
       const links = await this.linkRepo.find({
         where: { application_id: app.id },
@@ -3115,7 +3347,6 @@ export class IntelligenceService {
   // ===========================================================================
 
   async getEnhancedApplicationIntelligence(applicationId: string, currentUser?: JwtAccessPayload) {
-    await this.syncService.syncApplicationById(applicationId);
     const permCtx = await this.getUserPermissionsContext(currentUser);
 
     const currentLinks = await this.linkRepo.find({
@@ -3256,7 +3487,7 @@ export class IntelligenceService {
     }
 
     // Network Graph for Application
-    const baseExpand = await this.expandGraphNode('APPLICATION', applicationId);
+    const baseExpand = await this.expandGraphNode('APPLICATION', applicationId, currentUser);
     const nodes = new Map<string, INetworkNode>(baseExpand.nodes.map((n) => [n.id, n]));
     const edges: INetworkEdge[] = [...baseExpand.edges];
 

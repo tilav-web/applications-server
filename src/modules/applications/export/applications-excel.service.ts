@@ -3,9 +3,12 @@ import * as ExcelJS from 'exceljs';
 
 import {
   applyExcelAutoFilter,
+  escapeExcelCriteriaLiteral,
   formatDestinationType,
   formatTransferDateTime,
   formatTransferStatus,
+  sanitizeExcelRow,
+  sanitizeExcelValue,
   styleExcelDataRow,
   styleExcelHeaderRow,
   styleExcelSubTotalRow,
@@ -188,7 +191,7 @@ export class ApplicationsExcelService {
       const appNumber = app.application_number || `AR-${app.id.slice(0, 8)}`;
 
       const transfersFormula = `COUNTIF('Pul o''tkazmalari'!$B:$B, B${rowNum})`;
-      const amountFormula = `SUMIF('Pul o''tkazmalari'!$B:$B, B${rowNum}, 'Pul o''tkazmalari'!$F:$F)`;
+      const amountFormula = `SUMIFS('Pul o''tkazmalari'!$F:$F, 'Pul o''tkazmalari'!$B:$B, B${rowNum}, 'Pul o''tkazmalari'!$G:$G, "UZS")`;
       const suspectsFormula = `COUNTIF('Gumonlanuvchilar'!$B:$B, B${rowNum})`;
 
       const dynamicRowData: Record<string, string> = {};
@@ -248,38 +251,41 @@ export class ApplicationsExcelService {
           ? `№ ${app.decision_number}`
           : '—';
 
-      const row = ws.addRow({
-        idx: index + 1,
-        app_num: appNumber,
-        date: dateStr,
-        source: app.source?.name || '—',
-        status: statusName,
-        district: app.district?.name || citizen?.district?.name || '—',
-        mahalla: citizen?.mahalla?.name || '—',
-        crime: app.crime ? app.crime.article || app.crime.title : '—',
-        crime_method: app.crime_method?.name || '—',
-        citizen_name: citizenName,
-        gender: citizen?.gender === 'female' ? 'Ayol' : citizen?.gender === 'male' ? 'Erkak' : '—',
-        phone: citizen?.phone_number || '—',
-        passport: citizen?.passport || '—',
-        pinfl: citizen?.pinfl || '—',
-        address: citizen?.address || '—',
-        occ_category: citizen?.occupation_category?.name || '—',
-        occupation: citizen?.occupation?.name || '—',
-        workplace: workplaceStr,
-        work_position: workPositionStr,
-        transfers_count: { formula: transfersFormula },
-        total_amount: { formula: amountFormula },
-        suspects_count: { formula: suspectsFormula },
-        relations: relationsStr,
-        department_service: deptServiceStr,
-        sla_deadline: slaDeadlineStr,
-        decision: decisionStr,
-        officer: officerStr,
-        description: app.description || '—',
-        notes: app.officer_notes || '—',
-        ...dynamicRowData,
-      });
+      const row = ws.addRow(
+        sanitizeExcelRow({
+          idx: index + 1,
+          app_num: appNumber,
+          date: dateStr,
+          source: app.source?.name || '—',
+          status: statusName,
+          district: app.district?.name || citizen?.district?.name || '—',
+          mahalla: citizen?.mahalla?.name || '—',
+          crime: app.crime ? app.crime.article || app.crime.title : '—',
+          crime_method: app.crime_method?.name || '—',
+          citizen_name: citizenName,
+          gender:
+            citizen?.gender === 'female' ? 'Ayol' : citizen?.gender === 'male' ? 'Erkak' : '—',
+          phone: citizen?.phone_number || '—',
+          passport: citizen?.passport || '—',
+          pinfl: citizen?.pinfl || '—',
+          address: citizen?.address || '—',
+          occ_category: citizen?.occupation_category?.name || '—',
+          occupation: citizen?.occupation?.name || '—',
+          workplace: workplaceStr,
+          work_position: workPositionStr,
+          transfers_count: { formula: transfersFormula },
+          total_amount: { formula: amountFormula },
+          suspects_count: { formula: suspectsFormula },
+          relations: relationsStr,
+          department_service: deptServiceStr,
+          sla_deadline: slaDeadlineStr,
+          decision: decisionStr,
+          officer: officerStr,
+          description: app.description || '—',
+          notes: app.officer_notes || '—',
+          ...dynamicRowData,
+        }),
+      );
 
       styleExcelDataRow(row, ['address', 'description', 'notes']);
 
@@ -397,22 +403,24 @@ export class ApplicationsExcelService {
           t.destination_label ||
           '—';
 
-        const row = ws.addRow({
-          idx: transferIndex,
-          app_num: appNumber,
-          citizen_name: citizenName,
-          sender_card: senderCard,
-          sender_bank: senderBank,
-          amount: Number(t.amount) || 0,
-          currency: t.currency || 'UZS',
-          provider: t.payment_provider?.name || t.provider_name || '—',
-          transfer_date: formatTransferDateTime(t.transfer_date, t.transfer_time, t.created_at),
-          dest_type: formatDestinationType(t.destination_type),
-          receiver_card: receiverCard,
-          receiver_bank: receiverBank,
-          receiver_name: receiverName,
-          status: formatTransferStatus(t.status),
-        });
+        const row = ws.addRow(
+          sanitizeExcelRow({
+            idx: transferIndex,
+            app_num: appNumber,
+            citizen_name: citizenName,
+            sender_card: senderCard,
+            sender_bank: senderBank,
+            amount: Number(t.amount) || 0,
+            currency: t.currency || 'UZS',
+            provider: t.payment_provider?.name || t.provider_name || '—',
+            transfer_date: formatTransferDateTime(t.transfer_date, t.transfer_time, t.created_at),
+            dest_type: formatDestinationType(t.destination_type),
+            receiver_card: receiverCard,
+            receiver_bank: receiverBank,
+            receiver_name: receiverName,
+            status: formatTransferStatus(t.status),
+          }),
+        );
 
         styleExcelDataRow(row);
 
@@ -491,15 +499,17 @@ export class ApplicationsExcelService {
 
       for (const item of suspectItems) {
         suspectIndex++;
-        const row = ws.addRow({
-          idx: suspectIndex,
-          app_num: appNumber,
-          crime: crimeStr,
-          field_name: item.label,
-          field_value: item.value,
-          note: item.note || '—',
-          created_at: dateStr,
-        });
+        const row = ws.addRow(
+          sanitizeExcelRow({
+            idx: suspectIndex,
+            app_num: appNumber,
+            crime: crimeStr,
+            field_name: item.label,
+            field_value: item.value,
+            note: item.note || '—',
+            created_at: dateStr,
+          }),
+        );
 
         styleExcelDataRow(row, ['note']);
 
@@ -646,10 +656,10 @@ export class ApplicationsExcelService {
 
     statusList.forEach((statusName) => {
       const r = ws.getRow(curRow);
-      r.getCell(2).value = statusName;
+      r.getCell(2).value = sanitizeExcelValue(statusName);
       r.getCell(2).font = { name: 'Calibri', size: 10, color: { argb: '000000' } };
 
-      const safeStatus = statusName.replace(/"/g, '""');
+      const safeStatus = escapeExcelCriteriaLiteral(statusName);
       const valCell = r.getCell(3);
       valCell.value = {
         formula: `COUNTIF('Arizalar ro''yxati'!E2:E${maxAppRow}, "${safeStatus}")`,
@@ -723,10 +733,10 @@ export class ApplicationsExcelService {
 
     districtsList.forEach((districtName) => {
       const r = ws.getRow(curRow);
-      r.getCell(2).value = districtName;
+      r.getCell(2).value = sanitizeExcelValue(districtName);
       r.getCell(2).font = { name: 'Calibri', size: 10, color: { argb: '000000' } };
 
-      const safeDistrict = districtName.replace(/"/g, '""');
+      const safeDistrict = escapeExcelCriteriaLiteral(districtName);
       const valCell = r.getCell(3);
       valCell.value = {
         formula: `COUNTIF('Arizalar ro''yxati'!F2:F${maxAppRow}, "${safeDistrict}")`,

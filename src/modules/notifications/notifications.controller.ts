@@ -17,7 +17,13 @@ import { Role } from '../../common/enums/role.enum';
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
 import { RolesGuard } from '../../common/guards/roles.guard';
 import type { JwtAccessPayload } from '../../common/types/jwt-payload.interface';
-import { type NotificationPrefs, NotificationsService } from './notifications.service';
+import {
+  ConfigureTelegramBotDto,
+  ToggleTelegramBotDto,
+  UpdateAdminRulesDto,
+  UpdateNotificationPrefsDto,
+} from './dto/notifications.dto';
+import { NotificationsService } from './notifications.service';
 import { SlaQueueService } from './sla-queue.service';
 import { TelegramBotService } from './telegram-bot.service';
 
@@ -61,7 +67,7 @@ export class NotificationsController {
   @Patch('preferences')
   updatePreferences(
     @CurrentUser() user: JwtAccessPayload,
-    @Body() body: Partial<NotificationPrefs>,
+    @Body() body: UpdateNotificationPrefsDto,
   ) {
     return this.notificationsService.updateMyPreferences(user.sub, body);
   }
@@ -95,19 +101,7 @@ export class NotificationsController {
 
   @Patch('admin/settings')
   @Roles(Role.SUPER_ADMIN)
-  async updateAdminRules(
-    @Body()
-    body: {
-      high_value_threshold?: number;
-      sla_days?: number;
-      sla_warn_hours_before?: number;
-      sla_urgent_hours_before?: number;
-      sla_escalate_hours_after?: number;
-      sla_max_extension_days?: number;
-      daily_digest_enabled?: boolean;
-      daily_digest_hour?: number;
-    },
-  ) {
+  async updateAdminRules(@Body() body: UpdateAdminRulesDto) {
     const updated = await this.notificationsService.updateAdminRules(body);
     if (
       body.sla_warn_hours_before !== undefined ||
@@ -128,13 +122,13 @@ export class NotificationsController {
 
   @Post('admin/telegram/configure')
   @Roles(Role.SUPER_ADMIN)
-  configureTelegramBot(@Body() body: { token: string; enabled?: boolean }) {
+  configureTelegramBot(@Body() body: ConfigureTelegramBotDto) {
     return this.telegramBotService.configureBot(body.token, body.enabled ?? true);
   }
 
   @Post('admin/telegram/toggle')
   @Roles(Role.SUPER_ADMIN)
-  toggleTelegramBot(@Body() body: { enabled: boolean }) {
+  toggleTelegramBot(@Body() body: ToggleTelegramBotDto) {
     return this.telegramBotService.toggleBot(Boolean(body.enabled));
   }
 

@@ -9,7 +9,12 @@ import JSZip from 'jszip';
 import * as path from 'path';
 import { Repository } from 'typeorm';
 
+import { Role } from '../../../common/enums/role.enum';
 import type { JwtAccessPayload } from '../../../common/types/jwt-payload.interface';
+import {
+  assertDistrictAccess,
+  getAllowedDistrictIds,
+} from '../../../common/utils/district-scope.util';
 import { DetectedCrime } from '../../detected-crimes/entities/detected-crime.entity';
 import { MinioService } from '../../minio/minio.service';
 import { User } from '../../users/user.entity';
@@ -22,8 +27,8 @@ import { DocxEngineService } from './templates/docx-engine.service';
 import { buildTemplateContext, TemplateOfficerUser } from './templates/template-data.builder';
 import { OFFICIAL_TEMPLATES } from './templates/templates.config';
 import {
-  buildSafeOnlyOfficeInternalUrl,
   createSignedFileAccessQuery,
+  fetchSafeOnlyOfficeFile,
   getOnlyOfficeJwtSecret,
   signOnlyOfficeJwt,
   verifyOnlyOfficeCallbackRequest,
@@ -67,6 +72,28 @@ export class DocumentsService {
     private readonly docxEngine: DocxEngineService,
   ) {}
 
+  private async resolveActorUserId(user?: DocumentActor | null): Promise<string | null> {
+    if (!user) return null;
+    if (user.sub) {
+      const dbUser = await this.usersRepository.findOne({ where: { auth_id: user.sub } });
+      if (dbUser) return dbUser.id;
+    }
+    return user.id || null;
+  }
+
+  private async assertActorDistrictAccess(
+    targetDistrictId: string | null | undefined,
+    user?: DocumentActor | null,
+  ): Promise<void> {
+    if (!user?.sub || user.role !== Role.DISTRICT_OFFICER) return;
+    const allowed = await getAllowedDistrictIds(this.usersRepository, user as JwtAccessPayload);
+    assertDistrictAccess(
+      allowed,
+      targetDistrictId,
+      "Siz faqat o'zingizga biriktirilgan tuman(lar) hujjatlariga kira olasiz",
+    );
+  }
+
   /**
    * Ariza uchun yangi bo'sh rasmiy Word blank yaratish
    */
@@ -76,7 +103,7 @@ export class DocumentsService {
     title?: string,
   ): Promise<ApplicationDocument> {
     const application = await this.applicationsRepository.findOne({
-      where: { id: applicationId },
+      where: { id: applicationId, is_deleted: false },
       relations: {
         citizen: true,
         district: true,
@@ -87,6 +114,9 @@ export class DocumentsService {
     if (!application) {
       throw new NotFoundException(`Ariza (ID: ${applicationId}) topilmadi`);
     }
+
+    await this.assertActorDistrictAccess(application.district_id, user);
+    const createdById = await this.resolveActorUserId(user);
 
     const appNumber = application.application_number || 'AR-YANGI';
 
@@ -138,7 +168,7 @@ export class DocumentsService {
       size: buffer.length,
       version: 1,
       doc_key: docKey,
-      created_by_id: user?.id || null,
+      created_by_id: createdById,
     });
 
     return this.documentsRepository.save(appDoc);
@@ -154,12 +184,15 @@ export class DocumentsService {
     title?: string,
   ): Promise<ApplicationDocument> {
     const application = await this.applicationsRepository.findOne({
-      where: { id: applicationId },
+      where: { id: applicationId, is_deleted: false },
     });
 
     if (!application) {
       throw new NotFoundException(`Ariza (ID: ${applicationId}) topilmadi`);
     }
+
+    await this.assertActorDistrictAccess(application.district_id, user);
+    const createdById = await this.resolveActorUserId(user);
 
     if (!file) {
       throw new BadRequestException('Fayl yuborilmadi');
@@ -197,7 +230,7 @@ export class DocumentsService {
       size: file.size,
       version: 1,
       doc_key: docKey,
-      created_by_id: user?.id || null,
+      created_by_id: createdById,
     });
 
     return this.documentsRepository.save(appDoc);
@@ -206,7 +239,21 @@ export class DocumentsService {
   /**
    * Arizaga tegishli hujjatlar ro'yxati
    */
-  async getDocumentsByApplication(applicationId: string): Promise<ApplicationDocument[]> {
+  async getDocumentsByApplication(
+    applicationId: string,
+    user?: DocumentActor | null,
+  ): Promise<ApplicationDocument[]> {
+    if (user?.role === Role.DISTRICT_OFFICER) {
+      const app = await this.applicationsRepository.findOne({
+        where: { id: applicationId, is_deleted: false },
+        select: { id: true, district_id: true },
+      });
+      if (!app) {
+        throw new NotFoundException(`Ariza (ID: ${applicationId}) topilmadi`);
+      }
+      await this.assertActorDistrictAccess(app.district_id, user);
+    }
+
     return this.documentsRepository.find({
       where: { application_id: applicationId },
       order: { created_at: 'DESC' },
@@ -227,6 +274,8 @@ export class DocumentsService {
     if (!crime) {
       throw new NotFoundException(`Aniqlangan jinoyat (ID: ${detectedCrimeId}) topilmadi`);
     }
+    await this.assertActorDistrictAccess(crime.district_id, user);
+    const createdById = await this.resolveActorUserId(user);
 
     const code = crime.case_number || 'AJ-YANGI';
     const doc = new Document({
@@ -266,7 +315,7 @@ export class DocumentsService {
       size: buffer.length,
       version: 1,
       doc_key: docKey,
-      created_by_id: user?.id || null,
+      created_by_id: createdById,
     });
 
     return this.documentsRepository.save(entity);
@@ -287,6 +336,8 @@ export class DocumentsService {
     if (!crime) {
       throw new NotFoundException(`Aniqlangan jinoyat (ID: ${detectedCrimeId}) topilmadi`);
     }
+    await this.assertActorDistrictAccess(crime.district_id, user);
+    const createdById = await this.resolveActorUserId(user);
     if (!file) {
       throw new BadRequestException('Fayl yuborilmadi');
     }
@@ -322,7 +373,7 @@ export class DocumentsService {
       size: file.size,
       version: 1,
       doc_key: docKey,
-      created_by_id: user?.id || null,
+      created_by_id: createdById,
     });
 
     return this.documentsRepository.save(entity);
@@ -331,7 +382,21 @@ export class DocumentsService {
   /**
    * Aniqlangan jinoyatga tegishli Word hujjatlar ro'yxati
    */
-  async getDocumentsByDetectedCrime(detectedCrimeId: string): Promise<ApplicationDocument[]> {
+  async getDocumentsByDetectedCrime(
+    detectedCrimeId: string,
+    user?: DocumentActor | null,
+  ): Promise<ApplicationDocument[]> {
+    if (user?.role === Role.DISTRICT_OFFICER) {
+      const crime = await this.detectedCrimeRepo.findOne({
+        where: { id: detectedCrimeId, is_deleted: false },
+        select: { id: true, district_id: true },
+      });
+      if (!crime) {
+        throw new NotFoundException(`Aniqlangan jinoyat (ID: ${detectedCrimeId}) topilmadi`);
+      }
+      await this.assertActorDistrictAccess(crime.district_id, user);
+    }
+
     return this.documentsRepository.find({
       where: { detected_crime_id: detectedCrimeId },
       order: { created_at: 'DESC' },
@@ -341,11 +406,12 @@ export class DocumentsService {
   /**
    * Bitta hujjatni ID bo'yicha olish
    */
-  async getDocumentById(id: string): Promise<ApplicationDocument> {
+  async getDocumentById(id: string, user?: DocumentActor | null): Promise<ApplicationDocument> {
     const doc = await this.documentsRepository.findOne({
       where: { id },
       relations: {
         application: true,
+        detected_crime: true,
       },
     });
 
@@ -353,14 +419,19 @@ export class DocumentsService {
       throw new NotFoundException(`Hujjat (ID: ${id}) topilmadi`);
     }
 
+    if (user?.role === Role.DISTRICT_OFFICER) {
+      const targetDistrictId = doc.application?.district_id ?? doc.detected_crime?.district_id;
+      await this.assertActorDistrictAccess(targetDistrictId, user);
+    }
+
     return doc;
   }
 
   /**
-   * ONLYOFFICE uchun tahrirlash konfiguratsiyasini shakllantirish
+   * ONLYOFFICE uchun tahrirlash/ko'rish konfiguratsiyasini shakllantirish
    */
   async getDocumentEditorConfig(id: string, user?: DocumentActor | null) {
-    const doc = await this.getDocumentById(id);
+    const doc = await this.getDocumentById(id, user);
 
     // Docker tarmog'idagi ichki server URL
     const internalServerHost =
@@ -371,9 +442,29 @@ export class DocumentsService {
     const fileUrl = `http://${internalServerHost}/documents/${doc.id}/file?${signedQuery}`;
     const callbackUrl = `http://${internalServerHost}/documents/${doc.id}/callback`;
 
-    const userName = user
-      ? `${user.first_name || ''} ${user.last_name || ''}`.trim() || 'Xodim'
-      : 'Xodim';
+    const actorUser = user?.sub
+      ? await this.usersRepository.findOne({ where: { auth_id: user.sub } })
+      : null;
+
+    const userName = actorUser
+      ? `${actorUser.first_name || ''} ${actorUser.last_name || ''}`.trim() ||
+        user?.username ||
+        'Xodim'
+      : user
+        ? `${user.first_name || ''} ${user.last_name || ''}`.trim() || user.username || 'Xodim'
+        : 'Xodim';
+
+    const canEdit = Boolean(
+      user?.role &&
+      [
+        Role.SUPER_ADMIN,
+        Role.ADMIN,
+        Role.STAFF,
+        Role.DISTRICT_OFFICER,
+        Role.INSPECTOR,
+        Role.OPERATOR,
+      ].includes(user.role),
+    );
 
     // Har bir tahrirlash sessiyasiga xatosiz va toza key
     const docKey = doc.doc_key || `doc_${doc.id}_${new Date(doc.updated_at).getTime()}`;
@@ -389,36 +480,36 @@ export class DocumentsService {
             : `${doc.title}.${doc.file_type || 'docx'}`,
         url: fileUrl,
         permissions: {
-          comment: true,
+          comment: canEdit,
           copy: true,
           download: true,
-          edit: true,
-          fillForms: true,
-          modifyContentControl: true,
-          modifyFilter: true,
+          edit: canEdit,
+          fillForms: canEdit,
+          modifyContentControl: canEdit,
+          modifyFilter: canEdit,
           print: true,
-          review: true,
+          review: canEdit,
           chat: false,
         },
       },
       editorConfig: {
-        callbackUrl,
+        ...(canEdit ? { callbackUrl } : {}),
         user: {
-          id: user?.id ? String(user.id) : `user_${doc.id.slice(0, 8)}`,
+          id: String(actorUser?.id || user?.sub || `user_${doc.id.slice(0, 8)}`),
           name: userName,
         },
-        mode: 'edit',
+        mode: canEdit ? 'edit' : 'view',
         lang: 'ru', // ONLYOFFICE da 'uz' mavjud emasligi sababli 404 oldini olish
         coEditing: {
           mode: 'fast',
-          change: true,
+          change: canEdit,
         },
         customization: {
           uiTheme: 'theme-classic-light',
-          autosave: true,
-          forcesave: true,
+          autosave: canEdit,
+          forcesave: canEdit,
           chat: false,
-          comments: true,
+          comments: canEdit,
           help: false,
           toolbarNoTabs: false,
           compactHeader: false,
@@ -452,43 +543,34 @@ export class DocumentsService {
     req?: Request,
   ): Promise<{ error: number }> {
     const onlyOfficeSecret = getOnlyOfficeJwtSecret(this.configService);
+    // Xavfsizlik: faqat imzolangan JWT payload qiymatlariga ishonamiz (unsigned body fallback yo'q!)
     const verifiedPayload = req
       ? verifyOnlyOfficeCallbackRequest(req, body, onlyOfficeSecret)
       : body;
 
-    const status = verifiedPayload?.status ?? body?.status;
+    const status = verifiedPayload?.status;
     this.logger.log(`ONLYOFFICE callback keldi (Doc ID: ${id}, Status: ${String(status)})`);
 
     // 2 = Document is ready for saving, 6 = Document being edited, but force-saved
     if (status === 2 || status === 6) {
-      const downloadUrl =
-        typeof verifiedPayload?.url === 'string'
-          ? verifiedPayload.url
-          : typeof body?.url === 'string'
-            ? body.url
-            : '';
+      const downloadUrl = typeof verifiedPayload?.url === 'string' ? verifiedPayload.url : '';
+      const callbackKey = typeof verifiedPayload?.key === 'string' ? verifiedPayload.key : '';
       if (!downloadUrl) {
         this.logger.warn(`Callbackda status ${status} bo'lsa-da yuklab olish URL si yo'q`);
         return { error: 0 };
       }
 
       try {
-        // SSRF himoyasi: faqat ichki ishonchli ONLYOFFICE konteyneridan yuklab olamiz
-        const internalBaseUrl =
-          this.configService.get<string>('ONLYOFFICE_INTERNAL_URL') || 'http://uvd_app_onlyoffice';
-        const targetUrl = buildSafeOnlyOfficeInternalUrl(downloadUrl, internalBaseUrl);
-
-        this.logger.log(`ONLYOFFICE ichki yuklab olish URL: ${targetUrl}`);
-
-        const response = await fetch(targetUrl);
-        if (!response.ok) {
-          throw new Error(`Faylni yuklab olishda xatolik: HTTP ${response.status}`);
+        const doc = await this.getDocumentById(id);
+        if (doc.doc_key && callbackKey && callbackKey !== doc.doc_key) {
+          this.logger.warn(`ONLYOFFICE callback key mos kelmadi (Doc ID: ${id})`);
+          return { error: 1 };
         }
 
-        const arrayBuffer = await response.arrayBuffer();
-        const buffer = Buffer.from(arrayBuffer);
-
-        const doc = await this.getDocumentById(id);
+        // SSRF va hajm himoyasi: faqat ichki ishonchli ONLYOFFICE konteyneridan yuklab olamiz
+        const internalBaseUrl =
+          this.configService.get<string>('ONLYOFFICE_INTERNAL_URL') || 'http://uvd_app_onlyoffice';
+        const buffer = await fetchSafeOnlyOfficeFile(downloadUrl, internalBaseUrl);
 
         // MinIO ga yangilangan Word faylini yozish
         await this.minioService.uploadBuffer(
@@ -519,8 +601,8 @@ export class DocumentsService {
   /**
    * Hujjat faylini oqim (stream) sifatida berish (ONLYOFFICE yoki yuklab olish uchun)
    */
-  async getFileStream(id: string) {
-    const doc = await this.getDocumentById(id);
+  async getFileStream(id: string, user?: DocumentActor | null) {
+    const doc = await this.getDocumentById(id, user);
     const stream = await this.minioService.getFileStream(doc.file_key);
     return {
       stream,
@@ -531,8 +613,8 @@ export class DocumentsService {
   /**
    * Hujjatni o'chirish
    */
-  async deleteDocument(id: string): Promise<boolean> {
-    const doc = await this.getDocumentById(id);
+  async deleteDocument(id: string, user?: DocumentActor | null): Promise<boolean> {
+    const doc = await this.getDocumentById(id, user);
     try {
       await this.minioService.deleteFile(doc.file_key);
     } catch (e) {
@@ -655,6 +737,8 @@ export class DocumentsService {
     if (!application) {
       throw new NotFoundException(`Ariza (ID: ${applicationId}) topilmadi`);
     }
+
+    await this.assertActorDistrictAccess(application.district_id, user);
 
     if (templateId === 'blank') {
       return {
@@ -790,20 +874,24 @@ export class DocumentsService {
       criminalRecord: adaptToScript('sudlanmaganman', script),
       workplace: adaptToScript('vaqtincha ishsiz', script),
       districtName: adaptToScript(
-        application.district?.name || citizen?.district?.name || 'Qarshi tumani',
+        application.district?.name || citizen?.district?.name || '',
         script,
       ),
       mahallaName: adaptToScript(citizen?.mahalla?.name || '', script),
       cardNumber: card?.card_number || '',
       cardHolder: adaptToScript(card?.full_name || citizenFullNameRaw, script),
-      cardBank: adaptToScript(card?.bank?.name || 'Aloqabank ATB', script),
+      cardBank: adaptToScript(card?.bank?.name || '', script),
       cardOwnerRelation: adaptToScript(
-        isOwnCard ? 'o‘zimga tegishli bo‘lgan' : `${card?.full_name || 'onam'}ga tegishli bo‘lgan`,
+        isOwnCard
+          ? 'o‘zimga tegishli bo‘lgan'
+          : card?.full_name
+            ? `${card.full_name}ga tegishli bo‘lgan`
+            : '',
         script,
       ),
       fraudCardNumber: fraudCard?.card_number || '',
-      fraudCardHolder: adaptToScript(fraudCard?.full_name || 'Tolipov Ziyodbek', script),
-      fraudCardBank: adaptToScript(fraudCard?.bank?.name || 'Trastbank ATB', script),
+      fraudCardHolder: adaptToScript(fraudCard?.full_name || '', script),
+      fraudCardBank: adaptToScript(fraudCard?.bank?.name || '', script),
       victimCardNumber: card?.card_number || '',
       victimCardHolder: adaptToScript(card?.full_name || citizenFullNameRaw, script),
       stolenAmount: amountFormatted,
@@ -813,30 +901,19 @@ export class DocumentsService {
         'Kiberjinoyatlarga qarshi kurashish bo‘linmasi tezkor vakili',
         script,
       ),
-      prosecutorInfo: adaptToScript(
-        templateId === 'sanksiya-firibgarlik'
-          ? 'Qarshi tumani prokurori adliya katta maslahatchisi T.J.Murodov'
-          : 'Qarshi shahar prokurori adliya maslahatchisi U.N.Elmurodov',
-        script,
-      ),
-      phoneModel: 'Iphone 16 Pro max',
-      telegramUsagePeriod: adaptToScript('taxminan 3-4 yildan buyon', script),
-      compromiseDate: adaptToScript('01 iyul', script),
-      friendInfo: adaptToScript('Samarqand viloyatida yashovchi Lochin ismli tanishim', script),
-      fakeAppName: adaptToScript('“Road 24” ilovasi', script),
-      deductionService: adaptToScript('“LUMO 5”', script),
-      deductionTime: adaptToScript('soat 23:14 da', script),
-      smsSources: adaptToScript('“sinbad”, “Korzinka”, “Mobiuz_App” va “MyTaxi”', script),
-      startTime: '10:00',
-      endTime: '10:45',
-      witness1: adaptToScript(
-        'Qarshi shahri, Mustaqillik MFY 12-uyda yashovchi fuqaro Aliyev Vali',
-        script,
-      ),
-      witness2: adaptToScript(
-        'Qarshi shahri, Nasaf MFY 5-uyda yashovchi fuqaro Karimov Salim',
-        script,
-      ),
+      prosecutorInfo: '',
+      phoneModel: '',
+      telegramUsagePeriod: '',
+      compromiseDate: '',
+      friendInfo: '',
+      fakeAppName: '',
+      deductionService: '',
+      deductionTime: '',
+      smsSources: '',
+      startTime: '',
+      endTime: '',
+      witness1: '',
+      witness2: '',
       inspectionDescription: adaptToScript(
         `Fuqaro ${citizenFullNameRaw || 'jabrlanuvchi'}ga tegishli bo‘lgan telefon apparati va bank kartasi xolislar ishtirokida ko‘zdan kechirildi hamda qonuniy tartibda olindi.`,
         script,
@@ -1025,6 +1102,8 @@ export class DocumentsService {
       throw new NotFoundException(`Ariza (ID: ${applicationId}) topilmadi`);
     }
 
+    await this.assertActorDistrictAccess(application.district_id, user);
+
     const preview = await this.getTemplatePreview(applicationId, dto.templateId, script, user);
     // Foydalanuvchi kiritgan customData mavjud bo'lsa, avtomatik to'ldirilgan ma'lumotlar bilan birlashtiramiz
     const finalData: Record<string, string> = {};
@@ -1061,10 +1140,10 @@ export class DocumentsService {
     zip.file('word/document.xml', docXml);
 
     // Agar header yoki footer mavjud bo'lsa, ularni ham yangilaymiz
-    const headerFiles = Object.keys(zip.files).filter(
-      (k) => k.startsWith('word/header') && k.endsWith('.xml'),
+    const headerFooterFiles = Object.keys(zip.files).filter(
+      (k) => (k.startsWith('word/header') || k.startsWith('word/footer')) && k.endsWith('.xml'),
     );
-    for (const hf of headerFiles) {
+    for (const hf of headerFooterFiles) {
       let hXml = await zip.file(hf)?.async('text');
       if (hXml) {
         hXml = hXml.replace(/<w:p(?: [^>]*)?>[\s\S]*?<\/w:p>/g, (pXml) => {

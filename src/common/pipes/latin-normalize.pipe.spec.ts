@@ -44,9 +44,13 @@ describe('LatinNormalizePipe', () => {
     expect(output.page).toBe('1');
   });
 
-  it('preserves excluded fields (passwords, tokens, title_krill, emails, URLs, UUIDs)', () => {
+  it('preserves excluded fields (passwords, tokens, file keys, title_krill, emails, URLs, UUIDs)', () => {
     const input = {
       password: 'Пароль123!',
+      current_password: 'ЭскиПароль1!',
+      new_password: 'ЯнгиПароль2!',
+      key: 'attachments/2026_Ариза.pdf',
+      bot_token: '123456:ABC-DEF_Кирилл',
       username: 'админ_тест',
       title_krill: 'Тушунтириш хати',
       script: 'krill',
@@ -57,6 +61,9 @@ describe('LatinNormalizePipe', () => {
 
     const output = pipe.transform(input, { type: 'body' }) as Record<string, unknown>;
     expect(output).toEqual(input);
+
+    const queryKey = pipe.transform('attachments/Ариза.pdf', { type: 'query', data: 'key' });
+    expect(queryKey).toBe('attachments/Ариза.pdf');
   });
 
   it('skips custom decorator metadata', () => {

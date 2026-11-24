@@ -31,9 +31,20 @@ export class JwtAuthGuard implements CanActivate {
         const payload = await this.jwtService.verifyAsync<JwtAccessPayload>(accessToken, {
           secret: this.authService.getAccessSecret(),
         });
+        const revoked = await this.authService.isTokenRevoked(
+          payload.sub,
+          payload.issued_at_ms,
+          payload.iat,
+        );
+        if (revoked) {
+          throw new UnauthorizedException('Sessiya bekor qilingan, iltimos qaytadan kiring');
+        }
         request.user = payload;
         return true;
-      } catch {
+      } catch (err) {
+        if (err instanceof UnauthorizedException) {
+          throw err;
+        }
         // Access token yaroqsiz yoki muddati o'tgan bo'lsa, cookie dagi refresh_token ni tekshiramiz
       }
     }
@@ -55,6 +66,7 @@ export class JwtAuthGuard implements CanActivate {
         sub: auth.id,
         username: auth.username,
         role: auth.role,
+        is_root: Boolean(auth.is_root),
       };
 
       response.setHeader('x-new-access-token', newAccessToken);

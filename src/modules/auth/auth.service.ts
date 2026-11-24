@@ -27,6 +27,14 @@ import { UpdateProfileDto } from './dto/update-profile.dto';
 @Injectable()
 export class AuthService implements OnApplicationBootstrap {
   private readonly logger = new Logger(AuthService.name);
+  private readonly refreshInFlight = new Map<
+    string,
+    Promise<{ accessToken: string; refreshToken: string; auth: Auth }>
+  >();
+  private readonly recentRefreshes = new Map<
+    string,
+    { accessToken: string; refreshToken: string; auth: Auth; expiresAt: number }
+  >();
 
   constructor(
     @InjectRepository(Auth)
@@ -191,18 +199,77 @@ export class AuthService implements OnApplicationBootstrap {
     return createHash('sha256').update(token).digest('hex');
   }
 
-  // 15 minut (sekundlarda)
-  private get accessExpiresIn(): number {
-    return 15 * 60;
+  private parseDurationSeconds(raw: string | undefined, fallbackSeconds: number): number {
+    if (!raw) return fallbackSeconds;
+    const trimmed = raw.trim();
+    const match = /^(\d+)\s*([smhd])?$/i.exec(trimmed);
+    if (!match) return fallbackSeconds;
+    const amount = Number(match[1]);
+    if (!Number.isFinite(amount) || amount <= 0) return fallbackSeconds;
+    const unit = (match[2] || 's').toLowerCase();
+    const multiplier = unit === 'd' ? 86400 : unit === 'h' ? 3600 : unit === 'm' ? 60 : 1;
+    return amount * multiplier;
   }
 
-  // 7 kun (sekundlarda)
+  // Default 15 minut (sekundlarda) — JWT_ACCESS_EXPIRES_IN env dan o'qiladi
+  private get accessExpiresIn(): number {
+    return this.parseDurationSeconds(
+      this.configService.get<string>('JWT_ACCESS_EXPIRES_IN'),
+      15 * 60,
+    );
+  }
+
+  // Default 7 kun (sekundlarda) — JWT_REFRESH_EXPIRES_IN env dan o'qiladi
   private get refreshExpiresIn(): number {
-    return 7 * 24 * 60 * 60;
+    return this.parseDurationSeconds(
+      this.configService.get<string>('JWT_REFRESH_EXPIRES_IN'),
+      7 * 24 * 60 * 60,
+    );
   }
 
   private getProfileCacheKey(authId: string): string {
     return `user:profile:${authId}`;
+  }
+
+  private getRevokedBeforeKey(authId: string): string {
+    return `auth:revoked_before:${authId}`;
+  }
+
+  private clearRecentRefreshesForUser(authId: string): void {
+    for (const [key, entry] of this.recentRefreshes.entries()) {
+      if (entry.auth.id === authId || entry.expiresAt <= Date.now()) {
+        this.recentRefreshes.delete(key);
+      }
+    }
+  }
+
+  async invalidateProfileCache(authId: string): Promise<void> {
+    await this.redisService.del(this.getProfileCacheKey(authId));
+  }
+
+  async revokeUserTokens(authId: string): Promise<void> {
+    const nowMs = Date.now();
+    this.clearRecentRefreshesForUser(authId);
+    await this.redisService.set(
+      this.getRevokedBeforeKey(authId),
+      String(nowMs),
+      this.accessExpiresIn + 60,
+    );
+    await this.invalidateProfileCache(authId);
+  }
+
+  async isTokenRevoked(authId: string, issuedAtMs?: number, iatSec?: number): Promise<boolean> {
+    const rawRevoked = await this.redisService.get(this.getRevokedBeforeKey(authId));
+    if (!rawRevoked) return false;
+    const revokedBeforeMs = Number(rawRevoked);
+    if (!Number.isFinite(revokedBeforeMs)) return false;
+    const tokenIssuedMs =
+      typeof issuedAtMs === 'number' && Number.isFinite(issuedAtMs)
+        ? issuedAtMs
+        : typeof iatSec === 'number' && Number.isFinite(iatSec)
+          ? iatSec * 1000
+          : 0;
+    return tokenIssuedMs <= revokedBeforeMs;
   }
 
   async validateUser(dto: LoginDto): Promise<Auth> {
@@ -232,6 +299,7 @@ export class AuthService implements OnApplicationBootstrap {
       username: auth.username,
       role: auth.role,
       is_root: Boolean(auth.is_root),
+      issued_at_ms: Date.now(),
     };
 
     const refreshPayload: JwtRefreshPayload = {
@@ -277,14 +345,12 @@ export class AuthService implements OnApplicationBootstrap {
   }
 
   setRefreshTokenCookie(res: Response, refreshToken: string): void {
-    const sevenDaysInMs = 7 * 24 * 60 * 60 * 1000;
-
     res.cookie('refresh_token', refreshToken, {
       httpOnly: true,
       secure: this.isCookieSecure,
       sameSite: 'lax',
       path: '/',
-      maxAge: sevenDaysInMs,
+      maxAge: this.refreshExpiresIn * 1000,
     });
   }
 
@@ -299,6 +365,75 @@ export class AuthService implements OnApplicationBootstrap {
     res.clearCookie('access_token', cookieOpts);
   }
 
+  /**
+   * Qat'iy faol sessiya tekshiruvi (muddati tugagan yoki bekor qilingan tokenlar rad etiladi).
+   * Fayl/hujjat yuklab olish kabi himoyalangan endpointlar uchun ishlatiladi.
+   */
+  async verifyActiveAccessRequest(req: Request): Promise<JwtAccessPayload | null> {
+    const reqUser = (req as { user?: JwtAccessPayload }).user;
+    if (reqUser?.sub) {
+      const revoked = await this.isTokenRevoked(reqUser.sub, reqUser.issued_at_ms, reqUser.iat);
+      return revoked ? null : reqUser;
+    }
+
+    const authHeader = req.headers.authorization;
+    const cookies = req.cookies as Record<string, string> | undefined;
+    const accessToken =
+      authHeader && authHeader.startsWith('Bearer ')
+        ? authHeader.substring(7)
+        : cookies?.['access_token'];
+
+    if (accessToken) {
+      try {
+        const payload = await this.jwtService.verifyAsync<JwtAccessPayload>(accessToken, {
+          secret: this.accessSecret,
+        });
+        if (payload?.sub) {
+          const revoked = await this.isTokenRevoked(payload.sub, payload.issued_at_ms, payload.iat);
+          if (!revoked) {
+            return payload;
+          }
+        }
+      } catch {
+        // Muddati o'tgan yoki yaroqsiz access token
+      }
+    }
+
+    const refreshToken = cookies?.['refresh_token'];
+    if (refreshToken) {
+      try {
+        const payload = await this.jwtService.verifyAsync<JwtRefreshPayload>(refreshToken, {
+          secret: this.refreshSecret,
+        });
+        if (payload?.sub) {
+          const auth = await this.authRepository.findOne({ where: { id: payload.sub } });
+          if (auth && auth.hashed_refresh_token) {
+            const isMatch = await bcrypt.compare(
+              this.digestTokenForBcrypt(refreshToken),
+              auth.hashed_refresh_token,
+            );
+            if (isMatch) {
+              return {
+                sub: auth.id,
+                username: auth.username,
+                role: auth.role,
+                is_root: Boolean(auth.is_root),
+              };
+            }
+          }
+        }
+      } catch {
+        // Yaroqsiz refresh token
+      }
+    }
+
+    return null;
+  }
+
+  /**
+   * Faqat /auth/logout uchun: muddati tugagan access tokendan ham authId ni aniqlab,
+   * bazadagi refresh tokenni tozalash imkonini beradi.
+   */
   async resolveAuthIdFromRequest(req: Request): Promise<string | null> {
     const reqUser = (req as { user?: Partial<JwtAccessPayload> }).user;
     if (reqUser?.sub) {
@@ -416,42 +551,81 @@ export class AuthService implements OnApplicationBootstrap {
       throw new UnauthorizedException('Sessiya muddati tugagan, iltimos qaytadan kiring');
     }
 
-    let payload: JwtRefreshPayload;
-    try {
-      payload = await this.jwtService.verifyAsync<JwtRefreshPayload>(refreshToken, {
-        secret: this.refreshSecret,
+    const tokenDigest = this.digestTokenForBcrypt(refreshToken);
+
+    // Parallel so'rovlar bir vaqtda muddati o'tgan access token bilan kelganda
+    // refresh rotatsiya poygasini (race condition) oldini olish uchun 5 soniyalik grace kesh
+    const now = Date.now();
+    for (const [k, entry] of this.recentRefreshes.entries()) {
+      if (entry.expiresAt <= now) {
+        this.recentRefreshes.delete(k);
+      }
+    }
+
+    const cached = this.recentRefreshes.get(tokenDigest);
+    if (cached && cached.expiresAt > now) {
+      if (res) {
+        this.setAccessTokenCookie(res, cached.accessToken);
+        this.setRefreshTokenCookie(res, cached.refreshToken);
+        res.setHeader('x-new-access-token', cached.accessToken);
+      }
+      return { accessToken: cached.accessToken, auth: cached.auth };
+    }
+
+    let pending = this.refreshInFlight.get(tokenDigest);
+    if (!pending) {
+      pending = (async () => {
+        let payload: JwtRefreshPayload;
+        try {
+          payload = await this.jwtService.verifyAsync<JwtRefreshPayload>(refreshToken, {
+            secret: this.refreshSecret,
+          });
+        } catch {
+          throw new UnauthorizedException('Sessiya muddati tugagan, iltimos qaytadan kiring');
+        }
+
+        const auth = await this.authRepository.findOne({
+          where: { id: payload.sub },
+          relations: { user: true },
+        });
+
+        if (!auth || !auth.hashed_refresh_token) {
+          throw new UnauthorizedException('Sessiya muddati tugagan, iltimos qaytadan kiring');
+        }
+
+        const isMatch = await bcrypt.compare(tokenDigest, auth.hashed_refresh_token);
+        if (!isMatch) {
+          throw new UnauthorizedException('Sessiya muddati tugagan, iltimos qaytadan kiring');
+        }
+
+        const { accessToken: newAccessToken, refreshToken: newRefreshToken } =
+          await this.generateTokens(auth);
+
+        this.recentRefreshes.set(tokenDigest, {
+          accessToken: newAccessToken,
+          refreshToken: newRefreshToken,
+          auth,
+          expiresAt: Date.now() + 5000,
+        });
+
+        return { accessToken: newAccessToken, refreshToken: newRefreshToken, auth };
+      })();
+
+      this.refreshInFlight.set(tokenDigest, pending);
+      void pending.finally(() => {
+        this.refreshInFlight.delete(tokenDigest);
       });
-    } catch {
-      throw new UnauthorizedException('Sessiya muddati tugagan, iltimos qaytadan kiring');
     }
 
-    const auth = await this.authRepository.findOne({
-      where: { id: payload.sub },
-      relations: { user: true },
-    });
-
-    if (!auth || !auth.hashed_refresh_token) {
-      throw new UnauthorizedException('Sessiya muddati tugagan, iltimos qaytadan kiring');
-    }
-
-    const isMatch = await bcrypt.compare(
-      this.digestTokenForBcrypt(refreshToken),
-      auth.hashed_refresh_token,
-    );
-    if (!isMatch) {
-      throw new UnauthorizedException('Sessiya muddati tugagan, iltimos qaytadan kiring');
-    }
-
-    const { accessToken: newAccessToken, refreshToken: newRefreshToken } =
-      await this.generateTokens(auth);
+    const result = await pending;
 
     if (res) {
-      this.setAccessTokenCookie(res, newAccessToken);
-      this.setRefreshTokenCookie(res, newRefreshToken);
-      res.setHeader('x-new-access-token', newAccessToken);
+      this.setAccessTokenCookie(res, result.accessToken);
+      this.setRefreshTokenCookie(res, result.refreshToken);
+      res.setHeader('x-new-access-token', result.accessToken);
     }
 
-    return { accessToken: newAccessToken, auth };
+    return { accessToken: result.accessToken, auth: result.auth };
   }
 
   async logout(authId: string | null, res: Response): Promise<{ message: string }> {
@@ -459,8 +633,8 @@ export class AuthService implements OnApplicationBootstrap {
       await this.authRepository.update(authId, {
         hashed_refresh_token: null,
       });
-      // Redisdagi foydalanuvchi keshini ham tozalaymiz
-      await this.redisService.del(this.getProfileCacheKey(authId));
+      // Aktiv access tokenlarni ham, Redis profil keshini ham darhol bekor qilamiz
+      await this.revokeUserTokens(authId);
     }
 
     this.clearAuthCookies(res);
@@ -548,6 +722,7 @@ export class AuthService implements OnApplicationBootstrap {
         password: hashedPassword,
         hashed_refresh_token: null,
       });
+      await this.revokeUserTokens(auth.id);
     }
 
     // 3. Profil ma'lumotlarini yangilash (ism, familiya, telefon)

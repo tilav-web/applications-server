@@ -24,7 +24,10 @@ import { Roles } from '../../../common/decorators/roles.decorator';
 import { Role } from '../../../common/enums/role.enum';
 import { JwtAuthGuard } from '../../../common/guards/jwt-auth.guard';
 import { RolesGuard } from '../../../common/guards/roles.guard';
-import type { AuthenticatedRequest } from '../../../common/types/jwt-payload.interface';
+import type {
+  AuthenticatedRequest,
+  JwtAccessPayload,
+} from '../../../common/types/jwt-payload.interface';
 import { AuthService } from '../../auth/auth.service';
 import { DocumentsService } from './documents.service';
 import { GenerateFromTemplateDto } from './dto/generate-from-template.dto';
@@ -136,8 +139,8 @@ export class DocumentsController {
    */
   @Get('applications/:id/documents')
   @UseGuards(JwtAuthGuard)
-  async getDocumentsByApplication(@Param('id') id: string) {
-    return this.documentsService.getDocumentsByApplication(id);
+  async getDocumentsByApplication(@Param('id') id: string, @Req() req: AuthenticatedRequest) {
+    return this.documentsService.getDocumentsByApplication(id, req.user);
   }
 
   /**
@@ -178,8 +181,8 @@ export class DocumentsController {
    */
   @Get('detected-crimes/:id/documents')
   @UseGuards(JwtAuthGuard)
-  async getDocumentsByDetectedCrime(@Param('id') id: string) {
-    return this.documentsService.getDocumentsByDetectedCrime(id);
+  async getDocumentsByDetectedCrime(@Param('id') id: string, @Req() req: AuthenticatedRequest) {
+    return this.documentsService.getDocumentsByDetectedCrime(id, req.user);
   }
 
   /**
@@ -187,8 +190,8 @@ export class DocumentsController {
    */
   @Get('documents/:id')
   @UseGuards(JwtAuthGuard)
-  async getDocument(@Param('id') id: string) {
-    return this.documentsService.getDocumentById(id);
+  async getDocument(@Param('id') id: string, @Req() req: AuthenticatedRequest) {
+    return this.documentsService.getDocumentById(id, req.user);
   }
 
   /**
@@ -201,7 +204,7 @@ export class DocumentsController {
   }
 
   /**
-   * Hujjat faylini yuklab olish yoki ko'rish (foydalanuvchi sessiyasi yoki imzolangan ONLYOFFICE linki orqali)
+   * Hujjat faylini yuklab olish yoki ko'rish (faol sessiya yoki imzolangan ONLYOFFICE linki orqali)
    */
   @Get('documents/:id/file')
   async downloadFile(
@@ -212,18 +215,25 @@ export class DocumentsController {
     @Res() res: Response,
   ) {
     const isSignedOnlyOffice = this.documentsService.verifySignedFileAccess(id, exp, sig);
+    let actor: JwtAccessPayload | null = null;
     if (!isSignedOnlyOffice) {
-      const authId = await this.authService.resolveAuthIdFromRequest(req);
-      if (!authId) {
+      actor = await this.authService.verifyActiveAccessRequest(req);
+      if (!actor) {
         throw new UnauthorizedException(
-          'Hujjatni yuklab olish uchun tizimga kirish talab qilinadi',
+          'Hujjatni yuklab olish uchun faol tizim sessiyasi talab qilinadi',
         );
       }
     }
 
-    const { stream, document } = await this.documentsService.getFileStream(id);
+    const { stream, document } = await this.documentsService.getFileStream(id, actor);
 
     const isDoc = document.file_type === 'doc';
+    const safeAsciiName =
+      document.file_name
+        .replace(/[\r\n"\\]/g, '_')
+        .replace(/[^\x20-\x7E]/g, '_')
+        .trim() || 'document.docx';
+
     res.setHeader('X-Content-Type-Options', 'nosniff');
     res.setHeader('Cache-Control', 'private, no-store');
     res.setHeader(
@@ -234,9 +244,16 @@ export class DocumentsController {
     );
     res.setHeader(
       'Content-Disposition',
-      `attachment; filename="${encodeURIComponent(document.file_name)}"`,
+      `attachment; filename="${safeAsciiName}"; filename*=UTF-8''${encodeURIComponent(document.file_name)}`,
     );
 
+    stream.on('error', () => {
+      if (!res.headersSent) {
+        res.status(404).end();
+      } else {
+        res.end();
+      }
+    });
     stream.pipe(res);
   }
 
@@ -259,7 +276,7 @@ export class DocumentsController {
   @Delete('documents/:id')
   @UseGuards(JwtAuthGuard, RolesGuard)
   @Roles(Role.SUPER_ADMIN, Role.ADMIN, Role.STAFF)
-  async deleteDocument(@Param('id') id: string) {
-    return this.documentsService.deleteDocument(id);
+  async deleteDocument(@Param('id') id: string, @Req() req: AuthenticatedRequest) {
+    return this.documentsService.deleteDocument(id, req.user);
   }
 }

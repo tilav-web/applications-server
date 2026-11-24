@@ -1,0 +1,899 @@
+import { BadRequestException, Injectable } from '@nestjs/common';
+import { InjectRepository } from '@nestjs/typeorm';
+import { type EntityManager, ILike, Repository } from 'typeorm';
+
+import { TransferCustomFieldType } from '../../common/enums/transfer-custom-field-type.enum';
+import { formatTitleCase, formatUzbekName } from '../../common/utils/name-formatter.util';
+import {
+  normalizeCardNumber,
+  normalizePassport,
+  normalizePinfl,
+  normalizeUzPhone,
+} from '../../common/utils/normalization.util';
+import { Application } from './application.entity';
+import { Citizen } from './citizens/citizen.entity';
+import { Crime } from './crimes/crime.entity';
+import { ApplicationCustomField } from './custom-fields/application-custom-field.entity';
+import { District } from './districts/district.entity';
+import type { CreateApplicationDto } from './dto/create-application.dto';
+import type { UpdateApplicationDto } from './dto/update-application.dto';
+import { Mahalla } from './mahallas/mahalla.entity';
+import { ApplicationStatus as ApplicationStatusEntity } from './statuses/application-status.entity';
+import { Bank } from './transfers/banks/bank.entity';
+import { Card } from './transfers/cards/card.entity';
+import { TransferCustomField } from './transfers/custom-fields/transfer-custom-field.entity';
+import { PaymentProvider } from './transfers/payment_providers/payment_provider.entity';
+import { Transfer } from './transfers/transfer.entity';
+import { WorkplacesService } from './workplaces/workplaces.service';
+
+export interface ResolvedApplicationModels {
+  citizen_id?: string | null;
+  district_id?: string | null;
+  crime_id?: string | null;
+  crime_method_id?: string | null;
+  card_id?: string | null;
+  transfer_id?: string | null;
+  status_id?: string | null;
+  status?: string | null;
+  source_id?: string | null;
+  department_service_id?: string | null;
+  rejection_reason_id?: string | null;
+  decision_type_id?: string | null;
+  workplace_id?: string | null;
+  work_position?: string | null;
+}
+
+@Injectable()
+export class ApplicationsResolverService {
+  constructor(
+    @InjectRepository(Application)
+    private readonly applicationRepo: Repository<Application>,
+    private readonly workplacesService: WorkplacesService,
+  ) {}
+
+  async processCustomFields(
+    fields: NonNullable<CreateApplicationDto['custom_fields']>,
+    applicationId: string,
+    manager: EntityManager = this.applicationRepo.manager,
+  ): Promise<ApplicationCustomField[]> {
+    const customFieldRepo = manager.getRepository(ApplicationCustomField);
+    const citizenRepo = manager.getRepository(Citizen);
+    const crimeRepo = manager.getRepository(Crime);
+    const districtRepo = manager.getRepository(District);
+    const mahallaRepo = manager.getRepository(Mahalla);
+    const cardRepo = manager.getRepository(Card);
+    const transferRepo = manager.getRepository(Transfer);
+    const bankRepo = manager.getRepository(Bank);
+    const paymentProviderRepo = manager.getRepository(PaymentProvider);
+    const transferCustomFieldRepo = manager.getRepository(TransferCustomField);
+
+    const entities: ApplicationCustomField[] = [];
+
+    for (const f of fields) {
+      let citizenId = f.citizen_id || null;
+      let cardId = f.card_id || null;
+      let crimeId = f.crime_id || null;
+      let districtId = f.district_id || null;
+      let transferId = f.transfer_id || null;
+
+      // 1. Yangi yoki mavjud Fuqaro (inline_citizen)
+      if (f.inline_citizen && !citizenId) {
+        const cData = f.inline_citizen as Record<string, string>;
+        const pNum = normalizeUzPhone(cData.phone_number);
+        const pass = normalizePassport(cData.passport);
+        const pinfl = normalizePinfl(cData.pinfl);
+        const fName = cData.first_name ? formatUzbekName(cData.first_name) : null;
+        const lName = cData.last_name ? formatUzbekName(cData.last_name) : null;
+        const mName = cData.middle_name ? formatUzbekName(cData.middle_name) : null;
+        const addr = cData.address ? cData.address.trim() : null;
+
+        // Tuman va Mahallani aniqlash (Unique Models)
+        let citDistrictId = cData.district_id || null;
+        if (
+          !citDistrictId &&
+          typeof cData.district_name === 'string' &&
+          cData.district_name.trim()
+        ) {
+          const dName = cData.district_name.trim();
+          let d = await districtRepo.findOne({ where: { name: ILike(dName) } });
+          if (!d) {
+            d = await districtRepo.save(districtRepo.create({ name: dName }));
+          }
+          citDistrictId = d.id;
+        }
+
+        let citMahallaId = cData.mahalla_id || null;
+        if (
+          !citMahallaId &&
+          typeof cData.mahalla_name === 'string' &&
+          cData.mahalla_name.trim() &&
+          citDistrictId
+        ) {
+          const mNameStr = cData.mahalla_name.trim();
+          let m = await mahallaRepo.findOne({
+            where: { name: ILike(mNameStr), district_id: citDistrictId },
+          });
+          if (!m) {
+            m = await mahallaRepo.save(
+              mahallaRepo.create({ name: mNameStr, district_id: citDistrictId }),
+            );
+          }
+          citMahallaId = m.id;
+        }
+
+        if (fName || lName || pass || pinfl || pNum || citDistrictId || citMahallaId) {
+          let existingCitizen: Citizen | null = null;
+          if (pass) {
+            existingCitizen = await citizenRepo.findOne({ where: { passport: pass } });
+          }
+          if (!existingCitizen && pinfl) {
+            existingCitizen = await citizenRepo.findOne({ where: { pinfl } });
+          }
+          if (!existingCitizen && pNum && fName) {
+            existingCitizen = await citizenRepo.findOne({
+              where: { phone_number: pNum, first_name: fName },
+            });
+          }
+
+          if (existingCitizen) {
+            // Faqat bo'sh maydonlarni to'ldiramiz, mavjud identifikatorlarni qayta yozmaymiz
+            if (addr && !existingCitizen.address) existingCitizen.address = addr;
+            if (fName && !existingCitizen.first_name) existingCitizen.first_name = fName;
+            if (lName && !existingCitizen.last_name) existingCitizen.last_name = lName;
+            if (mName && !existingCitizen.middle_name) existingCitizen.middle_name = mName;
+            if (cData.birth_date && !existingCitizen.birth_date)
+              existingCitizen.birth_date = cData.birth_date;
+            if (cData.gender && !existingCitizen.gender)
+              existingCitizen.gender = cData.gender as 'male' | 'female';
+            if (citDistrictId && !existingCitizen.district_id)
+              existingCitizen.district_id = citDistrictId;
+            if (citMahallaId && !existingCitizen.mahalla_id)
+              existingCitizen.mahalla_id = citMahallaId;
+            await citizenRepo.save(existingCitizen);
+            citizenId = existingCitizen.id;
+          } else {
+            const createdCitizen = citizenRepo.create({
+              first_name: fName,
+              last_name: lName,
+              middle_name: mName,
+              passport: pass,
+              pinfl: pinfl,
+              phone_number: pNum,
+              birth_date: cData.birth_date || null,
+              gender: (cData.gender as 'male' | 'female') || null,
+              address: addr,
+              district_id: citDistrictId,
+              mahalla_id: citMahallaId,
+            });
+            const savedCitizen = await citizenRepo.save(createdCitizen);
+            citizenId = savedCitizen.id;
+          }
+        }
+      }
+
+      // 2. Yangi yoki mavjud Karta (inline_card)
+      if (f.inline_card && !cardId) {
+        const cdData = f.inline_card as Record<string, string>;
+        const cleaned = normalizeCardNumber(cdData.card_number);
+        if (cleaned) {
+          const existingCard = await cardRepo.findOne({ where: { card_number: cleaned } });
+          if (existingCard) {
+            cardId = existingCard.id;
+          } else {
+            let bankId = cdData.bank_id || null;
+            if (!bankId && cdData.bank_name) {
+              const bName = formatTitleCase(cdData.bank_name.trim());
+              let existingBank = await bankRepo.findOne({ where: { name: ILike(bName) } });
+              if (!existingBank) {
+                existingBank = await bankRepo.save(
+                  bankRepo.create({
+                    name: bName,
+                    mfo: cdData.bank_mfo || null,
+                  }),
+                );
+              }
+              bankId = existingBank.id;
+            }
+
+            const createdCard = cardRepo.create({
+              card_number: cleaned,
+              expire_date: cdData.expire_date || null,
+              full_name: cdData.full_name ? formatUzbekName(cdData.full_name) : null,
+              bank_id: bankId,
+              citizen_id: citizenId || cdData.citizen_id || null,
+            });
+            const savedCard = await cardRepo.save(createdCard);
+            cardId = savedCard.id;
+          }
+        }
+      }
+
+      // 3. Yangi yoki mavjud Jinoyat Moddasi (inline_crime)
+      if (f.inline_crime && !crimeId) {
+        const crData = f.inline_crime as Record<string, string>;
+        if (crData.article) {
+          const cArt = formatTitleCase(crData.article.trim());
+          const existingCrime = await crimeRepo.findOne({
+            where: [{ article: ILike(cArt) }, { title: ILike(cArt) }],
+          });
+          if (existingCrime) {
+            crimeId = existingCrime.id;
+          } else {
+            const createdCrime = crimeRepo.create({
+              article: cArt,
+              title: crData.title ? formatTitleCase(crData.title) : cArt,
+              category: crData.category || null,
+              description: crData.description || null,
+            });
+            const savedCrime = await crimeRepo.save(createdCrime);
+            crimeId = savedCrime.id;
+          }
+        }
+      }
+
+      // 4. Yangi yoki mavjud Tuman (inline_district)
+      if (f.inline_district && !districtId) {
+        const dData = f.inline_district as Record<string, string>;
+        const dName = (dData.name || '').trim();
+        if (dName) {
+          const formattedDName = formatTitleCase(dName);
+          const existingDistrict = await districtRepo.findOne({
+            where: { name: ILike(formattedDName) },
+          });
+          if (existingDistrict) {
+            districtId = existingDistrict.id;
+          } else {
+            const createdDistrict = districtRepo.create({ name: formattedDName });
+            const savedDistrict = await districtRepo.save(createdDistrict);
+            districtId = savedDistrict.id;
+          }
+        }
+      }
+
+      // 5. Yangi inline Transfer kiritilgan bo'lsa
+      if (f.inline_transfer && !transferId) {
+        const tData = f.inline_transfer;
+        let providerId =
+          typeof tData.payment_provider_id === 'string' ? tData.payment_provider_id : null;
+        if (
+          !providerId &&
+          typeof tData.payment_provider_name === 'string' &&
+          tData.payment_provider_name.trim()
+        ) {
+          const provName = formatTitleCase(tData.payment_provider_name.trim());
+          let existingProv = await paymentProviderRepo.findOne({
+            where: { name: ILike(provName) },
+          });
+          if (!existingProv) {
+            existingProv = await paymentProviderRepo.save(
+              paymentProviderRepo.create({
+                name: provName,
+                code: provName.toLowerCase().replace(/\s+/g, '_'),
+              }),
+            );
+          }
+          providerId = existingProv.id;
+        }
+
+        let receiverCardId =
+          typeof tData.receiver_card_id === 'string' ? tData.receiver_card_id : null;
+        if (!receiverCardId && typeof tData.receiver_card_number === 'string') {
+          const cleanedReceiver = normalizeCardNumber(tData.receiver_card_number);
+          if (cleanedReceiver && cleanedReceiver.length >= 8) {
+            let existingReceiverCard = await cardRepo.findOne({
+              where: { card_number: cleanedReceiver },
+            });
+            let receiverBankId =
+              typeof tData.receiver_bank_id === 'string' ? tData.receiver_bank_id : null;
+            if (
+              !receiverBankId &&
+              typeof tData.receiver_bank_name === 'string' &&
+              tData.receiver_bank_name.trim()
+            ) {
+              const bName = formatTitleCase(tData.receiver_bank_name.trim());
+              let b = await bankRepo.findOne({ where: { name: ILike(bName) } });
+              if (!b) {
+                b = await bankRepo.save(bankRepo.create({ name: bName }));
+              }
+              receiverBankId = b.id;
+            }
+
+            const rawRecFullName =
+              typeof tData.receiver_card_full_name === 'string'
+                ? tData.receiver_card_full_name
+                : typeof tData.receiver_full_name === 'string'
+                  ? tData.receiver_full_name
+                  : null;
+            const recFullName = rawRecFullName ? formatUzbekName(rawRecFullName) : null;
+
+            if (!existingReceiverCard) {
+              existingReceiverCard = await cardRepo.save(
+                cardRepo.create({
+                  card_number: cleanedReceiver,
+                  full_name: recFullName,
+                  bank_id: receiverBankId,
+                }),
+              );
+            } else if (recFullName && !existingReceiverCard.full_name) {
+              existingReceiverCard.full_name = recFullName;
+              await cardRepo.save(existingReceiverCard);
+            }
+            receiverCardId = existingReceiverCard.id;
+          }
+        }
+
+        const createdTransfer = transferRepo.create({
+          transaction_id: typeof tData.transaction_id === 'string' ? tData.transaction_id : null,
+          amount: tData.amount ? Number(tData.amount) : null,
+          currency: typeof tData.currency === 'string' ? tData.currency : 'UZS',
+          payment_provider_id: providerId,
+          receiver_card_id: receiverCardId,
+          sender_card_id: cardId || null,
+          application_id: applicationId,
+          transfer_date: typeof tData.transfer_date === 'string' ? tData.transfer_date : null,
+          transfer_time: typeof tData.transfer_time === 'string' ? tData.transfer_time : null,
+        });
+        const savedTransfer = await transferRepo.save(createdTransfer);
+        transferId = savedTransfer.id;
+
+        const rawTransferFields = Array.isArray(tData.custom_fields)
+          ? tData.custom_fields
+          : Array.isArray(tData.transfer_custom_fields)
+            ? tData.transfer_custom_fields
+            : null;
+        if (rawTransferFields && rawTransferFields.length > 0) {
+          const tFields = rawTransferFields.map((tf: Record<string, unknown>, idx: number) =>
+            transferCustomFieldRepo.create({
+              transfer_id: savedTransfer.id,
+              label: typeof tf.label === 'string' ? tf.label : 'Qo‘shimcha ma‘lumot',
+              key: typeof tf.key === 'string' ? tf.key : `field_${idx}`,
+              type: (typeof tf.type === 'string'
+                ? tf.type
+                : TransferCustomFieldType.TEXT) as TransferCustomFieldType,
+              value: tf.value ?? null,
+              card_id: typeof tf.card_id === 'string' ? tf.card_id : null,
+              citizen_id: typeof tf.citizen_id === 'string' ? tf.citizen_id : null,
+              bank_id: typeof tf.bank_id === 'string' ? tf.bank_id : null,
+              payment_provider_id:
+                typeof tf.payment_provider_id === 'string' ? tf.payment_provider_id : null,
+              order: idx,
+            }),
+          );
+          await transferCustomFieldRepo.save(tFields);
+        }
+      }
+
+      entities.push(
+        customFieldRepo.create({
+          application_id: applicationId,
+          label: f.label || null,
+          key: f.key || null,
+          type: f.type || null,
+          value: f.value ?? null,
+          citizen_id: citizenId,
+          card_id: cardId,
+          crime_id: crimeId,
+          district_id: districtId,
+          transfer_id: transferId,
+          order: f.order ?? 0,
+        }),
+      );
+    }
+
+    return entities;
+  }
+
+  async resolvePrimaryModels(
+    dto: CreateApplicationDto | UpdateApplicationDto,
+    applicationId?: string,
+    manager: EntityManager = this.applicationRepo.manager,
+  ): Promise<ResolvedApplicationModels> {
+    const applicationRepo = manager.getRepository(Application);
+    const citizenRepo = manager.getRepository(Citizen);
+    const crimeRepo = manager.getRepository(Crime);
+    const districtRepo = manager.getRepository(District);
+    const mahallaRepo = manager.getRepository(Mahalla);
+    const cardRepo = manager.getRepository(Card);
+    const transferRepo = manager.getRepository(Transfer);
+    const bankRepo = manager.getRepository(Bank);
+    const paymentProviderRepo = manager.getRepository(PaymentProvider);
+    const transferCustomFieldRepo = manager.getRepository(TransferCustomField);
+    const statusRepo = manager.getRepository(ApplicationStatusEntity);
+
+    let citizenId = dto.citizen_id || null;
+    let districtId = dto.district_id || null;
+    let crimeId = dto.crime_id || null;
+    let crimeMethodId = dto.crime_method_id !== undefined ? dto.crime_method_id : null;
+    let cardId = dto.card_id || null;
+    let transferId = dto.transfer_id || null;
+    let sourceId = dto.source_id !== undefined ? dto.source_id : null;
+    let departmentServiceId =
+      dto.department_service_id !== undefined ? dto.department_service_id : null;
+    let rejectionReasonId = dto.rejection_reason_id !== undefined ? dto.rejection_reason_id : null;
+    let decisionTypeId = dto.decision_type_id !== undefined ? dto.decision_type_id : null;
+
+    if (applicationId) {
+      const existingApp = await applicationRepo.findOne({
+        where: { id: applicationId },
+        select: {
+          id: true,
+          citizen_id: true,
+          district_id: true,
+          crime_id: true,
+          crime_method_id: true,
+          card_id: true,
+          transfer_id: true,
+          source_id: true,
+          department_service_id: true,
+          rejection_reason_id: true,
+          decision_type_id: true,
+        },
+      });
+      if (existingApp) {
+        if (!citizenId && existingApp.citizen_id) citizenId = existingApp.citizen_id;
+        if (!districtId && existingApp.district_id) districtId = existingApp.district_id;
+        if (!crimeId && existingApp.crime_id) crimeId = existingApp.crime_id;
+        if (
+          crimeMethodId === null &&
+          existingApp.crime_method_id &&
+          dto.crime_method_id === undefined
+        ) {
+          crimeMethodId = existingApp.crime_method_id;
+        }
+        if (!cardId && existingApp.card_id) cardId = existingApp.card_id;
+        if (!transferId && existingApp.transfer_id) transferId = existingApp.transfer_id;
+        if (!sourceId && existingApp.source_id && dto.source_id === undefined) {
+          sourceId = existingApp.source_id;
+        }
+        if (
+          !departmentServiceId &&
+          existingApp.department_service_id &&
+          dto.department_service_id === undefined
+        ) {
+          departmentServiceId = existingApp.department_service_id;
+        }
+        if (
+          !rejectionReasonId &&
+          existingApp.rejection_reason_id &&
+          dto.rejection_reason_id === undefined
+        ) {
+          rejectionReasonId = existingApp.rejection_reason_id;
+        }
+        if (!decisionTypeId && existingApp.decision_type_id && dto.decision_type_id === undefined) {
+          decisionTypeId = existingApp.decision_type_id;
+        }
+      }
+    }
+
+    // 1. Fuqaro (Agar citizen_id berilgan yoki arizadan olingan bo'lsa)
+    if (citizenId && dto.citizen_data && Object.keys(dto.citizen_data).length > 0) {
+      const data = dto.citizen_data as Record<string, string | null | undefined>;
+      const existing = await citizenRepo.findOne({ where: { id: citizenId } });
+      if (existing) {
+        let citDistrictId = data.district_id || null;
+        if (!citDistrictId && typeof data.district_name === 'string' && data.district_name.trim()) {
+          const dName = data.district_name.trim();
+          let d = await districtRepo.findOne({ where: { name: ILike(dName) } });
+          if (!d) {
+            d = await districtRepo.save(districtRepo.create({ name: formatTitleCase(dName) }));
+          }
+          citDistrictId = d.id;
+        }
+
+        let citMahallaId = data.mahalla_id || null;
+        if (
+          !citMahallaId &&
+          typeof data.mahalla_name === 'string' &&
+          data.mahalla_name.trim() &&
+          citDistrictId
+        ) {
+          const mName = data.mahalla_name.trim();
+          let m = await mahallaRepo.findOne({
+            where: { name: ILike(mName), district_id: citDistrictId },
+          });
+          if (!m) {
+            m = await mahallaRepo.save(
+              mahallaRepo.create({ name: formatTitleCase(mName), district_id: citDistrictId }),
+            );
+          }
+          citMahallaId = m.id;
+        }
+
+        if (citDistrictId !== null || data.district_id !== undefined)
+          existing.district_id = citDistrictId;
+        if (citMahallaId !== null || data.mahalla_id !== undefined)
+          existing.mahalla_id = citMahallaId;
+        if (data.address !== undefined) existing.address = data.address || null;
+        if (data.birth_date !== undefined) existing.birth_date = data.birth_date || null;
+        if (data.gender !== undefined) existing.gender = (data.gender as 'male' | 'female') || null;
+        if (data.first_name) existing.first_name = formatUzbekName(data.first_name);
+        if (data.last_name) existing.last_name = formatUzbekName(data.last_name);
+        if (data.middle_name !== undefined)
+          existing.middle_name = data.middle_name ? formatUzbekName(data.middle_name) : null;
+        if (data.passport !== undefined) existing.passport = normalizePassport(data.passport);
+        if (data.pinfl !== undefined) existing.pinfl = normalizePinfl(data.pinfl);
+        if (data.phone_number !== undefined)
+          existing.phone_number = normalizeUzPhone(data.phone_number);
+        if (data.occupation_category_id !== undefined)
+          existing.occupation_category_id = data.occupation_category_id || null;
+        if (data.occupation_id !== undefined) existing.occupation_id = data.occupation_id || null;
+        await citizenRepo.save(existing);
+      }
+    } else if (!citizenId && dto.citizen_data && Object.keys(dto.citizen_data).length > 0) {
+      const data = dto.citizen_data as Record<string, string>;
+      const cleanPassport = normalizePassport(data.passport);
+      const cleanPinfl = normalizePinfl(data.pinfl);
+      const cleanPhone = normalizeUzPhone(data.phone_number);
+
+      if (data.first_name || data.last_name || cleanPassport || cleanPhone || cleanPinfl) {
+        // Faqat yagona identifikatorlar (pasport, JSHSHIR, telefon) bo'yicha qidiramiz — ism/familiya bilan birlashtirmaymiz!
+        let existingCitizen: Citizen | null = null;
+        if (cleanPassport) {
+          existingCitizen = await citizenRepo.findOne({ where: { passport: cleanPassport } });
+        }
+        if (!existingCitizen && cleanPinfl) {
+          existingCitizen = await citizenRepo.findOne({ where: { pinfl: cleanPinfl } });
+        }
+        if (!existingCitizen && cleanPhone && cleanPhone.length >= 7) {
+          existingCitizen = await citizenRepo.findOne({ where: { phone_number: cleanPhone } });
+        }
+
+        let citDistrictId = data.district_id || null;
+        if (!citDistrictId && typeof data.district_name === 'string' && data.district_name.trim()) {
+          const dName = data.district_name.trim();
+          let d = await districtRepo.findOne({ where: { name: ILike(dName) } });
+          if (!d) {
+            d = await districtRepo.save(districtRepo.create({ name: formatTitleCase(dName) }));
+          }
+          citDistrictId = d.id;
+        }
+
+        let citMahallaId = data.mahalla_id || null;
+        if (
+          !citMahallaId &&
+          typeof data.mahalla_name === 'string' &&
+          data.mahalla_name.trim() &&
+          citDistrictId
+        ) {
+          const mName = data.mahalla_name.trim();
+          let m = await mahallaRepo.findOne({
+            where: { name: ILike(mName), district_id: citDistrictId },
+          });
+          if (!m) {
+            m = await mahallaRepo.save(
+              mahallaRepo.create({ name: formatTitleCase(mName), district_id: citDistrictId }),
+            );
+          }
+          citMahallaId = m.id;
+        }
+
+        const fName = data.first_name ? formatUzbekName(data.first_name) : null;
+        const lName = data.last_name ? formatUzbekName(data.last_name) : null;
+        const mName = data.middle_name ? formatUzbekName(data.middle_name) : null;
+
+        if (existingCitizen) {
+          // Avto-biriktirilganda mavjud ma'lumotlarni buzib yubormasdan faqat bo'sh maydonlarni to'ldiramiz
+          if (citDistrictId && !existingCitizen.district_id)
+            existingCitizen.district_id = citDistrictId;
+          if (citMahallaId && !existingCitizen.mahalla_id)
+            existingCitizen.mahalla_id = citMahallaId;
+          if (data.address && !existingCitizen.address) existingCitizen.address = data.address;
+          if (data.birth_date && !existingCitizen.birth_date)
+            existingCitizen.birth_date = data.birth_date;
+          if (data.gender && !existingCitizen.gender)
+            existingCitizen.gender = data.gender as 'male' | 'female';
+          if (fName && !existingCitizen.first_name) existingCitizen.first_name = fName;
+          if (lName && !existingCitizen.last_name) existingCitizen.last_name = lName;
+          if (mName && !existingCitizen.middle_name) existingCitizen.middle_name = mName;
+          if (cleanPassport && !existingCitizen.passport) existingCitizen.passport = cleanPassport;
+          if (cleanPinfl && !existingCitizen.pinfl) existingCitizen.pinfl = cleanPinfl;
+          if (cleanPhone && !existingCitizen.phone_number)
+            existingCitizen.phone_number = cleanPhone;
+          if (data.occupation_category_id && !existingCitizen.occupation_category_id)
+            existingCitizen.occupation_category_id = data.occupation_category_id;
+          if (data.occupation_id && !existingCitizen.occupation_id)
+            existingCitizen.occupation_id = data.occupation_id;
+          await citizenRepo.save(existingCitizen);
+          citizenId = existingCitizen.id;
+        } else {
+          // Whitelist: mass-assignment (`...data`) ishlatilmaydi
+          const newCitizen = citizenRepo.create({
+            first_name: fName,
+            last_name: lName,
+            middle_name: mName,
+            passport: cleanPassport,
+            pinfl: cleanPinfl,
+            phone_number: cleanPhone,
+            birth_date: data.birth_date || null,
+            gender: (data.gender as 'male' | 'female') || null,
+            address: data.address ? data.address.trim() : null,
+            district_id: citDistrictId,
+            mahalla_id: citMahallaId,
+            occupation_category_id: data.occupation_category_id || null,
+            occupation_id: data.occupation_id || null,
+          });
+          const saved = await citizenRepo.save(newCitizen);
+          citizenId = saved.id;
+        }
+      }
+    }
+
+    // 2. Tuman
+    if (!districtId && dto.district_data && Object.keys(dto.district_data).length > 0) {
+      const data = dto.district_data as Record<string, string>;
+      const dName = (data.name || '').trim();
+      if (dName) {
+        const formattedDName = formatTitleCase(dName);
+        const existingDistrict = await districtRepo.findOne({
+          where: { name: ILike(formattedDName) },
+        });
+        if (existingDistrict) {
+          districtId = existingDistrict.id;
+        } else {
+          const newDistrict = districtRepo.create({ name: formattedDName });
+          const saved = await districtRepo.save(newDistrict);
+          districtId = saved.id;
+        }
+      }
+    }
+
+    // 3. Jinoyat turi
+    if (!crimeId && dto.crime_data && Object.keys(dto.crime_data).length > 0) {
+      const data = dto.crime_data as Record<string, string>;
+      const rawCrimeName = (data.article || data.title || '').trim();
+      if (rawCrimeName) {
+        const crimeName = formatTitleCase(rawCrimeName);
+        const existingCrime = await crimeRepo.findOne({
+          where: [{ article: ILike(crimeName) }, { title: ILike(crimeName) }],
+        });
+        if (existingCrime) {
+          crimeId = existingCrime.id;
+        } else {
+          const newCrime = crimeRepo.create({
+            article: crimeName,
+            title: data.title ? formatTitleCase(data.title) : crimeName,
+          });
+          const saved = await crimeRepo.save(newCrime);
+          crimeId = saved.id;
+        }
+      }
+    }
+
+    // 4. Plastik karta (Asosiy / Jabrlanuvchi kartasi)
+    if (!cardId && dto.card_data && Object.keys(dto.card_data).length > 0) {
+      const data = dto.card_data as Record<string, string>;
+      const cleaned = normalizeCardNumber(data.card_number);
+      if (cleaned) {
+        const cardFullName = data.full_name ? formatUzbekName(data.full_name) : null;
+        const existingCard = await cardRepo.findOne({ where: { card_number: cleaned } });
+        if (existingCard) {
+          if (cardFullName && !existingCard.full_name) {
+            existingCard.full_name = cardFullName;
+            await cardRepo.save(existingCard);
+          }
+          cardId = existingCard.id;
+        } else {
+          let bankId = data.bank_id || null;
+          if (!bankId && data.bank_name) {
+            const bName = formatTitleCase(data.bank_name.trim());
+            let existingBank = await bankRepo.findOne({ where: { name: ILike(bName) } });
+            if (!existingBank) {
+              existingBank = await bankRepo.save(bankRepo.create({ name: bName }));
+            }
+            bankId = existingBank.id;
+          }
+
+          const newCard = cardRepo.create({
+            card_number: cleaned,
+            expire_date: data.expire_date || null,
+            full_name: cardFullName,
+            bank_id: bankId,
+            citizen_id: citizenId || data.citizen_id || null,
+          });
+          const saved = await cardRepo.save(newCard);
+          cardId = saved.id;
+        }
+      }
+    }
+
+    // 5. To'lov o'tkazmasi (Transfer)
+    if (!transferId && dto.transfer_data && Object.keys(dto.transfer_data).length > 0) {
+      const data = dto.transfer_data;
+      if (data.amount || data.receiver_card_number || data.transfer_date) {
+        let providerId =
+          typeof data.payment_provider_id === 'string' ? data.payment_provider_id : null;
+        if (
+          !providerId &&
+          typeof data.payment_provider_name === 'string' &&
+          data.payment_provider_name.trim()
+        ) {
+          const provName = formatTitleCase(data.payment_provider_name.trim());
+          let existingProv = await paymentProviderRepo.findOne({
+            where: { name: ILike(provName) },
+          });
+          if (!existingProv) {
+            existingProv = await paymentProviderRepo.save(
+              paymentProviderRepo.create({
+                name: provName,
+                code: provName.toLowerCase().replace(/\s+/g, '_'),
+              }),
+            );
+          }
+          providerId = existingProv.id;
+        }
+
+        let receiverCardId =
+          typeof data.receiver_card_id === 'string' ? data.receiver_card_id : null;
+        if (!receiverCardId && typeof data.receiver_card_number === 'string') {
+          const cleanedReceiver = normalizeCardNumber(data.receiver_card_number);
+          if (cleanedReceiver && cleanedReceiver.length >= 8) {
+            let existingReceiverCard = await cardRepo.findOne({
+              where: { card_number: cleanedReceiver },
+            });
+            let receiverBankId =
+              typeof data.receiver_bank_id === 'string' ? data.receiver_bank_id : null;
+            if (
+              !receiverBankId &&
+              typeof data.receiver_bank_name === 'string' &&
+              data.receiver_bank_name.trim()
+            ) {
+              const bName = formatTitleCase(data.receiver_bank_name.trim());
+              let b = await bankRepo.findOne({ where: { name: ILike(bName) } });
+              if (!b) {
+                b = await bankRepo.save(bankRepo.create({ name: bName }));
+              }
+              receiverBankId = b.id;
+            }
+
+            const rawRecFullName =
+              typeof data.receiver_card_full_name === 'string'
+                ? data.receiver_card_full_name
+                : typeof data.receiver_full_name === 'string'
+                  ? data.receiver_full_name
+                  : null;
+            const recFullName = rawRecFullName ? formatUzbekName(rawRecFullName) : null;
+
+            if (!existingReceiverCard) {
+              existingReceiverCard = await cardRepo.save(
+                cardRepo.create({
+                  card_number: cleanedReceiver,
+                  expire_date:
+                    typeof data.receiver_card_expire === 'string'
+                      ? data.receiver_card_expire
+                      : null,
+                  full_name: recFullName,
+                  bank_id: receiverBankId,
+                }),
+              );
+            } else if (recFullName && !existingReceiverCard.full_name) {
+              existingReceiverCard.full_name = recFullName;
+              await cardRepo.save(existingReceiverCard);
+            }
+            receiverCardId = existingReceiverCard.id;
+          }
+        }
+
+        const newTransfer = transferRepo.create({
+          transaction_id: typeof data.transaction_id === 'string' ? data.transaction_id : null,
+          amount: data.amount ? Number(data.amount) : null,
+          currency: typeof data.currency === 'string' ? data.currency : 'UZS',
+          payment_provider_id: providerId,
+          receiver_card_id: receiverCardId,
+          sender_card_id:
+            cardId || (typeof data.sender_card_id === 'string' ? data.sender_card_id : null),
+          application_id: applicationId || null,
+          transfer_date: typeof data.transfer_date === 'string' ? data.transfer_date : null,
+          transfer_time: typeof data.transfer_time === 'string' ? data.transfer_time : null,
+        });
+        const savedTransfer = await transferRepo.save(newTransfer);
+        transferId = savedTransfer.id;
+
+        const rawTransferFields = Array.isArray(data.custom_fields)
+          ? data.custom_fields
+          : Array.isArray(data.transfer_custom_fields)
+            ? data.transfer_custom_fields
+            : null;
+        if (rawTransferFields && rawTransferFields.length > 0) {
+          const tFields = rawTransferFields.map((tf: Record<string, unknown>, idx: number) =>
+            transferCustomFieldRepo.create({
+              transfer_id: savedTransfer.id,
+              label: typeof tf.label === 'string' ? tf.label : 'Qo‘shimcha ma‘lumot',
+              key: typeof tf.key === 'string' ? tf.key : `field_${idx}`,
+              type: (typeof tf.type === 'string'
+                ? tf.type
+                : TransferCustomFieldType.STRING) as TransferCustomFieldType,
+              value: tf.value ?? null,
+              card_id: typeof tf.card_id === 'string' ? tf.card_id : null,
+              citizen_id: typeof tf.citizen_id === 'string' ? tf.citizen_id : null,
+              bank_id: typeof tf.bank_id === 'string' ? tf.bank_id : null,
+              payment_provider_id:
+                typeof tf.payment_provider_id === 'string' ? tf.payment_provider_id : null,
+              order: idx,
+            }),
+          );
+          await transferCustomFieldRepo.save(tFields);
+        }
+      }
+    }
+
+    // 6. Ariza statusi (Master Entity — noma'lum status stringidan avto-yaratish taqiqlangan!)
+    let statusId = dto.status_id || null;
+    let statusCode = dto.status || null;
+
+    if (statusId) {
+      const st = await statusRepo.findOne({ where: { id: statusId } });
+      if (!st) {
+        throw new BadRequestException(`Tanlangan ariza statusi (ID: ${statusId}) topilmadi`);
+      }
+      statusId = st.id;
+      statusCode = st.code || st.name;
+    } else if (dto.status && dto.status.trim()) {
+      const cleanStatus = dto.status.trim();
+      const st = await statusRepo.findOne({
+        where: [{ code: ILike(cleanStatus) }, { name: ILike(cleanStatus) }],
+      });
+      if (!st) {
+        throw new BadRequestException(
+          `«${cleanStatus}» ariza statusi ma'lumotnomada mavjud emas. Avval ma'lumotnomalar bo'limidan status yarating.`,
+        );
+      }
+      statusId = st.id;
+      statusCode = st.code || st.name;
+    } else if (!applicationId) {
+      const def = await statusRepo.findOne({
+        where: [{ is_default: true }, { code: 'YANGI' }],
+        order: { sort_order: 'ASC' },
+      });
+      if (def) {
+        statusId = def.id;
+        statusCode = def.code || def.name;
+      }
+    }
+
+    // Ish joyi / Tashkilot (workplaces master modeli) ni hal qilish (findOrCreate)
+    let workplaceId: string | null | undefined = dto.workplace_id;
+    if (!workplaceId && dto.workplace_data) {
+      const wpData = dto.workplace_data as Record<string, string | null | undefined>;
+      if (wpData.name && wpData.name.trim()) {
+        const wp = await this.workplacesService.findOrCreate({
+          name: wpData.name,
+          district_id: wpData.district_id || null,
+          mahalla_id: wpData.mahalla_id || null,
+          occupation_category_id: wpData.occupation_category_id || null,
+          address: wpData.address || null,
+          inn: wpData.inn || null,
+        });
+        workplaceId = wp.id;
+      }
+    }
+
+    const workPosition =
+      dto.work_position !== undefined ? dto.work_position?.trim() || null : undefined;
+
+    if (citizenId && (workplaceId !== undefined || workPosition !== undefined)) {
+      const citizenPatch: { workplace_id?: string | null; work_position?: string | null } = {};
+      if (workplaceId !== undefined) citizenPatch.workplace_id = workplaceId || null;
+      if (workPosition !== undefined) citizenPatch.work_position = workPosition;
+      if (Object.keys(citizenPatch).length > 0) {
+        await citizenRepo.update(citizenId, citizenPatch);
+      }
+    }
+
+    return {
+      citizen_id: citizenId,
+      district_id: districtId,
+      crime_id: crimeId,
+      crime_method_id: crimeMethodId,
+      card_id: cardId,
+      transfer_id: transferId,
+      status_id: statusId,
+      status: statusCode,
+      source_id: sourceId,
+      department_service_id: departmentServiceId,
+      rejection_reason_id: rejectionReasonId,
+      decision_type_id: decisionTypeId,
+      ...(workplaceId !== undefined ? { workplace_id: workplaceId || null } : {}),
+      ...(workPosition !== undefined ? { work_position: workPosition } : {}),
+    };
+  }
+}

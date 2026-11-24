@@ -9,6 +9,8 @@ import { AuditController } from './audit.controller';
 import { AuditInterceptor } from './audit.interceptor';
 import { AuditService } from './audit.service';
 import { AuditLog } from './audit-log.entity';
+import { IpBlockMiddleware } from './ip-block.middleware';
+import { SecurityExceptionFilter } from './security-exception.filter';
 import { SystemSetting } from './system-setting.entity';
 
 @Module({
@@ -20,7 +22,7 @@ import { SystemSetting } from './system-setting.entity';
     forwardRef(() => AuthModule),
   ],
   controllers: [AuditController],
-  providers: [AuditService, AuditInterceptor],
-  exports: [AuditService, AuditInterceptor],
+  providers: [AuditService, AuditInterceptor, IpBlockMiddleware, SecurityExceptionFilter],
+  exports: [AuditService, AuditInterceptor, IpBlockMiddleware, SecurityExceptionFilter],
 })
 export class AuditModule {}

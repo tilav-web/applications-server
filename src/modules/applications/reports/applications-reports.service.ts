@@ -3,6 +3,10 @@ import { InjectRepository } from '@nestjs/typeorm';
 import * as ExcelJS from 'exceljs';
 import { Repository } from 'typeorm';
 
+import type { JwtAccessPayload } from '../../../common/types/jwt-payload.interface';
+import { getAllowedDistrictIds } from '../../../common/utils/district-scope.util';
+import { sanitizeExcelValue } from '../../../common/utils/excel-style.util';
+import { User } from '../../users/user.entity';
 import { Application } from '../application.entity';
 import { Crime } from '../crimes/crime.entity';
 import { District } from '../districts/district.entity';
@@ -138,16 +142,22 @@ export class ApplicationsReportsService {
     private readonly districtRepo: Repository<District>,
     @InjectRepository(Crime)
     private readonly crimeRepo: Repository<Crime>,
+    @InjectRepository(User)
+    private readonly userRepo: Repository<User>,
   ) {}
 
   // =========================================================================
   // 1. VILOYAT TEZKOR STATISTIK HISOBOTI (OPERATIONAL MATRIX)
   // =========================================================================
-  async getOperationalMatrix(dto?: OperationalMatrixQueryDto): Promise<{
+  async getOperationalMatrix(
+    dto?: OperationalMatrixQueryDto,
+    currentUser?: JwtAccessPayload,
+  ): Promise<{
     date: string;
     rows: OperationalMatrixRow[];
     total: OperationalMatrixRow;
   }> {
+    const allowedDistrictIds = await getAllowedDistrictIds(this.userRepo, currentUser);
     const targetDateStr = dto?.date || new Date().toISOString().substring(0, 10);
     const targetDate = new Date(targetDateStr);
 
@@ -174,18 +184,33 @@ export class ApplicationsReportsService {
     const yearStart = new Date(targetDate.getFullYear(), 0, 1, 0, 0, 0, 0);
 
     // Barcha arizalarni munosabatlari bilan olamiz (yil boshidan hozirgacha)
-    const applications = await this.applicationRepo
+    const appQb = this.applicationRepo
       .createQueryBuilder('app')
       .leftJoinAndSelect('app.district', 'district')
       .leftJoinAndSelect('app.crime', 'crime')
       .leftJoinAndSelect('app.citizen', 'citizen')
       .leftJoinAndSelect('app.transfer', 'transfer')
       .leftJoinAndSelect('app.application_status', 'application_status')
+      .leftJoinAndSelect('app.rejection_reason', 'rejection_reason')
+      .leftJoinAndSelect('app.decision_type', 'decision_type')
       .leftJoinAndSelect('app.custom_fields', 'custom_fields')
       .where('app.is_deleted = false')
       .andWhere('COALESCE(app.date, app.created_at) >= :yearStart', { yearStart })
-      .andWhere('COALESCE(app.date, app.created_at) <= :dayEnd', { dayEnd })
-      .getMany();
+      .andWhere('COALESCE(app.date, app.created_at) <= :dayEnd', { dayEnd });
+
+    if (allowedDistrictIds !== null) {
+      if (allowedDistrictIds.length === 0) {
+        appQb.andWhere('1 = 0');
+      } else {
+        appQb.andWhere('app.district_id IN (:...allowedDistrictIds)', { allowedDistrictIds });
+      }
+    }
+
+    if (dto?.districtId?.trim()) {
+      appQb.andWhere('app.district_id = :reqDistrictId', { reqDistrictId: dto.districtId.trim() });
+    }
+
+    const applications = await appQb.getMany();
 
     const dbDistricts = await this.districtRepo.find();
     const districtMapByName = new Map<string, District>();
@@ -256,23 +281,71 @@ export class ApplicationsReportsService {
       const isMonthly = appDate >= monthStart && appDate <= dayEnd;
       const isYearly = appDate >= yearStart && appDate <= dayEnd;
 
-      // Tumanni aniqlash
-      let distName = app.district?.name;
+      // Tumanni aniqlash (noma'lum tumanlarni Qarshi sh. ga qo'shib yubormaymiz!)
+      let distName = app.district?.name?.trim();
       if (!distName || !rowsMap.has(distName)) {
-        // Agar tuman aniq topilmasa, mos nomni qidiramiz
-        const found = QASHQADARYO_ORDERED_DISTRICTS.find(
-          (d) => distName && d.toLowerCase().includes(distName.toLowerCase()),
-        );
-        distName = found || 'Qarshi sh.';
+        const found = distName
+          ? QASHQADARYO_ORDERED_DISTRICTS.find(
+              (d) =>
+                d.toLowerCase() === distName!.toLowerCase() ||
+                d.toLowerCase().includes(distName!.toLowerCase()),
+            )
+          : undefined;
+        distName = found || distName || "Hududi ko'rsatilmagan";
+        if (!rowsMap.has(distName)) {
+          rowsMap.set(distName, {
+            index: rowsMap.size + 1,
+            district_name: distName,
+            district_id: app.district_id || null,
+            daily_total: 0,
+            daily_fraud: 0,
+            daily_theft: 0,
+            daily_insult: 0,
+            daily_photo_distribution: 0,
+            daily_mistake_transfer: 0,
+            daily_other: 0,
+            m168_month: 0,
+            m168_year: 0,
+            m169_month: 0,
+            m169_year: 0,
+            other_month: 0,
+            other_year: 0,
+            month_total: 0,
+            year_total: 0,
+            total_168_169: 0,
+            repeated_count: 0,
+            search_fund: 0,
+            card_blocked: 0,
+            sanction_taken: 0,
+            in_progress_total: 0,
+            in_progress_initiate: 0,
+            in_progress_other: 0,
+            rejected_total: 0,
+            rejected_deceived: 0,
+            rejected_credit: 0,
+            rejected_photo: 0,
+            rejected_insult: 0,
+            rejected_money: 0,
+            rejected_other: 0,
+            initiated_total: 0,
+            other_crime_case: 0,
+            combined_case: 0,
+            transferred_territory: 0,
+          });
+        }
       }
 
       const row = rowsMap.get(distName)!;
       const crimeName = (app.crime?.article || app.crime?.title || '').toLowerCase();
-      const status = (app.status || app.application_status?.code || '').toUpperCase();
+      const status = (app.application_status?.code || app.status || '').toUpperCase();
+      const statusCategory = String(app.application_status?.category || '').toUpperCase();
 
       const isFraud = crimeName.includes('firib') || crimeName.includes('168');
       const isTheft =
-        crimeName.includes('o‘g‘ri') || crimeName.includes('ўғри') || crimeName.includes('169');
+        crimeName.includes('o‘g‘ri') ||
+        crimeName.includes("o'g'ri") ||
+        crimeName.includes('ўғри') ||
+        crimeName.includes('169');
       const isInsult = crimeName.includes('haqorat') || crimeName.includes('ҳақорат');
       const isPhoto = crimeName.includes('rasm') || crimeName.includes('расм');
       const isMistake = crimeName.includes('adash') || crimeName.includes('адаш');
@@ -317,48 +390,93 @@ export class ApplicationsReportsService {
         if (app.suspect_tree && (app.suspect_tree as unknown[]).length > 0) {
           row.search_fund++;
         }
-        if (app.card_id || app.transfer?.sender_card_id || app.transfer?.receiver_card_id) {
+        const notesLower = (app.officer_notes || '').toLowerCase();
+        const descLower = (app.description || '').toLowerCase();
+        const transferStatusUpper = String(app.transfer?.status || '').toUpperCase();
+        if (
+          transferStatusUpper === 'MUZLATILGAN' ||
+          notesLower.includes('card block') ||
+          notesLower.includes('karta blok') ||
+          notesLower.includes('bloklan') ||
+          notesLower.includes('muzlat')
+        ) {
           row.card_blocked++;
         }
-        if (
-          app.description?.toLowerCase().includes('sanksiya') ||
-          app.officer_notes?.includes('sanksiya')
-        ) {
+        if (descLower.includes('sanksiya') || notesLower.includes('sanksiya')) {
           row.sanction_taken++;
         }
 
-        // Statuslar va natijalar
-        if (status === 'JARAYONDA' || status.includes('JARAYON')) {
+        // Statuslar va natijalar (application_status.category + rejection_reason + decision_type asosida)
+        const decisionText = (
+          app.decision_type?.name ||
+          app.decision_note ||
+          app.officer_notes ||
+          ''
+        ).toLowerCase();
+        const rejectionText = (
+          app.rejection_reason?.name ||
+          app.decision_note ||
+          app.officer_notes ||
+          app.description ||
+          ''
+        ).toLowerCase();
+
+        if (
+          status === 'YANGI' ||
+          status === 'JARAYONDA' ||
+          status.includes('JARAYON') ||
+          statusCategory === 'NEW' ||
+          statusCategory === 'IN_PROGRESS' ||
+          statusCategory === 'EXTENDED'
+        ) {
           row.in_progress_total++;
           if (
-            app.officer_notes?.includes("qo'zg'atiladi") ||
-            app.officer_notes?.includes('қўзғатилади')
+            notesLower.includes("qo'zg'atiladi") ||
+            notesLower.includes('qo‘zg‘atiladi') ||
+            notesLower.includes('қўзғатилади')
           ) {
             row.in_progress_initiate++;
           } else {
             row.in_progress_other++;
           }
-        } else if (status === 'RAD_ETILDI' || status.includes('RAD')) {
+        } else if (
+          status === 'RAD_ETILDI' ||
+          status.includes('RAD') ||
+          Boolean(app.rejection_reason_id)
+        ) {
           row.rejected_total++;
-          const desc = (app.description || '') + (app.officer_notes || '');
-          if (desc.includes('kredit') || desc.includes('кредит')) row.rejected_credit++;
-          else if (desc.includes('rasm') || desc.includes('расм')) row.rejected_photo++;
-          else if (desc.includes('haqorat') || desc.includes('ҳақорат')) row.rejected_insult++;
-          else if (desc.includes('pul') || desc.includes('пул') || desc.includes('kart'))
+          if (rejectionText.includes('kredit') || rejectionText.includes('кредит'))
+            row.rejected_credit++;
+          else if (rejectionText.includes('rasm') || rejectionText.includes('расм'))
+            row.rejected_photo++;
+          else if (rejectionText.includes('haqorat') || rejectionText.includes('ҳақорат'))
+            row.rejected_insult++;
+          else if (
+            rejectionText.includes('pul') ||
+            rejectionText.includes('пул') ||
+            rejectionText.includes('kart')
+          )
             row.rejected_money++;
-          else if (desc.includes('aldangan') || desc.includes('алданган')) row.rejected_deceived++;
+          else if (rejectionText.includes('aldangan') || rejectionText.includes('алданган'))
+            row.rejected_deceived++;
           else row.rejected_other++;
-        } else if (status === 'HAL_QILINDI' || status.includes('HAL') || status.includes('J/I')) {
+        } else if (
+          status === 'HAL_QILINDI' ||
+          status.includes('HAL') ||
+          status.includes('J/I') ||
+          status.includes('JI_') ||
+          decisionText.includes("qo'zg'at") ||
+          decisionText.includes('қўзғат')
+        ) {
           row.initiated_total++;
         } else {
-          // Boshqa qarorlar
-          const notes = (app.officer_notes || '').toLowerCase();
-          if (notes.includes('birlashtir') || notes.includes('бирлаштир')) {
+          // Boshqa yakuniy qarorlar
+          if (decisionText.includes('birlashtir') || decisionText.includes('бирлаштир')) {
             row.combined_case++;
           } else if (
-            notes.includes('hudud') ||
-            notes.includes('юборилган') ||
-            notes.includes('yuborilgan')
+            decisionText.includes('hudud') ||
+            decisionText.includes('юборилган') ||
+            decisionText.includes('yuborilgan')
           ) {
             row.transferred_territory++;
           } else {
@@ -458,11 +576,15 @@ export class ApplicationsReportsService {
   // =========================================================================
   // 2. SOHAVIY XIZMATLAR VA YO'NALISHLAR KESIMI (DEPARTMENT SERVICES)
   // =========================================================================
-  async getDepartmentServices(dto?: DepartmentServicesQueryDto): Promise<{
+  async getDepartmentServices(
+    dto?: DepartmentServicesQueryDto,
+    currentUser?: JwtAccessPayload,
+  ): Promise<{
     date: string;
     rows: DepartmentServicesRow[];
     total: DepartmentServicesRow;
   }> {
+    const allowedDistrictIds = await getAllowedDistrictIds(this.userRepo, currentUser);
     const targetDateStr = dto?.date || new Date().toISOString().substring(0, 10);
     const targetDate = new Date(targetDateStr);
 
@@ -490,14 +612,24 @@ export class ApplicationsReportsService {
       : new Date(targetDate.getFullYear(), targetDate.getMonth(), 1, 0, 0, 0, 0);
     const periodEnd = dto?.endDate ? new Date(dto.endDate) : dayEnd;
 
-    const applications = await this.applicationRepo
+    const deptQb = this.applicationRepo
       .createQueryBuilder('app')
       .leftJoinAndSelect('app.district', 'district')
       .leftJoinAndSelect('app.crime', 'crime')
+      .leftJoinAndSelect('app.department_service', 'department_service')
       .where('app.is_deleted = false')
       .andWhere('COALESCE(app.date, app.created_at) >= :periodStart', { periodStart })
-      .andWhere('COALESCE(app.date, app.created_at) <= :periodEnd', { periodEnd })
-      .getMany();
+      .andWhere('COALESCE(app.date, app.created_at) <= :periodEnd', { periodEnd });
+
+    if (allowedDistrictIds !== null) {
+      if (allowedDistrictIds.length === 0) {
+        deptQb.andWhere('1 = 0');
+      } else {
+        deptQb.andWhere('app.district_id IN (:...allowedDistrictIds)', { allowedDistrictIds });
+      }
+    }
+
+    const applications = await deptQb.getMany();
 
     const dbDistricts = await this.districtRepo.find();
     const districtMapByName = new Map<string, District>();
@@ -530,34 +662,114 @@ export class ApplicationsReportsService {
       const appDate = new Date(app.date || app.created_at);
       const isDaily = appDate >= dayStart && appDate <= dayEnd;
 
-      let distName = app.district?.name;
+      let distName = app.district?.name?.trim();
       if (!distName || !rowsMap.has(distName)) {
-        const found = QASHQADARYO_ORDERED_DISTRICTS.find(
-          (d) => distName && d.toLowerCase().includes(distName.toLowerCase()),
-        );
-        distName = found || 'Qarshi sh.';
+        const found = distName
+          ? QASHQADARYO_ORDERED_DISTRICTS.find(
+              (d) =>
+                d.toLowerCase() === distName!.toLowerCase() ||
+                d.toLowerCase().includes(distName!.toLowerCase()),
+            )
+          : undefined;
+        distName = found || distName || "Hududi ko'rsatilmagan";
+        if (!rowsMap.has(distName)) {
+          rowsMap.set(distName, {
+            index: rowsMap.size + 1,
+            district_name: distName,
+            district_id: app.district_id || null,
+            organized_crime: { daily: 0, period: 0 },
+            criminal_investigation: { daily: 0, period: 0 },
+            cyber_security: { daily: 0, period: 0 },
+            crime_prevention: { daily: 0, period: 0 },
+            traffic_safety: { daily: 0, period: 0 },
+            public_order: { daily: 0, period: 0 },
+            probation: { daily: 0, period: 0 },
+            spiritual_educational: { daily: 0, period: 0 },
+            total: { daily: 0, period: 0 },
+          });
+        }
       }
 
       const row = rowsMap.get(distName)!;
+      const deptCode = (
+        app.department_service?.short_name ||
+        app.department_service?.name ||
+        ''
+      ).toLowerCase();
       const crimeName = (app.crime?.article || app.crime?.title || '').toLowerCase();
 
-      // Xizmatlarga taqsimlash
+      // Xizmatlarga taqsimlash: avval real department_service bo'yicha, aks holda jinoyat moddasi bo'yicha
       let service: keyof Omit<
         DepartmentServicesRow,
         'index' | 'district_name' | 'district_id' | 'total'
       > = 'cyber_security';
 
-      if (
+      if (deptCode) {
+        if (deptCode.includes('uyokk') || deptCode.includes('uyush') || deptCode.includes('уюш')) {
+          service = 'organized_crime';
+        } else if (
+          deptCode.includes('jqk') ||
+          deptCode.includes('jqx') ||
+          deptCode.includes('qidiruv') ||
+          deptCode.includes('қидирув')
+        ) {
+          service = 'criminal_investigation';
+        } else if (
+          deptCode.includes('kiber') ||
+          deptCode.includes('atsj') ||
+          deptCode.includes('кибер') ||
+          deptCode.includes('cyber')
+        ) {
+          service = 'cyber_security';
+        } else if (
+          deptCode.includes('yhx') ||
+          deptCode.includes('yhxx') ||
+          deptCode.includes('yo') ||
+          deptCode.includes('йўл')
+        ) {
+          service = 'traffic_safety';
+        } else if (
+          deptCode.includes('jts') ||
+          deptCode.includes('jamoat') ||
+          deptCode.includes('жамоат')
+        ) {
+          service = 'public_order';
+        } else if (deptCode.includes('prob') || deptCode.includes('проб')) {
+          service = 'probation';
+        } else if (
+          deptCode.includes('mmix') ||
+          deptCode.includes('ma') ||
+          deptCode.includes('маънав')
+        ) {
+          service = 'spiritual_educational';
+        } else if (
+          deptCode.includes('hqpx') ||
+          deptCode.includes('prof') ||
+          deptCode.includes('проф')
+        ) {
+          service = 'crime_prevention';
+        } else {
+          service = 'cyber_security';
+        }
+      } else if (
         crimeName.includes('firib') ||
         crimeName.includes('karta') ||
         crimeName.includes('kiber')
       ) {
         service = 'cyber_security';
-      } else if (crimeName.includes("o'g'ri") || crimeName.includes('ўғри')) {
+      } else if (
+        crimeName.includes("o'g'ri") ||
+        crimeName.includes('o‘g‘ri') ||
+        crimeName.includes('ўғри')
+      ) {
         service = 'criminal_investigation';
       } else if (crimeName.includes('uyush') || crimeName.includes('guruh')) {
         service = 'organized_crime';
-      } else if (crimeName.includes('yo‘l') || crimeName.includes('avto')) {
+      } else if (
+        crimeName.includes('yo‘l') ||
+        crimeName.includes("yo'l") ||
+        crimeName.includes('avto')
+      ) {
         service = 'traffic_safety';
       } else if (crimeName.includes('jamoat') || crimeName.includes('bezori')) {
         service = 'public_order';
@@ -624,15 +836,20 @@ export class ApplicationsReportsService {
   // =========================================================================
   // 3. BATAFSIL ANALITIK REESTR / JURNAL (REGISTRY REPORT)
   // =========================================================================
-  async getRegistryReport(dto: RegistryReportQueryDto): Promise<{
+  async getRegistryReport(
+    dto: RegistryReportQueryDto,
+    currentUser?: JwtAccessPayload,
+    maxAllowedLimit = 500,
+  ): Promise<{
     items: RegistryReportItem[];
     total: number;
     page: number;
     limit: number;
     totalPages: number;
   }> {
+    const allowedDistrictIds = await getAllowedDistrictIds(this.userRepo, currentUser);
     const page = dto.page || 1;
-    const limit = dto.limit || 50;
+    const limit = Math.min(Math.max(dto.limit || 50, 1), maxAllowedLimit);
     const skip = (page - 1) * limit;
 
     const qb = this.applicationRepo
@@ -642,6 +859,7 @@ export class ApplicationsReportsService {
       .leftJoinAndSelect('app.crime', 'crime')
       .leftJoinAndSelect('app.crime_method', 'crime_method')
       .leftJoinAndSelect('app.source', 'source')
+      .leftJoinAndSelect('app.created_by', 'created_by')
       .leftJoinAndSelect('app.card', 'card')
       .leftJoinAndSelect('card.bank', 'card_bank')
       .leftJoinAndSelect('app.transfer', 'transfer')
@@ -653,6 +871,14 @@ export class ApplicationsReportsService {
       .leftJoinAndSelect('custom_fields.card', 'cf_card')
       .leftJoinAndSelect('custom_fields.transfer', 'cf_transfer')
       .where('app.is_deleted = false');
+
+    if (allowedDistrictIds !== null) {
+      if (allowedDistrictIds.length === 0) {
+        qb.andWhere('1 = 0');
+      } else {
+        qb.andWhere('app.district_id IN (:...allowedDistrictIds)', { allowedDistrictIds });
+      }
+    }
 
     if (dto.search) {
       const s = `%${dto.search.trim()}%`;
@@ -777,19 +1003,24 @@ export class ApplicationsReportsService {
         ? new Date(app.date).toISOString().substring(0, 10)
         : new Date(app.created_at).toISOString().substring(0, 10);
 
+      const officerName = app.created_by
+        ? [app.created_by.last_name, app.created_by.first_name].filter(Boolean).join(' ').trim() ||
+          '—'
+        : '—';
+
       return {
         index: skip + idx + 1,
         id: app.id,
-        source: app.source?.name || '102 тизими',
-        officer: app.officer_notes ? app.officer_notes.substring(0, 40) : 'Масъул ходим',
+        source: app.source?.name || '—',
+        officer: officerName,
         date: dateStr,
         district: app.district?.name || '—',
         application_number: app.application_number || '—',
         author_name: authorName || '—',
         description: app.description || '—',
-        crime_type: app.crime?.article || app.crime?.title || 'Фирибгарлик',
+        crime_type: app.crime?.article || app.crime?.title || '—',
         loss_amount: Number(app.transfer?.amount || 0),
-        crime_method: app.crime_method?.name || 'Пластик картадан пул ечиш',
+        crime_method: app.crime_method?.name || '—',
         additional_notes: app.officer_notes || '',
         card_numbers: cardList.join(', ') || '—',
         banks: bankList.join(', ') || '—',
@@ -813,8 +1044,11 @@ export class ApplicationsReportsService {
   // =========================================================================
   // 4. EXCEL EXPORT: VILOYAT TEZKOR STATISTIKASI (IMAGE 1 REPLIKATSIYASI)
   // =========================================================================
-  async exportOperationalMatrixExcel(dto?: OperationalMatrixQueryDto): Promise<ExcelJS.Workbook> {
-    const data = await this.getOperationalMatrix(dto);
+  async exportOperationalMatrixExcel(
+    dto?: OperationalMatrixQueryDto,
+    currentUser?: JwtAccessPayload,
+  ): Promise<ExcelJS.Workbook> {
+    const data = await this.getOperationalMatrix(dto, currentUser);
     const workbook = new ExcelJS.Workbook();
     workbook.creator = 'Arizalar bazasi';
     workbook.created = new Date();
@@ -1010,7 +1244,7 @@ export class ApplicationsReportsService {
       const row = sheet.getRow(currentRowNum);
       row.values = [
         r.index,
-        r.district_name,
+        sanitizeExcelValue(r.district_name),
         r.daily_total,
         r.daily_fraud,
         r.daily_theft,
@@ -1109,8 +1343,11 @@ export class ApplicationsReportsService {
   // =========================================================================
   // 5. EXCEL EXPORT: SOHAVIY XIZMATLAR (IMAGE 3 REPLIKATSIYASI)
   // =========================================================================
-  async exportDepartmentServicesExcel(dto?: DepartmentServicesQueryDto): Promise<ExcelJS.Workbook> {
-    const data = await this.getDepartmentServices(dto);
+  async exportDepartmentServicesExcel(
+    dto?: DepartmentServicesQueryDto,
+    currentUser?: JwtAccessPayload,
+  ): Promise<ExcelJS.Workbook> {
+    const data = await this.getDepartmentServices(dto, currentUser);
     const workbook = new ExcelJS.Workbook();
     workbook.creator = 'Arizalar bazasi';
     workbook.created = new Date();
@@ -1181,7 +1418,7 @@ export class ApplicationsReportsService {
       const row = sheet.getRow(current);
       row.values = [
         r.index,
-        r.district_name,
+        sanitizeExcelValue(r.district_name),
         r.organized_crime.daily,
         r.organized_crime.period,
         r.criminal_investigation.daily,
@@ -1248,8 +1485,15 @@ export class ApplicationsReportsService {
   // =========================================================================
   // 6. EXCEL EXPORT: BATAFSIL REESTR / JURNAL (IMAGE 2 REPLIKATSIYASI)
   // =========================================================================
-  async exportRegistryExcel(dto: RegistryReportQueryDto): Promise<ExcelJS.Workbook> {
-    const data = await this.getRegistryReport({ ...dto, page: 1, limit: 10000 });
+  async exportRegistryExcel(
+    dto: RegistryReportQueryDto,
+    currentUser?: JwtAccessPayload,
+  ): Promise<ExcelJS.Workbook> {
+    const data = await this.getRegistryReport(
+      { ...dto, page: 1, limit: 10000 },
+      currentUser,
+      10000,
+    );
     const workbook = new ExcelJS.Workbook();
     workbook.creator = 'Arizalar bazasi';
     workbook.created = new Date();
@@ -1320,22 +1564,22 @@ export class ApplicationsReportsService {
       const row = sheet.getRow(rowIdx);
       row.values = [
         item.index,
-        item.source,
-        item.officer,
-        item.date,
-        item.district,
-        item.application_number,
-        item.author_name,
-        item.description,
-        item.crime_type,
+        sanitizeExcelValue(item.source),
+        sanitizeExcelValue(item.officer),
+        sanitizeExcelValue(item.date),
+        sanitizeExcelValue(item.district),
+        sanitizeExcelValue(item.application_number),
+        sanitizeExcelValue(item.author_name),
+        sanitizeExcelValue(item.description),
+        sanitizeExcelValue(item.crime_type),
         item.loss_amount,
-        item.crime_method,
-        item.additional_notes,
-        item.card_numbers,
-        item.banks,
-        item.providers,
-        item.phone_number,
-        item.birth_date,
+        sanitizeExcelValue(item.crime_method),
+        sanitizeExcelValue(item.additional_notes),
+        sanitizeExcelValue(item.card_numbers),
+        sanitizeExcelValue(item.banks),
+        sanitizeExcelValue(item.providers),
+        sanitizeExcelValue(item.phone_number),
+        sanitizeExcelValue(item.birth_date),
       ];
 
       row.height = 24;

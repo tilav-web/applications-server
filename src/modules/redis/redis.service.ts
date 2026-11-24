@@ -22,17 +22,29 @@ export class RedisService implements OnModuleInit, OnModuleDestroy {
       lazyConnect: true,
       maxRetriesPerRequest: 1,
       retryStrategy: (times) => {
-        if (times > 3) {
-          this.logger.warn('Redisga ulanish qayta urinish limiti tugadi');
-          return null;
+        const delay = Math.min(200 * Math.pow(2, Math.min(times - 1, 6)), 10_000);
+        if (times === 1 || times % 5 === 0) {
+          this.logger.warn(`Redisga qayta ulanish (${times}-urinish, ${delay}ms)...`);
         }
-        return Math.min(times * 100, 2000);
+        return delay;
       },
     });
 
-    this.client.on('connect', () => {
+    this.client.on('ready', () => {
       this.isConnected = true;
-      this.logger.log(`Redisga muvaffaqiyatli ulandi: ${host}:${port}`);
+      this.logger.log(`Redisga muvaffaqiyatli ulandi va tayyor: ${host}:${port}`);
+    });
+
+    this.client.on('connect', () => {
+      this.logger.log(`Redis TCP aloqasi o'rnatildi: ${host}:${port}`);
+    });
+
+    this.client.on('close', () => {
+      this.isConnected = false;
+    });
+
+    this.client.on('end', () => {
+      this.isConnected = false;
     });
 
     this.client.on('error', (err: Error) => {
@@ -85,6 +97,20 @@ export class RedisService implements OnModuleInit, OnModuleDestroy {
       const msg = err instanceof Error ? err.message : String(err);
       this.logger.warn(`Redis set xatosi [key=${key}]: ${msg}`);
       return null;
+    }
+  }
+
+  async setNx(key: string, value: string, ttlSeconds: number): Promise<boolean> {
+    if (!this.client || !this.isConnected) {
+      return false;
+    }
+    try {
+      const res = await this.client.set(key, value, 'EX', ttlSeconds, 'NX');
+      return res === 'OK';
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : String(err);
+      this.logger.warn(`Redis setNx xatosi [key=${key}]: ${msg}`);
+      return false;
     }
   }
 

@@ -1,12 +1,15 @@
 import { Injectable } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository } from 'typeorm';
+import { In, Repository } from 'typeorm';
 
 import { TransferDestinationType } from '../../common/enums/transfer-destination-type.enum';
+import type { JwtAccessPayload } from '../../common/types/jwt-payload.interface';
+import { getAllowedDistrictIds } from '../../common/utils/district-scope.util';
 import { Application } from '../applications/application.entity';
 import { Bank } from '../applications/transfers/banks/bank.entity';
 import { Card } from '../applications/transfers/cards/card.entity';
 import { Transfer } from '../applications/transfers/transfer.entity';
+import { User } from '../users/user.entity';
 
 export type GraphCardRole =
   | 'MULE_DROPPER'
@@ -103,19 +106,16 @@ export class FinancialFlowService {
     private readonly applicationRepo: Repository<Application>,
     @InjectRepository(Bank)
     private readonly bankRepo: Repository<Bank>,
+    @InjectRepository(User)
+    private readonly userRepo: Repository<User>,
   ) {}
 
   public identifyBank(cardNumber: string): string {
     const clean = cardNumber.replace(/\D/g, '');
-    const p4 = clean.substring(0, 4);
     const p6 = clean.substring(0, 6);
+    const p4 = clean.substring(0, 4);
 
-    if (p4 === '8600') return 'Uzcard';
-    if (p4 === '9860') return 'Humo';
-    if (p4 === '5614') return 'Uzcard Cobadged';
-    if (p4 === '6262') return 'Agrobank';
-    if (p4 === '5300') return 'TBC Bank';
-    if (p4 === '4000' || p4 === '4001') return 'Kapitalbank';
+    // 6-xonali aniq BIN prefikslar birinchi tekshirilishi shart (4-xonali umumiy prefikslardan oldin)
     if (p6 === '986003' || p6 === '986004') return 'Ipak Yo‘li Banki';
     if (p6 === '860002') return 'O‘zsanoatqurilishbank';
     if (p6 === '860004') return 'Agrobank';
@@ -128,7 +128,28 @@ export class FinancialFlowService {
     if (p6 === '986024') return 'TBC Bank Humo';
     if (p6 === '986035') return 'Payme Card';
     if (p6 === '986060') return 'Uzum Bank';
+    if (p6 === '400845') return 'Xalq Banki (Visa)';
+    if (p6 === '415865') return 'Kapitalbank (Visa)';
+    if (p6 === '416973') return 'Ipak Yo‘li Banki (Visa)';
+    if (p6 === '427209') return 'Hamkorbank (Visa)';
+
+    if (p4 === '8600') return 'Uzcard';
+    if (p4 === '9860') return 'Humo';
+    if (p4 === '5614') return 'Uzcard Cobadged';
+    if (p4 === '6262') return 'Agrobank';
+    if (p4 === '5300') return 'TBC Bank';
+    if (p4 === '4000' || p4 === '4001') return 'Kapitalbank';
     return 'Noma‘lum bank';
+  }
+
+  private pickLatestDate(current: string, candidate: string): string {
+    if (!candidate) return current;
+    if (!current) return candidate;
+    const curMs = new Date(current).getTime();
+    const candMs = new Date(candidate).getTime();
+    if (Number.isNaN(candMs)) return current;
+    if (Number.isNaN(curMs)) return candidate;
+    return candMs > curMs ? candidate : current;
   }
 
   private cleanCard(cardStr: string | null | undefined): string {
@@ -148,9 +169,52 @@ export class FinancialFlowService {
    * Butun tizimdagi barcha kartalar va to'lov o'tkazmalari bo'yicha
    * global Canvas Network Graph ma'lumotlarini shakllantirish
    */
-  async getNetworkGraph(filter: GraphFilterQuery = {}): Promise<IGraphData> {
-    // 1. Barcha arizalarni yuklash
+  async getNetworkGraph(
+    filter: GraphFilterQuery = {},
+    currentUser?: JwtAccessPayload,
+  ): Promise<IGraphData> {
+    const allowedDistrictIds = await getAllowedDistrictIds(this.userRepo, currentUser);
+    if (allowedDistrictIds !== null && allowedDistrictIds.length === 0) {
+      return {
+        nodes: [],
+        edges: [],
+        summary: {
+          totalCards: 0,
+          totalFlowAmount: 0,
+          droppersCount: 0,
+          transitCount: 0,
+          blacklistedCount: 0,
+        },
+      };
+    }
+
+    const GRAPH_MAX_ROWS = 500;
+    const searchDigits = filter.searchCard ? filter.searchCard.replace(/\D/g, '') : '';
+    let searchScopedCardIds: string[] | null = null;
+    if (filter.searchCard?.trim()) {
+      const qRaw = `%${filter.searchCard.trim()}%`;
+      const cardMatchQb = this.cardRepo
+        .createQueryBuilder('c')
+        .leftJoin('c.bank', 'b')
+        .select('c.id')
+        .where(
+          '(c.card_number ILIKE :qRaw OR c.masked_number ILIKE :qRaw OR c.full_name ILIKE :qRaw OR b.name ILIKE :qRaw)',
+          { qRaw },
+        )
+        .take(200);
+      if (searchDigits.length >= 4) {
+        cardMatchQb.orWhere('c.card_number ILIKE :qDigits', { qDigits: `%${searchDigits}%` });
+      }
+      const matchedCards = await cardMatchQb.getMany();
+      searchScopedCardIds = matchedCards.map((c) => c.id);
+    }
+
+    // 1. Faol arizalarni yuklash (DISTRICT_OFFICER uchun faqat o'z tumanlari, oxirgi 500 ta cheklangan)
     const applications = await this.applicationRepo.find({
+      where:
+        allowedDistrictIds !== null
+          ? { is_deleted: false, district_id: In(allowedDistrictIds) }
+          : { is_deleted: false },
       relations: {
         application_status: true,
         citizen: true,
@@ -159,42 +223,87 @@ export class FinancialFlowService {
           payment_provider: true,
           sender_card: { bank: true, citizen: true },
           receiver_card: { bank: true, citizen: true },
-          custom_fields: { bank: true, card: true, citizen: true },
         },
-        custom_fields: {
+      },
+      order: { created_at: 'DESC' },
+      take: GRAPH_MAX_ROWS,
+    });
+
+    const allowedAppIds = applications.map((a) => a.id);
+
+    // 2. O'tkazmalarni yuklash (cheklangan va kerak bo'lsa searchCard bo'yicha SQL filtrlangan)
+    let transfers: Transfer[];
+    if (allowedDistrictIds !== null) {
+      transfers =
+        allowedAppIds.length > 0
+          ? await this.transferRepo.find({
+              where: { application_id: In(allowedAppIds) },
+              relations: {
+                payment_provider: true,
+                sender_card: { bank: true, citizen: true },
+                receiver_card: { bank: true, citizen: true },
+                receiver_identifier: true,
+                card: { bank: true, citizen: true },
+                application: { citizen: true, application_status: true },
+              },
+              order: { created_at: 'DESC' },
+              take: GRAPH_MAX_ROWS,
+            })
+          : [];
+    } else if (searchScopedCardIds !== null && searchScopedCardIds.length > 0) {
+      transfers = await this.transferRepo.find({
+        where: [
+          { sender_card_id: In(searchScopedCardIds) },
+          { receiver_card_id: In(searchScopedCardIds) },
+        ],
+        relations: {
+          payment_provider: true,
+          sender_card: { bank: true, citizen: true },
+          receiver_card: { bank: true, citizen: true },
+          receiver_identifier: true,
           card: { bank: true, citizen: true },
-          transfer: {
-            payment_provider: true,
-            sender_card: { bank: true, citizen: true },
-            receiver_card: { bank: true, citizen: true },
-          },
+          application: { citizen: true, application_status: true },
         },
-      },
-      order: { created_at: 'DESC' },
-    });
+        order: { created_at: 'DESC' },
+        take: GRAPH_MAX_ROWS,
+      });
+    } else {
+      transfers = await this.transferRepo.find({
+        relations: {
+          payment_provider: true,
+          sender_card: { bank: true, citizen: true },
+          receiver_card: { bank: true, citizen: true },
+          receiver_identifier: true,
+          card: { bank: true, citizen: true },
+          application: { citizen: true, application_status: true },
+        },
+        order: { created_at: 'DESC' },
+        take: GRAPH_MAX_ROWS,
+      });
+    }
 
-    // 2. Barcha o'tkazmalarni yuklash
-    const transfers = await this.transferRepo.find({
-      relations: {
-        payment_provider: true,
-        sender_card: { bank: true, citizen: true },
-        receiver_card: { bank: true, citizen: true },
-        receiver_identifier: true,
-        card: { bank: true, citizen: true },
-        application: { citizen: true, application_status: true },
-        custom_fields: true,
-      },
-      order: { created_at: 'DESC' },
-    });
+    // 3. Kartalarni yuklash (faqat grafda ishtirok etuvchi yoki qidiruvga mos kartalar)
+    const scopedCardIds = new Set<string>(searchScopedCardIds || []);
+    for (const app of applications) {
+      if (app.card_id) scopedCardIds.add(app.card_id);
+      if (app.transfer?.sender_card_id) scopedCardIds.add(app.transfer.sender_card_id);
+      if (app.transfer?.receiver_card_id) scopedCardIds.add(app.transfer.receiver_card_id);
+    }
+    for (const tr of transfers) {
+      if (tr.sender_card_id) scopedCardIds.add(tr.sender_card_id);
+      if (tr.receiver_card_id) scopedCardIds.add(tr.receiver_card_id);
+      if (tr.card_id) scopedCardIds.add(tr.card_id);
+    }
 
-    // 3. Barcha kartalarni yuklash
-    const allCards = await this.cardRepo.find({
-      relations: {
-        bank: true,
-        citizen: true,
-      },
-      order: { created_at: 'DESC' },
-    });
+    const allCards: Card[] =
+      scopedCardIds.size > 0
+        ? await this.cardRepo.find({
+            where: { id: In(Array.from(scopedCardIds)) },
+            relations: { bank: true, citizen: true },
+            order: { created_at: 'DESC' },
+            take: GRAPH_MAX_ROWS,
+          })
+        : [];
 
     const nodeMap = new Map<string, IGraphNode>();
     const edgeMap = new Map<string, IGraphEdge>();
@@ -255,10 +364,17 @@ export class FinancialFlowService {
     }
 
     // 4. O'tkazmalar bo'yicha bog'liqliklar va yo'nalishlar (Edges) tuzish
-    for (const tr of transfers) {
+    const activeTransfers = transfers.filter((tr) => !tr.application?.is_deleted);
+    const hasUzsFlow = activeTransfers.some(
+      (tr) => (!tr.currency || tr.currency.toUpperCase() === 'UZS') && Number(tr.amount) > 0,
+    );
+
+    for (const tr of activeTransfers) {
       const senderCard = tr.sender_card;
       const receiverCard = tr.receiver_card;
-      const amount = Number(tr.amount) || 0;
+      const rawAmount = Number(tr.amount) || 0;
+      const curr = (tr.currency || 'UZS').toUpperCase();
+      const amount = !hasUzsFlow || curr === 'UZS' ? rawAmount : 0;
       const dateStr = tr.transfer_date || tr.created_at?.toISOString() || '';
       const providerName = tr.payment_provider?.name || 'To‘lov tizimi';
 
@@ -341,7 +457,7 @@ export class FinancialFlowService {
             const existingEdge = edgeMap.get(edgeKey)!;
             existingEdge.amount += amount;
             existingEdge.transactionsCount += 1;
-            existingEdge.lastDate = dateStr || existingEdge.lastDate;
+            existingEdge.lastDate = this.pickLatestDate(existingEdge.lastDate, dateStr);
           } else {
             edgeMap.set(edgeKey, {
               id: tr.id || edgeKey,
@@ -370,7 +486,7 @@ export class FinancialFlowService {
             const existingEdge = edgeMap.get(edgeKey)!;
             existingEdge.amount += amount;
             existingEdge.transactionsCount += 1;
-            existingEdge.lastDate = dateStr || existingEdge.lastDate;
+            existingEdge.lastDate = this.pickLatestDate(existingEdge.lastDate, dateStr);
           } else {
             edgeMap.set(edgeKey, {
               id: tr.id || edgeKey,
@@ -471,6 +587,8 @@ export class FinancialFlowService {
         // Agar jo'natuvchi karta bo'lmay, faqat arizachi bo'lsa va qabul qiluvchi bo'lsa
         if (!sClean && rClean && app.citizen) {
           const citKey = `cit__${app.citizen.id}`;
+          const trCurr = (tr.currency || 'UZS').toUpperCase();
+          const flowAmount = !hasUzsFlow || trCurr === 'UZS' ? amount : 0;
           if (!nodeMap.has(citKey)) {
             nodeMap.set(citKey, {
               id: citKey,
@@ -480,12 +598,12 @@ export class FinancialFlowService {
               maskedCard: citizenName,
               bankName: `Ariza № ${appNumber}`,
               totalIn: 0,
-              totalOut: amount,
-              netFlow: -amount,
+              totalOut: 0,
+              netFlow: 0,
               inDegree: 0,
-              outDegree: 1,
-              reportsCount: 1,
-              reportIds: [app.id],
+              outDegree: 0,
+              reportsCount: 0,
+              reportIds: [],
               riskScore: 10,
               role: 'VICTIM_SOURCE',
               isBlacklisted: false,
@@ -493,36 +611,47 @@ export class FinancialFlowService {
               phone: citizenPhone || undefined,
               passport: app.citizen.passport || undefined,
               pinfl: app.citizen.pinfl || undefined,
-              linkedApplications: [
-                {
-                  id: app.id,
-                  application_number: appNumber,
-                  status: app.status,
-                  status_label: statusLabel,
-                  status_color: statusColor,
-                  date: appDate,
-                  citizen_name: citizenName,
-                  citizen_phone: citizenPhone,
-                  role_in_that_app: 'SENDER',
-                  transfer_amount: amount,
-                  payment_provider: providerName,
-                  description: app.description,
-                },
-              ],
+              linkedApplications: [],
             });
           }
           const citNode = nodeMap.get(citKey)!;
+          citNode.totalOut += flowAmount;
+          citNode.outDegree += 1;
+          if (!citNode.reportIds.includes(app.id)) {
+            citNode.reportIds.push(app.id);
+            citNode.reportsCount += 1;
+            citNode.linkedApplications?.push({
+              id: app.id,
+              application_number: appNumber,
+              status: app.status,
+              status_label: statusLabel,
+              status_color: statusColor,
+              date: appDate,
+              citizen_name: citizenName,
+              citizen_phone: citizenPhone,
+              role_in_that_app: 'SENDER',
+              transfer_amount: amount,
+              currency: trCurr,
+              payment_provider: providerName,
+              description: app.description,
+            });
+          }
           const rNode = nodeMap.get(rClean);
           if (rNode) {
-            rNode.totalIn += amount;
+            rNode.totalIn += flowAmount;
             rNode.inDegree += 1;
             const edgeKey = `${citKey}__${rClean}`;
-            if (!edgeMap.has(edgeKey)) {
+            if (edgeMap.has(edgeKey)) {
+              const existingEdge = edgeMap.get(edgeKey)!;
+              existingEdge.amount += flowAmount;
+              existingEdge.transactionsCount += 1;
+              existingEdge.lastDate = this.pickLatestDate(existingEdge.lastDate, appDate || '');
+            } else {
               edgeMap.set(edgeKey, {
                 id: `edge_${app.id}`,
                 from: citNode.id,
                 to: rNode.id,
-                amount,
+                amount: flowAmount,
                 paymentProvider: providerName,
                 transactionsCount: 1,
                 lastDate: appDate || '',
@@ -560,10 +689,6 @@ export class FinancialFlowService {
     }
 
     // 6. Rollar va Risk Ballarini hisoblash
-    let droppersCount = 0;
-    let transitCount = 0;
-    let blacklistedCount = 0;
-
     const specialExitRoles = new Set<GraphCardRole>([
       'ATM_TERMINAL',
       'CRYPTO_CASHOUT',
@@ -576,22 +701,15 @@ export class FinancialFlowService {
 
       if (specialExitRoles.has(node.role)) {
         node.riskScore = Math.min(95, 70 + node.inDegree * 8);
-        droppersCount++;
       } else if (node.inDegree > 0 && node.outDegree === 0) {
         node.role = 'MULE_DROPPER';
         node.riskScore = Math.min(95, 60 + node.inDegree * 10 + (node.reportsCount > 1 ? 20 : 0));
-        droppersCount++;
       } else if (node.inDegree > 0 && node.outDegree > 0) {
         node.role = 'TRANSIT';
         node.riskScore = Math.min(85, 40 + (node.inDegree + node.outDegree) * 5);
-        transitCount++;
       } else {
         node.role = 'VICTIM_SOURCE';
         node.riskScore = 15;
-      }
-
-      if (node.riskScore >= 75) {
-        blacklistedCount++;
       }
     }
 
@@ -643,6 +761,11 @@ export class FinancialFlowService {
     }
 
     const totalFlowAmount = edges.reduce((acc, e) => acc + (Number(e.amount) || 0), 0);
+    const filteredDroppers = nodes.filter(
+      (n) => n.role === 'MULE_DROPPER' || specialExitRoles.has(n.role),
+    ).length;
+    const filteredTransit = nodes.filter((n) => n.role === 'TRANSIT').length;
+    const filteredBlacklisted = nodes.filter((n) => n.riskScore >= 75).length;
 
     return {
       nodes,
@@ -650,30 +773,168 @@ export class FinancialFlowService {
       summary: {
         totalCards: nodes.length,
         totalFlowAmount,
-        droppersCount,
-        transitCount,
-        blacklistedCount,
+        droppersCount: filteredDroppers,
+        transitCount: filteredTransit,
+        blacklistedCount: filteredBlacklisted,
       },
     };
   }
 
   /**
-   * Karta bo'yicha batafsil ma'lumot olish
+   * Karta bo'yicha batafsil ma'lumot olish (butun global grafni qurmasdan, to'g'ridan-to'g'ri SQL orqali)
    */
-  async getCardDetails(cardNumber: string) {
+  async getCardDetails(cardNumber: string, currentUser?: JwtAccessPayload) {
     const cleanNum = this.cleanCard(cardNumber);
+    if (!cleanNum) {
+      return { card: null, node: undefined, linkedApplications: [] };
+    }
+
+    const allowedDistrictIds = await getAllowedDistrictIds(this.userRepo, currentUser);
+    if (allowedDistrictIds !== null && allowedDistrictIds.length === 0) {
+      return { card: null, node: undefined, linkedApplications: [] };
+    }
+
     const card = await this.cardRepo.findOne({
       where: [{ card_number: cleanNum }, { masked_number: cleanNum }],
       relations: { bank: true, citizen: true },
     });
 
-    const graph = await this.getNetworkGraph({ searchCard: cleanNum });
-    const node = graph.nodes.find((n) => n.cardNumber === cleanNum);
+    if (!card) {
+      return { card: null, node: undefined, linkedApplications: [] };
+    }
+
+    const cardTransfers = await this.transferRepo.find({
+      where: [{ sender_card_id: card.id }, { receiver_card_id: card.id }, { card_id: card.id }],
+      relations: {
+        payment_provider: true,
+        application: { citizen: true, application_status: true },
+      },
+      order: { created_at: 'DESC' },
+    });
+
+    const directAppsQb = this.applicationRepo
+      .createQueryBuilder('app')
+      .leftJoinAndSelect('app.citizen', 'citizen')
+      .leftJoinAndSelect('app.application_status', 'application_status')
+      .leftJoinAndSelect('app.transfer', 'transfer')
+      .leftJoinAndSelect('transfer.payment_provider', 'payment_provider')
+      .where('app.is_deleted = false')
+      .andWhere(
+        `(app.card_id = :cardId OR transfer.sender_card_id = :cardId OR transfer.receiver_card_id = :cardId OR EXISTS (SELECT 1 FROM transfers t WHERE t.application_id = app.id AND (t.sender_card_id = :cardId OR t.receiver_card_id = :cardId OR t.card_id = :cardId)))`,
+        { cardId: card.id },
+      );
+
+    if (allowedDistrictIds !== null) {
+      directAppsQb.andWhere('app.district_id IN (:...allowedDistrictIds)', { allowedDistrictIds });
+    }
+
+    const linkedAppsRaw = await directAppsQb.orderBy('app.created_at', 'DESC').take(200).getMany();
+
+    if (allowedDistrictIds !== null && linkedAppsRaw.length === 0) {
+      const citizenDistrictAllowed = Boolean(
+        card.citizen?.district_id && allowedDistrictIds.includes(card.citizen.district_id),
+      );
+      if (!citizenDistrictAllowed) {
+        return { card: null, node: undefined, linkedApplications: [] };
+      }
+    }
+
+    const allowedAppSet = new Set(linkedAppsRaw.map((a) => a.id));
+    let totalIn = 0;
+    let totalOut = 0;
+    let inDegree = 0;
+    let outDegree = 0;
+
+    for (const tr of cardTransfers) {
+      if (tr.application?.is_deleted) continue;
+      if (
+        allowedDistrictIds !== null &&
+        tr.application_id &&
+        !allowedAppSet.has(tr.application_id)
+      ) {
+        continue;
+      }
+      const amt = Number(tr.amount) || 0;
+      const isUzs = !tr.currency || tr.currency.toUpperCase() === 'UZS';
+      if (tr.receiver_card_id === card.id) {
+        inDegree += 1;
+        if (isUzs) totalIn += amt;
+      }
+      if (tr.sender_card_id === card.id) {
+        outDegree += 1;
+        if (isUzs) totalOut += amt;
+      }
+    }
+
+    const linkedApplications: LinkedApplicationInfo[] = linkedAppsRaw.map((app) => {
+      const roleInApp: 'RECEIVER' | 'SENDER' | 'RELATED' =
+        app.transfer?.receiver_card_id === card.id
+          ? 'RECEIVER'
+          : app.transfer?.sender_card_id === card.id
+            ? 'SENDER'
+            : 'RELATED';
+      const rawDate = app.date || app.created_at;
+      return {
+        id: app.id,
+        application_number: app.application_number || 'Raqamsiz',
+        status: app.status,
+        status_label: app.application_status?.name || app.status || 'YANGI',
+        status_color: app.application_status?.color || '#3b82f6',
+        date: rawDate ? (typeof rawDate === 'string' ? rawDate : rawDate.toISOString()) : null,
+        citizen_name: app.citizen
+          ? `${app.citizen.last_name || ''} ${app.citizen.first_name || ''}`.trim()
+          : 'Noma‘lum fuqaro',
+        citizen_phone: app.citizen?.phone_number || null,
+        role_in_that_app: roleInApp,
+        transfer_amount: app.transfer?.amount ? Number(app.transfer.amount) : null,
+        currency: app.transfer?.currency || 'UZS',
+        payment_provider: app.transfer?.payment_provider?.name || null,
+        description: app.description,
+      };
+    });
+
+    let role: GraphCardRole = 'VICTIM_SOURCE';
+    let riskScore = 15;
+    if (inDegree > 0 && outDegree === 0) {
+      role = 'MULE_DROPPER';
+      riskScore = Math.min(95, 60 + inDegree * 10 + (linkedApplications.length > 1 ? 20 : 0));
+    } else if (inDegree > 0 && outDegree > 0) {
+      role = 'TRANSIT';
+      riskScore = Math.min(85, 40 + (inDegree + outDegree) * 5);
+    }
+
+    const ownerName =
+      card.full_name ||
+      (card.citizen
+        ? `${card.citizen.last_name || ''} ${card.citizen.first_name || ''}`.trim()
+        : undefined);
+
+    const node: IGraphNode = {
+      id: card.id,
+      cardNumber: cleanNum,
+      maskedCard: this.formatCard(cleanNum),
+      bankName: card.bank?.name || this.identifyBank(cleanNum),
+      totalIn,
+      totalOut,
+      netFlow: totalIn - totalOut,
+      inDegree,
+      outDegree,
+      reportsCount: linkedApplications.length,
+      reportIds: linkedApplications.map((a) => a.id),
+      riskScore,
+      role,
+      isBlacklisted: riskScore >= 75,
+      ownerName: ownerName || undefined,
+      phone: card.citizen?.phone_number || undefined,
+      passport: card.citizen?.passport || undefined,
+      pinfl: card.citizen?.pinfl || undefined,
+      linkedApplications,
+    };
 
     return {
       card,
       node,
-      linkedApplications: node?.linkedApplications || [],
+      linkedApplications,
     };
   }
 }

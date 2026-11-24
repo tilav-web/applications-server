@@ -5,14 +5,20 @@ import {
   OnModuleDestroy,
   OnModuleInit,
 } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
 import { ModuleRef } from '@nestjs/core';
 import { InjectRepository } from '@nestjs/typeorm';
+import { createCipheriv, createDecipheriv, createHash, randomBytes } from 'crypto';
 import { Repository } from 'typeorm';
 
 import { Role } from '../../common/enums/role.enum';
 import { ApplicationsReportsService } from '../applications/reports/applications-reports.service';
 import { SystemSetting } from '../audit/system-setting.entity';
 import { User } from '../users/user.entity';
+
+const TELEGRAM_TOKEN_PATTERN = /^\d+:[A-Za-z0-9_-]{20,}$/;
+const ENCRYPTED_TOKEN_PREFIX = 'enc:v1:';
+const SVODKA_COOLDOWN_MS = 15_000;
 
 interface TelegramGetMeResponse {
   ok: boolean;
@@ -60,8 +66,10 @@ export class TelegramBotService implements OnModuleInit, OnModuleDestroy {
   private activeToken: string | null = null;
   private isEnabled = false;
   private isPolling = false;
+  private pollGeneration = 0;
   private pollAbortController: AbortController | null = null;
   private lastUpdateId = 0;
+  private readonly svodkaCooldowns = new Map<string, number>();
 
   constructor(
     @InjectRepository(SystemSetting)
@@ -69,7 +77,53 @@ export class TelegramBotService implements OnModuleInit, OnModuleDestroy {
     @InjectRepository(User)
     private readonly userRepo: Repository<User>,
     private readonly moduleRef: ModuleRef,
+    private readonly configService: ConfigService,
   ) {}
+
+  private getEncryptionKey(): Buffer {
+    const rawSecret =
+      this.configService.get<string>('TELEGRAM_TOKEN_ENCRYPTION_KEY') ||
+      this.configService.get<string>('JWT_ACCESS_SECRET') ||
+      'uvd_access_token_secret_key_2026';
+    return createHash('sha256').update(rawSecret).digest();
+  }
+
+  private encryptToken(plain: string): string {
+    if (!plain) return '';
+    const iv = randomBytes(12);
+    const cipher = createCipheriv('aes-256-gcm', this.getEncryptionKey(), iv);
+    const encrypted = Buffer.concat([cipher.update(plain, 'utf8'), cipher.final()]);
+    const tag = cipher.getAuthTag();
+    return `${ENCRYPTED_TOKEN_PREFIX}${iv.toString('hex')}:${tag.toString('hex')}:${encrypted.toString('hex')}`;
+  }
+
+  private decryptToken(stored: string): string {
+    const trimmed = (stored || '').trim();
+    if (!trimmed) return '';
+    if (!trimmed.startsWith(ENCRYPTED_TOKEN_PREFIX)) {
+      // Eski shifrlanmagan tokenlar bilan moslik (backward compatibility)
+      return trimmed;
+    }
+    try {
+      const parts = trimmed.slice(ENCRYPTED_TOKEN_PREFIX.length).split(':');
+      if (parts.length !== 3) return '';
+      const [ivHex, tagHex, dataHex] = parts;
+      const decipher = createDecipheriv(
+        'aes-256-gcm',
+        this.getEncryptionKey(),
+        Buffer.from(ivHex, 'hex'),
+      );
+      decipher.setAuthTag(Buffer.from(tagHex, 'hex'));
+      const decrypted = Buffer.concat([
+        decipher.update(Buffer.from(dataHex, 'hex')),
+        decipher.final(),
+      ]);
+      return decrypted.toString('utf8');
+    } catch {
+      this.logger.warn('Telegram bot tokenini deshifrlashda xatolik yuz berdi');
+      return '';
+    }
+  }
 
   async onModuleInit(): Promise<void> {
     try {
@@ -101,7 +155,8 @@ export class TelegramBotService implements OnModuleInit, OnModuleDestroy {
   }
 
   async reloadFromSettings(): Promise<void> {
-    const token = (await this.getSetting('telegram_bot_token')).trim();
+    const rawStored = await this.getSetting('telegram_bot_token');
+    const token = this.decryptToken(rawStored);
     const enabled = (await this.getSetting('telegram_bot_enabled')) === 'true';
 
     this.activeToken = token || null;
@@ -114,7 +169,7 @@ export class TelegramBotService implements OnModuleInit, OnModuleDestroy {
   }
 
   async getConfigView(): Promise<TelegramBotConfigView> {
-    const token = (await this.getSetting('telegram_bot_token')).trim();
+    const token = this.decryptToken(await this.getSetting('telegram_bot_token'));
     const enabled = (await this.getSetting('telegram_bot_enabled')) === 'true';
     const botId = (await this.getSetting('telegram_bot_id')).trim() || null;
     const botUsername = (await this.getSetting('telegram_bot_username')).trim() || null;
@@ -144,8 +199,10 @@ export class TelegramBotService implements OnModuleInit, OnModuleDestroy {
    */
   async configureBot(token: string, enabled = true): Promise<TelegramBotConfigView> {
     const cleanToken = (token || '').trim();
-    if (!cleanToken) {
-      throw new BadRequestException('Telegram Bot tokenini kiriting');
+    if (!cleanToken || !TELEGRAM_TOKEN_PATTERN.test(cleanToken)) {
+      throw new BadRequestException(
+        "Telegram Bot tokeni formati noto'g'ri (masalan: 123456789:AAH...)",
+      );
     }
 
     let meData: TelegramGetMeResponse;
@@ -167,7 +224,11 @@ export class TelegramBotService implements OnModuleInit, OnModuleDestroy {
     }
 
     const bot = meData.result;
-    await this.setSetting('telegram_bot_token', cleanToken, 'Telegram Bot API token');
+    await this.setSetting(
+      'telegram_bot_token',
+      this.encryptToken(cleanToken),
+      'Telegram Bot API token (AES-256-GCM)',
+    );
     await this.setSetting(
       'telegram_bot_enabled',
       enabled ? 'true' : 'false',
@@ -317,25 +378,31 @@ export class TelegramBotService implements OnModuleInit, OnModuleDestroy {
   private startPolling(): void {
     if (this.isPolling || !this.activeToken) return;
     this.isPolling = true;
+    const gen = ++this.pollGeneration;
     this.logger.log('Telegram Bot long-polling ishga tushirildi');
-    void this.pollLoop();
+    void this.pollLoop(gen);
   }
 
   private stopPolling(): void {
     this.isPolling = false;
+    this.pollGeneration++;
     if (this.pollAbortController) {
       this.pollAbortController.abort();
       this.pollAbortController = null;
     }
   }
 
-  private async pollLoop(): Promise<void> {
-    while (this.isPolling && this.activeToken) {
+  private async pollLoop(generation: number): Promise<void> {
+    while (this.isPolling && this.activeToken && this.pollGeneration === generation) {
       try {
         this.pollAbortController = new AbortController();
+        const timeoutSignal = AbortSignal.timeout(35_000);
+        const combinedSignal = AbortSignal.any([this.pollAbortController.signal, timeoutSignal]);
         const url = `https://api.telegram.org/bot${this.activeToken}/getUpdates?timeout=25&offset=${this.lastUpdateId + 1}&allowed_updates=["message","callback_query"]`;
-        const resp = await fetch(url, { signal: this.pollAbortController.signal });
+        const resp = await fetch(url, { signal: combinedSignal });
         const data = (await resp.json()) as { ok?: boolean; result?: TelegramUpdate[] };
+
+        if (this.pollGeneration !== generation) break;
 
         if (data.ok && Array.isArray(data.result)) {
           for (const upd of data.result) {
@@ -348,7 +415,11 @@ export class TelegramBotService implements OnModuleInit, OnModuleDestroy {
           await new Promise((r) => setTimeout(r, 4000));
         }
       } catch (err) {
-        if ((err as Error).name === 'AbortError' || !this.isPolling) {
+        if (
+          (err as Error).name === 'AbortError' ||
+          !this.isPolling ||
+          this.pollGeneration !== generation
+        ) {
           break;
         }
         await new Promise((r) => setTimeout(r, 5000));
@@ -360,7 +431,18 @@ export class TelegramBotService implements OnModuleInit, OnModuleDestroy {
     cb: NonNullable<TelegramUpdate['callback_query']>,
   ): Promise<void> {
     const data = (cb.data || '').trim();
-    const chatId = String(cb.message?.chat?.id || cb.from.id);
+    // Xavfsizlik: faqat shaxsiy (private) chat va cb.from.id bo'yicha tekshiramiz (guruh chatlar bloklanadi)
+    const chatType = cb.message?.chat?.type;
+    if (chatType && chatType !== 'private') {
+      await this.answerCallbackQuery(
+        cb.id,
+        'Maxfiy hisobotlar faqat shaxsiy (private) chatda yuklab olinadi',
+        true,
+      );
+      return;
+    }
+
+    const actorChatId = String(cb.from.id);
 
     if (data.startsWith('svodka_excel:')) {
       const dateStr = data.slice('svodka_excel:'.length).trim();
@@ -369,8 +451,19 @@ export class TelegramBotService implements OnModuleInit, OnModuleDestroy {
         return;
       }
 
+      const now = Date.now();
+      const lastReq = this.svodkaCooldowns.get(actorChatId) || 0;
+      if (now - lastReq < SVODKA_COOLDOWN_MS) {
+        await this.answerCallbackQuery(
+          cb.id,
+          'Iltimos, keyingi svodka so‘rovi uchun 15 soniya kuting',
+          true,
+        );
+        return;
+      }
+
       const user = await this.userRepo.findOne({
-        where: { telegram_chat_id: chatId },
+        where: { telegram_chat_id: actorChatId },
         relations: { auth: true },
       });
       const role = user?.auth?.role;
@@ -383,6 +476,7 @@ export class TelegramBotService implements OnModuleInit, OnModuleDestroy {
         return;
       }
 
+      this.svodkaCooldowns.set(actorChatId, now);
       await this.answerCallbackQuery(cb.id, '⏳ Excel svodka tayyorlanmoqda...');
 
       try {
@@ -393,7 +487,7 @@ export class TelegramBotService implements OnModuleInit, OnModuleDestroy {
         const filename = `Viloyat_Tezkor_Svodkasi_${dateStr}.xlsx`;
 
         const sent = await this.sendDocument(
-          chatId,
+          actorChatId,
           buffer,
           filename,
           `📊 <b>Viloyat Tezkor Svodkasi</b>\n📅 Sana: <code>${dateStr}</code>\n⚡ So'rov asosida (on-demand) generatsiya qilindi`,
@@ -401,15 +495,15 @@ export class TelegramBotService implements OnModuleInit, OnModuleDestroy {
 
         if (!sent) {
           await this.sendMessage(
-            chatId,
+            actorChatId,
             `❌ Excel svodkani yuborishda xatolik yuz berdi (${dateStr}).`,
           );
         }
       } catch (err) {
         this.logger.error(`Telegram svodka_excel xatosi (${dateStr}):`, err);
         await this.sendMessage(
-          chatId,
-          `❌ Excel svodka generatsiya qilishda xatolik: ${this.escapeHtml((err as Error).message)}`,
+          actorChatId,
+          `❌ Excel svodka generatsiya qilishda ichki xatolik yuz berdi. Iltimos, birozdan so'ng qayta urinib ko'ring.`,
         );
       }
       return;
@@ -431,6 +525,15 @@ export class TelegramBotService implements OnModuleInit, OnModuleDestroy {
     const text = msg.text.trim();
 
     if (text.startsWith('/start')) {
+      // Xavfsizlik: guruh/kanal chatlariga xodim hisobini bog'lash qat'iyan taqiqlanadi
+      if (msg.chat.type !== 'private') {
+        await this.sendMessage(
+          chatId,
+          '⛔ Xavfsizlik sababli botni faqat shaxsiy (private) chatda ulash mumkin.',
+        );
+        return;
+      }
+
       const parts = text.split(/\s+/);
       const token = parts[1]?.trim();
 
@@ -466,6 +569,14 @@ export class TelegramBotService implements OnModuleInit, OnModuleDestroy {
         );
         return;
       }
+
+      // 1:1 bog'lanish: ushbu Telegram chat avval boshqa foydalanuvchiga ulangan bo'lsa, uzib qo'yamiz
+      await this.userRepo
+        .createQueryBuilder()
+        .update(User)
+        .set({ telegram_chat_id: null, telegram_username: null, telegram_first_name: null })
+        .where('telegram_chat_id = :chatId AND id != :userId', { chatId, userId: user.id })
+        .execute();
 
       user.telegram_chat_id = chatId;
       user.telegram_username = msg.from?.username || msg.chat.username || null;

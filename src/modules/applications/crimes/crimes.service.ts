@@ -1,10 +1,11 @@
-import { Injectable, NotFoundException, OnModuleInit } from '@nestjs/common';
+import { BadRequestException, Injectable, NotFoundException, OnModuleInit } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { FindOptionsWhere, ILike, Repository } from 'typeorm';
 
 import { assertNoDependencies } from '../../../common/database/dependency-guard.util';
 import type { PaginatedResult } from '../../../common/interfaces/pagination.interface';
 import { formatTitleCase } from '../../../common/utils/name-formatter.util';
+import { isPgUniqueViolation } from '../../../common/utils/normalization.util';
 import { Crime } from './crime.entity';
 import type { CreateCrimeDto } from './dto/create-crime.dto';
 import type { UpdateCrimeDto } from './dto/update-crime.dto';
@@ -42,13 +43,25 @@ export class CrimesService implements OnModuleInit {
   }
 
   async create(dto: CreateCrimeDto): Promise<Crime> {
-    const article = dto.article ? formatTitleCase(dto.article) : '';
+    const article = dto.article ? formatTitleCase(dto.article.trim()) : '';
+    if (!article) throw new BadRequestException('Jinoyat moddasi kiritilishi shart');
+    const existing = await this.crimeRepo.findOne({ where: { article: ILike(article) } });
+    if (existing) return existing;
+
     const crime = this.crimeRepo.create({
       ...dto,
       article,
-      title: dto.title ? formatTitleCase(dto.title) : article,
+      title: dto.title ? formatTitleCase(dto.title.trim()) : article,
     });
-    return this.crimeRepo.save(crime);
+    try {
+      return await this.crimeRepo.save(crime);
+    } catch (err) {
+      if (isPgUniqueViolation(err)) {
+        const raceExisting = await this.crimeRepo.findOne({ where: { article: ILike(article) } });
+        if (raceExisting) return raceExisting;
+      }
+      throw err;
+    }
   }
 
   async findAll(page = 1, limit = 50, search?: string): Promise<PaginatedResult<Crime>> {
@@ -100,11 +113,17 @@ export class CrimesService implements OnModuleInit {
     const crime = await this.findOne(id);
     const updatedData: Partial<Crime> = { ...dto };
     if (dto.article !== undefined) {
-      updatedData.article = dto.article ? formatTitleCase(dto.article) : '';
+      const nextArticle = dto.article ? formatTitleCase(dto.article.trim()) : '';
+      if (!nextArticle) throw new BadRequestException("Jinoyat moddasi bo'sh bo'lishi mumkin emas");
+      const existing = await this.crimeRepo.findOne({ where: { article: ILike(nextArticle) } });
+      if (existing && existing.id !== id) {
+        throw new BadRequestException(`"${nextArticle}" jinoyat moddasi allaqachon mavjud`);
+      }
+      updatedData.article = nextArticle;
     }
     if (dto.title !== undefined) {
       updatedData.title = dto.title
-        ? formatTitleCase(dto.title)
+        ? formatTitleCase(dto.title.trim())
         : updatedData.article || crime.article;
     }
     Object.assign(crime, updatedData);
@@ -129,6 +148,11 @@ export class CrimesService implements OnModuleInit {
           column: 'crime_id',
           label: 'aniqlangan jinoyat',
           extraWhere: 'is_deleted = false',
+        },
+        {
+          table: 'application_custom_fields',
+          column: 'crime_id',
+          label: "ariza qo'shimcha maydoni",
         },
       ],
     );

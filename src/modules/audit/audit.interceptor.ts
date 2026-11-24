@@ -1,12 +1,6 @@
-import {
-  CallHandler,
-  ExecutionContext,
-  ForbiddenException,
-  Injectable,
-  NestInterceptor,
-} from '@nestjs/common';
+import { CallHandler, ExecutionContext, Injectable, NestInterceptor } from '@nestjs/common';
 import type { Request, Response } from 'express';
-import { from, Observable, switchMap, tap } from 'rxjs';
+import { Observable, tap } from 'rxjs';
 
 import type { JwtAccessPayload } from '../../common/types/jwt-payload.interface';
 import { AuditService } from './audit.service';
@@ -17,11 +11,20 @@ const SENSITIVE_KEYS = new Set([
   'password',
   'current_password',
   'new_password',
+  'old_password',
+  'confirm_password',
   'token',
+  'bot_token',
+  'telegram_bot_token',
   'access_token',
   'refresh_token',
   'secret',
   'hashed_refresh_token',
+  'passport',
+  'pinfl',
+  'card_number',
+  'receiver_card_number',
+  'sender_card_number',
 ]);
 
 function sanitizePayload(input: unknown, depth = 0): Record<string, unknown> | null {
@@ -262,7 +265,9 @@ export class AuditInterceptor implements NestInterceptor {
       return next.handle();
     }
 
-    const req = context.switchToHttp().getRequest<Request & { user?: JwtAccessPayload }>();
+    const req = context
+      .switchToHttp()
+      .getRequest<Request & { user?: JwtAccessPayload; __auditLogged?: boolean }>();
     const res = context.switchToHttp().getResponse<Response>();
 
     const method = req.method?.toUpperCase() || 'GET';
@@ -272,85 +277,77 @@ export class AuditInterceptor implements NestInterceptor {
       typeof req.headers['user-agent'] === 'string' ? req.headers['user-agent'] : null;
     const startedAt = Date.now();
 
-    return from(this.auditService.isIpBlocked(ip)).pipe(
-      switchMap((blocked) => {
-        if (blocked) {
-          void this.auditService.recordTraffic(ip, method, rawPath, 403);
-          throw new ForbiddenException('Ushbu IP manzil xavfsizlik sababli vaqtincha bloklangan');
-        }
+    return next.handle().pipe(
+      tap({
+        next: () => {
+          const statusCode = res.statusCode || 200;
+          void this.auditService.recordTraffic(ip, method, rawPath, statusCode);
 
-        return next.handle().pipe(
-          tap({
-            next: () => {
-              const statusCode = res.statusCode || 200;
-              void this.auditService.recordTraffic(ip, method, rawPath, statusCode);
+          const bodyUsername =
+            req.body && typeof (req.body as Record<string, unknown>).username === 'string'
+              ? ((req.body as Record<string, unknown>).username as string)
+              : null;
+          const username = req.user?.username ?? bodyUsername;
 
-              const bodyUsername =
-                req.body && typeof (req.body as Record<string, unknown>).username === 'string'
-                  ? ((req.body as Record<string, unknown>).username as string)
-                  : null;
-              const username = req.user?.username ?? bodyUsername;
+          const classified = classifyAuditEvent(method, rawPath, statusCode, username);
+          if (classified.shouldAudit) {
+            void this.auditService.log({
+              user_id: req.user?.sub ?? null,
+              username,
+              role: req.user?.role ?? null,
+              action: classified.action,
+              entity_type: classified.entity_type,
+              entity_id: classified.entity_id,
+              summary: classified.summary,
+              details: MUTATING_METHODS.has(method) ? sanitizePayload(req.body) : null,
+              method,
+              path: rawPath,
+              ip,
+              user_agent: userAgent,
+              status_code: statusCode,
+              is_success: true,
+              severity: classified.severity,
+              duration_ms: Date.now() - startedAt,
+            });
+          }
+        },
+        error: (err: { status?: number; getStatus?: () => number; message?: string }) => {
+          const statusCode =
+            typeof err?.getStatus === 'function' ? err.getStatus() : err?.status || 500;
+          void this.auditService.recordTraffic(ip, method, rawPath, statusCode);
 
-              const classified = classifyAuditEvent(method, rawPath, statusCode, username);
-              if (classified.shouldAudit) {
-                void this.auditService.log({
-                  user_id: req.user?.sub ?? null,
-                  username,
-                  role: req.user?.role ?? null,
-                  action: classified.action,
-                  entity_type: classified.entity_type,
-                  entity_id: classified.entity_id,
-                  summary: classified.summary,
-                  details: MUTATING_METHODS.has(method) ? sanitizePayload(req.body) : null,
-                  method,
-                  path: rawPath,
-                  ip,
-                  user_agent: userAgent,
-                  status_code: statusCode,
-                  is_success: true,
-                  severity: classified.severity,
-                  duration_ms: Date.now() - startedAt,
-                });
-              }
-            },
-            error: (err: { status?: number; getStatus?: () => number; message?: string }) => {
-              const statusCode =
-                typeof err?.getStatus === 'function' ? err.getStatus() : err?.status || 500;
-              void this.auditService.recordTraffic(ip, method, rawPath, statusCode);
+          const bodyUsername =
+            req.body && typeof (req.body as Record<string, unknown>).username === 'string'
+              ? ((req.body as Record<string, unknown>).username as string)
+              : null;
+          const username = req.user?.username ?? bodyUsername;
 
-              const bodyUsername =
-                req.body && typeof (req.body as Record<string, unknown>).username === 'string'
-                  ? ((req.body as Record<string, unknown>).username as string)
-                  : null;
-              const username = req.user?.username ?? bodyUsername;
-
-              const classified = classifyAuditEvent(method, rawPath, statusCode, username);
-              if (classified.shouldAudit) {
-                void this.auditService.log({
-                  user_id: req.user?.sub ?? null,
-                  username,
-                  role: req.user?.role ?? null,
-                  action: classified.action,
-                  entity_type: classified.entity_type,
-                  entity_id: classified.entity_id,
-                  summary: classified.summary,
-                  details: {
-                    error: err?.message || 'Xatolik',
-                    ...(MUTATING_METHODS.has(method) ? sanitizePayload(req.body) || {} : {}),
-                  },
-                  method,
-                  path: rawPath,
-                  ip,
-                  user_agent: userAgent,
-                  status_code: statusCode,
-                  is_success: false,
-                  severity: classified.severity,
-                  duration_ms: Date.now() - startedAt,
-                });
-              }
-            },
-          }),
-        );
+          const classified = classifyAuditEvent(method, rawPath, statusCode, username);
+          if (classified.shouldAudit) {
+            req.__auditLogged = true;
+            void this.auditService.log({
+              user_id: req.user?.sub ?? null,
+              username,
+              role: req.user?.role ?? null,
+              action: classified.action,
+              entity_type: classified.entity_type,
+              entity_id: classified.entity_id,
+              summary: classified.summary,
+              details: {
+                error: err?.message || 'Xatolik',
+                ...(MUTATING_METHODS.has(method) ? sanitizePayload(req.body) || {} : {}),
+              },
+              method,
+              path: rawPath,
+              ip,
+              user_agent: userAgent,
+              status_code: statusCode,
+              is_success: false,
+              severity: classified.severity,
+              duration_ms: Date.now() - startedAt,
+            });
+          }
+        },
       }),
     );
   }

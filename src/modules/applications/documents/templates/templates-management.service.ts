@@ -15,14 +15,20 @@ import * as path from 'path';
 import PizZip from 'pizzip';
 import { Repository } from 'typeorm';
 
+import { Role } from '../../../../common/enums/role.enum';
 import type { JwtAccessPayload } from '../../../../common/types/jwt-payload.interface';
+import {
+  assertDistrictAccess,
+  getAllowedDistrictIds,
+} from '../../../../common/utils/district-scope.util';
 import { MinioService } from '../../../minio/minio.service';
+import { User } from '../../../users/user.entity';
 import { Application } from '../../application.entity';
 import { SuspectFieldConfig } from '../../suspect-fields/suspect-field-config.entity';
 import { Transfer } from '../../transfers/transfer.entity';
 import {
-  buildSafeOnlyOfficeInternalUrl,
   createSignedFileAccessQuery,
+  fetchSafeOnlyOfficeFile,
   getOnlyOfficeJwtSecret,
   signOnlyOfficeJwt,
   verifyOnlyOfficeCallbackRequest,
@@ -58,6 +64,8 @@ export class TemplatesManagementService implements OnApplicationBootstrap {
     private readonly transferRepo: Repository<Transfer>,
     @InjectRepository(SuspectFieldConfig)
     private readonly suspectFieldConfigRepo: Repository<SuspectFieldConfig>,
+    @InjectRepository(User)
+    private readonly userRepo: Repository<User>,
     private readonly minioService: MinioService,
     private readonly configService: ConfigService,
     private readonly docxEngine: DocxEngineService,
@@ -338,9 +346,21 @@ export class TemplatesManagementService implements OnApplicationBootstrap {
     const fileUrl = `http://${internalServerHost}/templates/${tpl.id}/file?${signedQuery}`;
     const callbackUrl = `http://${internalServerHost}/templates/${tpl.id}/callback`;
 
-    const userName = user
-      ? `${user.first_name || ''} ${user.last_name || ''}`.trim() || 'Admin'
-      : 'Admin';
+    const actorUser = user?.sub
+      ? await this.userRepo.findOne({ where: { auth_id: user.sub } })
+      : null;
+
+    const userName = actorUser
+      ? `${actorUser.first_name || ''} ${actorUser.last_name || ''}`.trim() ||
+        user?.username ||
+        'Admin'
+      : user
+        ? `${user.first_name || ''} ${user.last_name || ''}`.trim() || user.username || 'Admin'
+        : 'Admin';
+
+    const canEditTemplate = Boolean(
+      user?.role && [Role.SUPER_ADMIN, Role.ADMIN, Role.STAFF, Role.INSPECTOR].includes(user.role),
+    );
 
     const docKey = tpl.doc_key || `tpl_${tpl.id}_${new Date(tpl.updated_at).getTime()}`;
 
@@ -352,29 +372,29 @@ export class TemplatesManagementService implements OnApplicationBootstrap {
         title: `${tpl.title}.docx`,
         url: fileUrl,
         permissions: {
-          comment: true,
+          comment: canEditTemplate,
           copy: true,
           download: true,
-          edit: true,
-          fillForms: true,
-          modifyContentControl: true,
-          modifyFilter: true,
+          edit: canEditTemplate,
+          fillForms: canEditTemplate,
+          modifyContentControl: canEditTemplate,
+          modifyFilter: canEditTemplate,
           print: true,
-          review: true,
+          review: canEditTemplate,
         },
       },
       editorConfig: {
-        mode: 'edit',
+        mode: canEditTemplate ? 'edit' : 'view',
         lang: 'uz-UZ',
         user: {
-          id: String(user?.id || 'admin'),
+          id: String(actorUser?.id || user?.sub || 'viewer'),
           name: userName,
         },
-        callbackUrl,
+        ...(canEditTemplate ? { callbackUrl } : {}),
         customization: {
-          autosave: true,
+          autosave: canEditTemplate,
           chat: false,
-          comments: true,
+          comments: canEditTemplate,
           compactHeader: false,
           toolbarNoTabs: false,
           zoom: 100,
@@ -418,42 +438,35 @@ export class TemplatesManagementService implements OnApplicationBootstrap {
     req?: Request,
   ): Promise<{ error: number }> {
     const onlyOfficeSecret = getOnlyOfficeJwtSecret(this.configService);
+    // Xavfsizlik: faqat imzolangan JWT payload qiymatlariga ishonamiz (imzolanmagan body fallback yo'q!)
     const verifiedPayload = req
       ? verifyOnlyOfficeCallbackRequest(req, body, onlyOfficeSecret)
       : body;
 
-    const status = verifiedPayload?.status ?? body?.status;
+    const status = verifiedPayload?.status;
     this.logger.log(
       `ONLYOFFICE template callback keldi (Template ID: ${id}, Status: ${String(status)})`,
     );
 
     // 2 = Document is ready for saving, 6 = Force-saved
     if (status === 2 || status === 6) {
-      const downloadUrl =
-        typeof verifiedPayload?.url === 'string'
-          ? verifiedPayload.url
-          : typeof body?.url === 'string'
-            ? body.url
-            : '';
+      const downloadUrl = typeof verifiedPayload?.url === 'string' ? verifiedPayload.url : '';
+      const callbackKey = typeof verifiedPayload?.key === 'string' ? verifiedPayload.key : '';
       if (!downloadUrl) {
         return { error: 0 };
       }
 
       try {
-        // SSRF himoyasi: faqat ichki ishonchli ONLYOFFICE konteyneridan yuklab olamiz
-        const internalBaseUrl =
-          this.configService.get<string>('ONLYOFFICE_INTERNAL_URL') || 'http://uvd_app_onlyoffice';
-        const targetUrl = buildSafeOnlyOfficeInternalUrl(downloadUrl, internalBaseUrl);
-
-        const response = await fetch(targetUrl);
-        if (!response.ok) {
-          throw new Error(`Shablon faylini yuklab olishda xatolik: HTTP ${response.status}`);
+        const tpl = await this.getTemplateById(id);
+        if (tpl.doc_key && callbackKey && callbackKey !== tpl.doc_key) {
+          this.logger.warn(`ONLYOFFICE template callback key mos kelmadi (Template ID: ${id})`);
+          return { error: 1 };
         }
 
-        const arrayBuffer = await response.arrayBuffer();
-        const buffer = Buffer.from(arrayBuffer);
-
-        const tpl = await this.getTemplateById(id);
+        // SSRF va o'lcham himoyasi: faqat ichki ishonchli ONLYOFFICE konteyneridan yuklab olamiz
+        const internalBaseUrl =
+          this.configService.get<string>('ONLYOFFICE_INTERNAL_URL') || 'http://uvd_app_onlyoffice';
+        const buffer = await fetchSafeOnlyOfficeFile(downloadUrl, internalBaseUrl);
 
         // MinIO ga yozish
         await this.minioService.uploadBuffer(
@@ -508,7 +521,7 @@ export class TemplatesManagementService implements OnApplicationBootstrap {
 
     if (applicationId) {
       application = await this.applicationRepo.findOne({
-        where: { id: applicationId },
+        where: { id: applicationId, is_deleted: false },
         relations: {
           citizen: {
             district: true,
@@ -536,6 +549,18 @@ export class TemplatesManagementService implements OnApplicationBootstrap {
           },
         },
       });
+
+      if (application && user?.role === Role.DISTRICT_OFFICER && user.sub) {
+        const allowedDistrictIds = await getAllowedDistrictIds(
+          this.userRepo,
+          user as JwtAccessPayload,
+        );
+        assertDistrictAccess(
+          allowedDistrictIds,
+          application.district_id,
+          "Siz faqat o'zingizga biriktirilgan tuman arizasidan shablon sinay olasiz",
+        );
+      }
 
       transfers = await this.transferRepo.find({
         where: { application_id: applicationId },

@@ -11,11 +11,16 @@ import {
   UseGuards,
 } from '@nestjs/common';
 
+import { Roles } from '../../../common/decorators/roles.decorator';
+import { Role } from '../../../common/enums/role.enum';
 import { JwtAuthGuard } from '../../../common/guards/jwt-auth.guard';
-import { type CreateWorkplaceInput, WorkplacesService } from './workplaces.service';
+import { RolesGuard } from '../../../common/guards/roles.guard';
+import { normalizePagination } from '../../../common/utils/pagination.util';
+import { CreateWorkplaceDto, UpdateWorkplaceDto } from './dto/workplace.dto';
+import { WorkplacesService } from './workplaces.service';
 
 @Controller('workplaces')
-@UseGuards(JwtAuthGuard)
+@UseGuards(JwtAuthGuard, RolesGuard)
 export class WorkplacesController {
   constructor(private readonly service: WorkplacesService) {}
 
@@ -29,9 +34,10 @@ export class WorkplacesController {
     @Query('occupation_id') occupation_id?: string,
     @Query('include_inactive') include_inactive?: string,
   ) {
+    const pagination = normalizePagination(page, limit, 20, 200);
     return this.service.findAll({
-      page: Number(page) || 1,
-      limit: Number(limit) || 20,
+      page: pagination.page,
+      limit: pagination.limit,
       search,
       district_id,
       occupation_category_id,
@@ -46,16 +52,19 @@ export class WorkplacesController {
   }
 
   @Post()
-  create(@Body() body: CreateWorkplaceInput) {
+  @Roles(Role.SUPER_ADMIN, Role.ADMIN, Role.STAFF, Role.INSPECTOR)
+  create(@Body() body: CreateWorkplaceDto) {
     return this.service.create(body);
   }
 
   @Patch(':id')
-  update(@Param('id', ParseUUIDPipe) id: string, @Body() body: Partial<CreateWorkplaceInput>) {
+  @Roles(Role.SUPER_ADMIN, Role.ADMIN, Role.STAFF, Role.INSPECTOR)
+  update(@Param('id', ParseUUIDPipe) id: string, @Body() body: UpdateWorkplaceDto) {
     return this.service.update(id, body);
   }
 
   @Delete(':id')
+  @Roles(Role.SUPER_ADMIN, Role.ADMIN)
   remove(@Param('id', ParseUUIDPipe) id: string) {
     return this.service.remove(id);
   }

@@ -1,12 +1,21 @@
-import { Injectable, NotFoundException } from '@nestjs/common';
+import { ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import type { Response } from 'express';
 import { In, Repository } from 'typeorm';
 
 import { assertNoDependencies } from '../../../common/database/dependency-guard.util';
 import type { PaginatedResult } from '../../../common/interfaces/pagination.interface';
+import type { JwtAccessPayload } from '../../../common/types/jwt-payload.interface';
+import { getAllowedDistrictIds } from '../../../common/utils/district-scope.util';
 import { formatUzbekName } from '../../../common/utils/name-formatter.util';
+import {
+  isPgUniqueViolation,
+  normalizePassport,
+  normalizePinfl,
+  normalizeUzPhone,
+} from '../../../common/utils/normalization.util';
 import { IntelligenceSyncService } from '../../intelligence/intelligence-sync.service';
+import { User } from '../../users/user.entity';
 import { Citizen } from './citizen.entity';
 import type { CreateCitizenDto } from './dto/create-citizen.dto';
 import type { UpdateCitizenDto } from './dto/update-citizen.dto';
@@ -17,33 +26,41 @@ export class CitizensService {
   constructor(
     @InjectRepository(Citizen)
     private readonly citizenRepo: Repository<Citizen>,
+    @InjectRepository(User)
+    private readonly userRepo: Repository<User>,
     private readonly excelService: CitizensExcelService,
     private readonly intelligenceSync: IntelligenceSyncService,
   ) {}
 
   async create(dto: CreateCitizenDto): Promise<Citizen> {
-    const cleanPassport = dto.passport ? dto.passport.trim().toUpperCase() : null;
-    const cleanPinfl = dto.pinfl ? dto.pinfl.trim() : null;
-    const cleanPhone = dto.phone_number ? dto.phone_number.replace(/\D/g, '') : null;
+    const cleanPassport = normalizePassport(dto.passport);
+    const cleanPinfl = normalizePinfl(dto.pinfl);
+    const cleanPhone = normalizeUzPhone(dto.phone_number);
 
-    if (cleanPassport) {
-      const existing = await this.citizenRepo.findOne({ where: { passport: cleanPassport } });
-      if (existing) return existing;
-    }
-    if (cleanPinfl) {
-      const existing = await this.citizenRepo.findOne({ where: { pinfl: cleanPinfl } });
-      if (existing) return existing;
-    }
-    if (cleanPhone && cleanPhone.length >= 7 && dto.first_name && dto.last_name) {
-      const existing = await this.citizenRepo.findOne({
-        where: {
-          phone_number: cleanPhone,
-          first_name: formatUzbekName(dto.first_name),
-          last_name: formatUzbekName(dto.last_name),
-        },
-      });
-      if (existing) return existing;
-    }
+    const findExisting = async (): Promise<Citizen | null> => {
+      if (cleanPassport) {
+        const existing = await this.citizenRepo.findOne({ where: { passport: cleanPassport } });
+        if (existing) return existing;
+      }
+      if (cleanPinfl) {
+        const existing = await this.citizenRepo.findOne({ where: { pinfl: cleanPinfl } });
+        if (existing) return existing;
+      }
+      if (cleanPhone && cleanPhone.length >= 7 && dto.first_name && dto.last_name) {
+        const existing = await this.citizenRepo.findOne({
+          where: {
+            phone_number: cleanPhone,
+            first_name: formatUzbekName(dto.first_name),
+            last_name: formatUzbekName(dto.last_name),
+          },
+        });
+        if (existing) return existing;
+      }
+      return null;
+    };
+
+    const existingBefore = await findExisting();
+    if (existingBefore) return existingBefore;
 
     const citizen = this.citizenRepo.create({
       ...dto,
@@ -54,7 +71,16 @@ export class CitizensService {
       pinfl: cleanPinfl,
       phone_number: cleanPhone,
     });
-    const saved = await this.citizenRepo.save(citizen);
+    let saved: Citizen;
+    try {
+      saved = await this.citizenRepo.save(citizen);
+    } catch (err) {
+      if (isPgUniqueViolation(err)) {
+        const raceExisting = await findExisting();
+        if (raceExisting) return raceExisting;
+      }
+      throw err;
+    }
     await this.intelligenceSync.syncCitizenEntity(saved);
     return saved;
   }
@@ -154,6 +180,29 @@ export class CitizensService {
     return qb;
   }
 
+  private applyDistrictScope(
+    qb: ReturnType<Repository<Citizen>['createQueryBuilder']>,
+    allowedDistrictIds: string[] | null,
+  ): void {
+    if (allowedDistrictIds === null) return;
+    if (allowedDistrictIds.length === 0) {
+      qb.andWhere('1 = 0');
+      return;
+    }
+    qb.andWhere(
+      `(
+        citizen.district_id IN (:...allowedDistrictIds)
+        OR EXISTS (
+          SELECT 1 FROM applications a
+          WHERE a.citizen_id = citizen.id
+            AND a.is_deleted = false
+            AND a.district_id IN (:...allowedDistrictIds)
+        )
+      )`,
+      { allowedDistrictIds },
+    );
+  }
+
   async findAll(
     page = 1,
     limit = 10,
@@ -171,11 +220,14 @@ export class CitizensService {
       birthDate?: string;
       districtId?: string;
     },
+    currentUser?: JwtAccessPayload,
   ): Promise<PaginatedResult<Citizen>> {
+    const allowedDistrictIds = await getAllowedDistrictIds(this.userRepo, currentUser);
     const take = limit;
     const skip = (page - 1) * limit;
 
     const qb = this.buildCitizensFilterQuery(search, filters);
+    this.applyDistrictScope(qb, allowedDistrictIds);
     const [matched, total] = await qb
       .select(['citizen.id', 'citizen.created_at'])
       .skip(skip)
@@ -216,7 +268,7 @@ export class CitizensService {
     };
   }
 
-  async findOne(id: string): Promise<Citizen> {
+  async findOne(id: string, currentUser?: JwtAccessPayload): Promise<Citizen> {
     const citizen = await this.citizenRepo.findOne({
       where: { id },
       relations: {
@@ -240,11 +292,32 @@ export class CitizensService {
       throw new NotFoundException(`Fuqaro (ID: ${id}) topilmadi`);
     }
 
+    const allowedDistrictIds = await getAllowedDistrictIds(this.userRepo, currentUser);
+    if (allowedDistrictIds !== null) {
+      const inOwnDistrict =
+        Boolean(citizen.district_id && allowedDistrictIds.includes(citizen.district_id)) ||
+        (citizen.applications || []).some(
+          (a) => !a.is_deleted && a.district_id && allowedDistrictIds.includes(a.district_id),
+        );
+      if (!inOwnDistrict) {
+        throw new ForbiddenException(
+          "Siz faqat o'zingizga biriktirilgan tuman(lar) fuqarolarini ko'rishingiz mumkin",
+        );
+      }
+      citizen.applications = (citizen.applications || []).filter(
+        (a) => !a.is_deleted && a.district_id && allowedDistrictIds.includes(a.district_id),
+      );
+    }
+
     return citizen;
   }
 
-  async update(id: string, dto: UpdateCitizenDto): Promise<Citizen> {
-    const citizen = await this.findOne(id);
+  async update(
+    id: string,
+    dto: UpdateCitizenDto,
+    currentUser?: JwtAccessPayload,
+  ): Promise<Citizen> {
+    const citizen = await this.findOne(id, currentUser);
     const updatedData: Partial<Citizen> = { ...dto };
     if (dto.first_name !== undefined) {
       updatedData.first_name = dto.first_name ? formatUzbekName(dto.first_name) : null;
@@ -256,13 +329,13 @@ export class CitizensService {
       updatedData.middle_name = dto.middle_name ? formatUzbekName(dto.middle_name) : null;
     }
     if (dto.passport !== undefined) {
-      updatedData.passport = dto.passport ? dto.passport.trim().toUpperCase() : null;
+      updatedData.passport = normalizePassport(dto.passport);
     }
     if (dto.pinfl !== undefined) {
-      updatedData.pinfl = dto.pinfl ? dto.pinfl.trim() : null;
+      updatedData.pinfl = normalizePinfl(dto.pinfl);
     }
     if (dto.phone_number !== undefined) {
-      updatedData.phone_number = dto.phone_number ? dto.phone_number.replace(/\D/g, '') : null;
+      updatedData.phone_number = normalizeUzPhone(dto.phone_number);
     }
     // Stale loaded relation ob'ektlarini tozalash (TypeORM FK yangilanishini bosib ketmasligi uchun)
     if (dto.district_id !== undefined)
@@ -298,6 +371,16 @@ export class CitizensService {
       },
       { table: 'cards', column: 'citizen_id', label: 'plastik karta' },
       { table: 'detected_crime_suspects', column: 'citizen_id', label: 'aniqlangan jinoyat' },
+      {
+        table: 'application_custom_fields',
+        column: 'citizen_id',
+        label: "ariza qo'shimcha maydoni",
+      },
+      {
+        table: 'transfer_custom_fields',
+        column: 'citizen_id',
+        label: "o'tkazma qo'shimcha maydoni",
+      },
     ]);
     await this.citizenRepo.remove(citizen);
     return { success: true, message: "Fuqaro muvaffaqiyatli o'chirildi" };
@@ -319,8 +402,11 @@ export class CitizensService {
       districtId?: string;
     },
     res?: Response,
+    currentUser?: JwtAccessPayload,
   ): Promise<void> {
+    const allowedDistrictIds = await getAllowedDistrictIds(this.userRepo, currentUser);
     const qb = this.buildCitizensFilterQuery(search, filters);
+    this.applyDistrictScope(qb, allowedDistrictIds);
     const matched = await qb.select(['citizen.id', 'citizen.created_at']).take(10000).getMany();
     const ids = matched.map((c) => c.id);
     const items =

@@ -1,9 +1,16 @@
-import { Injectable, Logger, NotFoundException, OnApplicationBootstrap } from '@nestjs/common';
+import {
+  BadRequestException,
+  Injectable,
+  Logger,
+  NotFoundException,
+  OnApplicationBootstrap,
+} from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { FindOptionsWhere, ILike, Repository } from 'typeorm';
 
 import { assertNoDependencies } from '../../../common/database/dependency-guard.util';
 import type { PaginatedResult } from '../../../common/interfaces/pagination.interface';
+import { isPgUniqueViolation } from '../../../common/utils/normalization.util';
 import { DEFAULT_QASHQADARYO_DISTRICTS } from '../seeds/qashqadaryo-data';
 import { District } from './district.entity';
 import type { CreateDistrictDto } from './dto/create-district.dto';
@@ -44,8 +51,23 @@ export class DistrictsService implements OnApplicationBootstrap {
   }
 
   async create(dto: CreateDistrictDto): Promise<District> {
-    const district = this.districtRepo.create(dto);
-    return this.districtRepo.save(district);
+    const cleanName = dto.name?.trim();
+    if (!cleanName) {
+      throw new BadRequestException('Tuman nomi kiritilishi shart');
+    }
+    const existing = await this.districtRepo.findOne({ where: { name: ILike(cleanName) } });
+    if (existing) return existing;
+
+    const district = this.districtRepo.create({ ...dto, name: cleanName });
+    try {
+      return await this.districtRepo.save(district);
+    } catch (err) {
+      if (isPgUniqueViolation(err)) {
+        const raceExisting = await this.districtRepo.findOne({ where: { name: ILike(cleanName) } });
+        if (raceExisting) return raceExisting;
+      }
+      throw err;
+    }
   }
 
   async findAll(page = 1, limit = 100, search?: string): Promise<PaginatedResult<District>> {
@@ -95,7 +117,15 @@ export class DistrictsService implements OnApplicationBootstrap {
 
   async update(id: string, dto: UpdateDistrictDto): Promise<District> {
     const district = await this.findOne(id);
-    Object.assign(district, dto);
+    if (dto.name !== undefined) {
+      const cleanName = dto.name.trim();
+      if (!cleanName) throw new BadRequestException("Tuman nomi bo'sh bo'lishi mumkin emas");
+      const existing = await this.districtRepo.findOne({ where: { name: ILike(cleanName) } });
+      if (existing && existing.id !== id) {
+        throw new BadRequestException(`"${cleanName}" nomli tuman allaqachon mavjud`);
+      }
+      district.name = cleanName;
+    }
     return this.districtRepo.save(district);
   }
 
@@ -122,6 +152,11 @@ export class DistrictsService implements OnApplicationBootstrap {
           extraWhere: 'is_deleted = false',
         },
         { table: 'user_assigned_districts', column: 'district_id', label: 'biriktirilgan xodim' },
+        {
+          table: 'application_custom_fields',
+          column: 'district_id',
+          label: "ariza qo'shimcha maydoni",
+        },
       ],
     );
     await this.districtRepo.remove(district);
