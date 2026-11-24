@@ -26,6 +26,7 @@ export class WorkplacesController {
     @Query('search') search?: string,
     @Query('district_id') district_id?: string,
     @Query('occupation_category_id') occupation_category_id?: string,
+    @Query('occupation_id') occupation_id?: string,
     @Query('include_inactive') include_inactive?: string,
   ) {
     return this.service.findAll({
@@ -34,6 +35,7 @@ export class WorkplacesController {
       search,
       district_id,
       occupation_category_id,
+      occupation_id,
       include_inactive: include_inactive === 'true',
     });
   }

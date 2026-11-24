@@ -184,12 +184,44 @@ export class CyberControlShablonExcelService {
       refs.kasblar,
     );
     const rawOccName = citizen?.occupation?.name?.trim() || '';
-    const kasbIzohi =
-      rawOccName && this.toAscii(rawOccName) !== this.toAscii(kasbVal) ? rawOccName : '';
+    const workplaceName = (app.workplace?.name || citizen?.workplace?.name || '').trim();
+    const workPosition = (app.work_position || citizen?.work_position || '').trim();
+
+    const eduCheckText = this.toAscii(
+      `${citizen?.occupation_category?.name || ''} ${rawOccName} ${workplaceName}`,
+    );
+    const isEducationWorkplace =
+      Boolean(workplaceName) &&
+      /\b(universitet|institut|litsey|texnikum|kollej|maktab|dmtt|bogcha|talim)\b/.test(
+        eduCheckText,
+      );
 
     // 12. O'quv muassasasi & 13. Kurs
-    const oquvMuassasasi = '';
-    const kursVal: number | null = null;
+    const oquvMuassasasi = isEducationWorkplace ? workplaceName : '';
+    let kursVal: number | null = null;
+    if (
+      workPosition &&
+      /\b(talaba|oquvchi|litsey|texnikum|kollej|kurs|sinf)\b/.test(
+        this.toAscii(`${rawOccName} ${workPosition}`),
+      )
+    ) {
+      const kursMatch = workPosition.match(/\b([1-9]|1[0-1])\s*[-.]?\s*(?:kurs|sinf)\b/i);
+      if (kursMatch) {
+        kursVal = parseInt(kursMatch[1], 10);
+      }
+    }
+
+    const kasbIzohiParts: string[] = [];
+    if (rawOccName && this.toAscii(rawOccName) !== this.toAscii(kasbVal)) {
+      kasbIzohiParts.push(rawOccName);
+    }
+    if (workplaceName && !isEducationWorkplace) {
+      kasbIzohiParts.push(workplaceName);
+    }
+    if (workPosition) {
+      kasbIzohiParts.push(workPosition);
+    }
+    const kasbIzohi = kasbIzohiParts.join(' — ');
 
     // 14. Ijtimoiy tarmoq
     const socialVal = this.resolveSocialNetwork(app, refs.tarmoqlar);
