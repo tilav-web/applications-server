@@ -26,7 +26,14 @@ export class RegionsController {
   constructor(private readonly regionsService: RegionsService) {}
 
   @Post()
-  @Roles(Role.SUPER_ADMIN, Role.ADMIN, Role.INSPECTOR, Role.STAFF)
+  @Roles(
+    Role.SUPER_ADMIN,
+    Role.ADMIN,
+    Role.INSPECTOR,
+    Role.STAFF,
+    Role.DISTRICT_OFFICER,
+    Role.OPERATOR,
+  )
   create(@Body() dto: CreateRegionDto) {
     return this.regionsService.create(dto);
   }

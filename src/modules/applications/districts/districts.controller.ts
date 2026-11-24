@@ -26,7 +26,14 @@ export class DistrictsController {
   constructor(private readonly districtsService: DistrictsService) {}
 
   @Post()
-  @Roles(Role.SUPER_ADMIN, Role.ADMIN, Role.INSPECTOR, Role.STAFF)
+  @Roles(
+    Role.SUPER_ADMIN,
+    Role.ADMIN,
+    Role.INSPECTOR,
+    Role.STAFF,
+    Role.DISTRICT_OFFICER,
+    Role.OPERATOR,
+  )
   create(@Body() dto: CreateDistrictDto) {
     return this.districtsService.create(dto);
   }
