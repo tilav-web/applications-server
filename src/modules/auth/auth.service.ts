@@ -80,29 +80,60 @@ export class AuthService implements OnApplicationBootstrap {
     const phoneNumber = this.configService.get<string>('SUPER_ADMIN_PHONE', '+998901234567');
 
     try {
-      const existingAuth = await this.authRepository.findOne({
-        where: { username },
+      // 1. Agar tizimda Root Super Admin allaqachon mavjud bo'lsa (login o'zgartirilgan bo'lsa ham),
+      // qayta yangi super admin yaratmaymiz.
+      const existingRoot = await this.authRepository.findOne({
+        where: { is_root: true },
         relations: { user: true },
       });
 
-      if (existingAuth) {
-        if (!existingAuth.is_root && existingAuth.role === Role.SUPER_ADMIN) {
-          const hasRoot = await this.authRepository.existsBy({ is_root: true });
-          if (!hasRoot) {
-            existingAuth.is_root = true;
-            await this.authRepository.save(existingAuth);
-            this.logger.log(`Root Super Admin belgisi tiklandi (username: ${username})`);
-          }
-        }
-        if (!existingAuth.user) {
+      if (existingRoot) {
+        if (!existingRoot.user) {
           const profile = this.userRepository.create({
-            auth_id: existingAuth.id,
+            auth_id: existingRoot.id,
             first_name: firstName,
             last_name: lastName,
             phone_number: phoneNumber,
           });
           await this.userRepository.save(profile);
-          this.logger.log(`Super admin uchun profil yaratildi (username: ${username})`);
+          this.logger.log(
+            `Root Super Admin uchun profil yaratildi (username: ${existingRoot.username})`,
+          );
+        }
+        return;
+      }
+
+      // 2. Root belgilanmagan bo'lsa, mavjud SUPER_ADMIN (yoki env username) ni root qilib belgilaymiz
+      const existingSuperAdmin =
+        (await this.authRepository.findOne({
+          where: { username },
+          relations: { user: true },
+        })) ??
+        (await this.authRepository.findOne({
+          where: { role: Role.SUPER_ADMIN },
+          relations: { user: true },
+          order: { created_at: 'ASC' },
+        }));
+
+      if (existingSuperAdmin) {
+        if (existingSuperAdmin.role === Role.SUPER_ADMIN && !existingSuperAdmin.is_root) {
+          existingSuperAdmin.is_root = true;
+          await this.authRepository.save(existingSuperAdmin);
+          this.logger.log(
+            `Root Super Admin belgisi tiklandi (username: ${existingSuperAdmin.username})`,
+          );
+        }
+        if (!existingSuperAdmin.user) {
+          const profile = this.userRepository.create({
+            auth_id: existingSuperAdmin.id,
+            first_name: firstName,
+            last_name: lastName,
+            phone_number: phoneNumber,
+          });
+          await this.userRepository.save(profile);
+          this.logger.log(
+            `Super admin uchun profil yaratildi (username: ${existingSuperAdmin.username})`,
+          );
         }
         return;
       }
@@ -116,12 +147,11 @@ export class AuthService implements OnApplicationBootstrap {
 
       const finalPassword = password || 'admin123';
       const hashedPassword = await bcrypt.hash(finalPassword, 10);
-      const hasRoot = await this.authRepository.existsBy({ is_root: true });
       const auth = this.authRepository.create({
         username,
         password: hashedPassword,
         role: Role.SUPER_ADMIN,
-        is_root: !hasRoot,
+        is_root: true,
       });
 
       const savedAuth = await this.authRepository.save(auth);
