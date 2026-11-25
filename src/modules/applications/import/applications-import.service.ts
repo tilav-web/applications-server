@@ -874,6 +874,7 @@ export class ApplicationsImportService {
     // 1-SAHIFA: Arizalarni o'qish va validatsiya qilish
     const rows: ParsedApplicationRow[] = [];
     const seenLinkCodes = new Map<string, number>();
+    const duplicateLinkCodes = new Set<string>();
 
     for (let r = 2; r <= appSheet.rowCount; r++) {
       const wsRow = appSheet.getRow(r);
@@ -909,6 +910,7 @@ export class ApplicationsImportService {
         const lk = normalizeLookupKey(rawLinkCode);
         const prevRow = seenLinkCodes.get(lk);
         if (prevRow !== undefined) {
+          duplicateLinkCodes.add(lk);
           this.addCellError(
             cellErrors,
             errors,
@@ -1700,7 +1702,10 @@ export class ApplicationsImportService {
     const appRowByRef = new Map<string, ParsedApplicationRow>();
     for (const row of rows) {
       if (row.linkCode) {
-        appRowByRef.set(normalizeLookupKey(row.linkCode), row);
+        const lk = normalizeLookupKey(row.linkCode);
+        if (!appRowByRef.has(lk)) {
+          appRowByRef.set(lk, row);
+        }
       }
       if (row.applicationNumber) {
         const ak = normalizeLookupKey(row.applicationNumber);
@@ -1874,8 +1879,17 @@ export class ApplicationsImportService {
           errors,
         };
 
-        const parentApp = rawRef ? appRowByRef.get(normalizeLookupKey(rawRef)) : undefined;
-        if (!parentApp) {
+        const normRef = rawRef ? normalizeLookupKey(rawRef) : '';
+        const parentApp = normRef ? appRowByRef.get(normRef) : undefined;
+        if (normRef && duplicateLinkCodes.has(normRef)) {
+          const msg = `«${rawRef}» bog'lash kodi 1-sahifada bir nechta qatorda takrorlangan — qaysi arizaga tegishliligi noaniq`;
+          this.addCellError(cellErrors, errors, 'app_ref', msg);
+          orphanTransfers.push(parsedTr);
+          if (parentApp) {
+            this.addCellError(parentApp.cellErrors, parentApp.errors, 'link_code', msg);
+            parentApp.status = 'ERROR';
+          }
+        } else if (!parentApp) {
           this.addCellError(
             cellErrors,
             errors,
@@ -1974,8 +1988,17 @@ export class ApplicationsImportService {
           errors,
         };
 
-        const parentApp = rawRef ? appRowByRef.get(normalizeLookupKey(rawRef)) : undefined;
-        if (!parentApp) {
+        const normRef = rawRef ? normalizeLookupKey(rawRef) : '';
+        const parentApp = normRef ? appRowByRef.get(normRef) : undefined;
+        if (normRef && duplicateLinkCodes.has(normRef)) {
+          const msg = `«${rawRef}» bog'lash kodi 1-sahifada bir nechta qatorda takrorlangan — qaysi arizaga tegishliligi noaniq`;
+          this.addCellError(cellErrors, errors, 'app_ref', msg);
+          orphanSuspects.push(parsedClue);
+          if (parentApp) {
+            this.addCellError(parentApp.cellErrors, parentApp.errors, 'link_code', msg);
+            parentApp.status = 'ERROR';
+          }
+        } else if (!parentApp) {
           this.addCellError(
             cellErrors,
             errors,
