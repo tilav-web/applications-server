@@ -202,15 +202,15 @@ describe('ApplicationsImportService & ApplicationsImportTemplateService', () => 
     });
 
     expect(wb.worksheets.map((s) => s.name)).toEqual([
-      SHEET_NAMES.LISTS,
       SHEET_NAMES.APPLICATIONS,
       SHEET_NAMES.EXTRA_TRANSFERS,
       SHEET_NAMES.SUSPECT_CLUES,
       SHEET_NAMES.GUIDE,
+      SHEET_NAMES.LISTS,
     ]);
 
     const listsWs = wb.getWorksheet(SHEET_NAMES.LISTS)!;
-    expect(listsWs.state).toBe('veryHidden');
+    expect(listsWs.state).toBe('hidden');
     let foundSig = false;
     const maxListCols = listsWs.columnCount;
     for (let c = 1; c <= maxListCols; c++) {

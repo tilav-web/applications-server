@@ -327,37 +327,58 @@ export class ApplicationsImportTemplateService {
     return { lists, sampleDefaults, stats };
   }
 
-  private buildHiddenListsSheet(
-    workbook: ExcelJS.Workbook,
+  private colIndexToLetter(colNum: number): string {
+    let n = colNum;
+    let letter = '';
+    while (n > 0) {
+      const rem = (n - 1) % 26;
+      letter = String.fromCharCode(65 + rem) + letter;
+      n = Math.floor((n - 1) / 26);
+    }
+    return letter;
+  }
+
+  private computeDropdownRanges(
     lists: Record<ImportDropdownKey, string[]>,
   ): Map<ImportDropdownKey, string> {
-    const ws = workbook.addWorksheet(SHEET_NAMES.LISTS);
-    ws.state = 'veryHidden';
-
     const rangeMap = new Map<ImportDropdownKey, string>();
     const keys = Object.keys(lists) as ImportDropdownKey[];
 
     keys.forEach((key, idx) => {
-      const colNumber = idx + 1;
-      const colLetter = ws.getColumn(colNumber).letter;
-      ws.getCell(1, colNumber).value = key;
       const values = lists[key];
-      values.forEach((val, rowIdx) => {
-        ws.getCell(rowIdx + 2, colNumber).value = val;
-      });
       if (values.length > 0) {
+        const colLetter = this.colIndexToLetter(idx + 1);
         const lastRow = values.length + 1;
         rangeMap.set(key, `'${SHEET_NAMES.LISTS}'!$${colLetter}$2:$${colLetter}$${lastRow}`);
       }
     });
 
-    // Shablon imzosi (meta ustun - Z1/AA1 emas, ro'yxatlardan keyingi bo'sh ustun)
+    return rangeMap;
+  }
+
+  private buildHiddenListsSheet(
+    workbook: ExcelJS.Workbook,
+    lists: Record<ImportDropdownKey, string[]>,
+  ): void {
+    const ws = workbook.addWorksheet(SHEET_NAMES.LISTS);
+    ws.state = 'hidden';
+
+    const keys = Object.keys(lists) as ImportDropdownKey[];
+
+    keys.forEach((key, idx) => {
+      const colNumber = idx + 1;
+      ws.getCell(1, colNumber).value = key;
+      const values = lists[key];
+      values.forEach((val, rowIdx) => {
+        ws.getCell(rowIdx + 2, colNumber).value = val;
+      });
+    });
+
+    // Shablon imzosi (meta ustun - ro'yxatlardan keyingi bo'sh ustun)
     const metaCol = keys.length + 2;
     ws.getCell(1, metaCol).value = 'TEMPLATE_SIGNATURE';
     ws.getCell(2, metaCol).value = IMPORT_TEMPLATE_SIGNATURE;
     ws.getCell(3, metaCol).value = new Date().toISOString();
-
-    return rangeMap;
   }
 
   private setupDataSheet(
@@ -674,10 +695,21 @@ export class ApplicationsImportTemplateService {
     workbook.creator = 'UVD Arizalar Tizimi';
     workbook.created = new Date();
     workbook.modified = new Date();
+    workbook.views = [
+      {
+        x: 0,
+        y: 0,
+        width: 10000,
+        height: 20000,
+        firstSheet: 0,
+        activeTab: 0,
+        visibility: 'visible',
+      },
+    ];
 
-    const dropdownRanges = this.buildHiddenListsSheet(workbook, dataset.lists);
+    const dropdownRanges = this.computeDropdownRanges(dataset.lists);
 
-    // 1-sahifa: Arizalar
+    // 1-sahifa: Arizalar (fayl ochilganda darhol shu sahifa faol bo'ladi)
     this.setupDataSheet(workbook, SHEET_NAMES.APPLICATIONS, APP_IMPORT_COLUMNS, dropdownRanges, {
       includeSampleRow: true,
       sampleDefaults: dataset.sampleDefaults,
@@ -716,6 +748,9 @@ export class ApplicationsImportTemplateService {
     // 4-sahifa: Yo'riqnoma va Enumlar
     this.buildGuideSheet(workbook, dataset.stats);
 
+    // 5-sahifa: Yashirin dropdown ro'yxatlar (eng oxirida!)
+    this.buildHiddenListsSheet(workbook, dataset.lists);
+
     return workbook;
   }
 
@@ -732,8 +767,19 @@ export class ApplicationsImportTemplateService {
     workbook.creator = 'UVD Arizalar Tizimi — Xatolik Hisoboti';
     workbook.created = new Date();
     workbook.modified = new Date();
+    workbook.views = [
+      {
+        x: 0,
+        y: 0,
+        width: 10000,
+        height: 20000,
+        firstSheet: 0,
+        activeTab: 0,
+        visibility: 'visible',
+      },
+    ];
 
-    const dropdownRanges = this.buildHiddenListsSheet(workbook, dataset.lists);
+    const dropdownRanges = this.computeDropdownRanges(dataset.lists);
 
     const writeFailedSheet = (
       sheetName: string,
@@ -820,6 +866,7 @@ export class ApplicationsImportTemplateService {
     );
     writeFailedSheet(SHEET_NAMES.SUSPECT_CLUES, SUSPECT_CLUE_IMPORT_COLUMNS, payload.suspectClues);
     this.buildGuideSheet(workbook, dataset.stats);
+    this.buildHiddenListsSheet(workbook, dataset.lists);
 
     return workbook;
   }
