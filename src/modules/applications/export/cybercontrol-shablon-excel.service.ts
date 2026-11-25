@@ -719,6 +719,14 @@ export class CyberControlShablonExcelService {
     for (const et of extraTransfers) {
       addTransfer(et);
     }
+    if (Array.isArray(app.damages)) {
+      for (const dmg of app.damages) {
+        const amt = Number(dmg.amount);
+        if (!Number.isNaN(amt) && amt > 0) {
+          sum += amt;
+        }
+      }
+    }
 
     return Math.round(sum);
   }

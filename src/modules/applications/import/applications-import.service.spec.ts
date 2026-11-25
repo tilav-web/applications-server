@@ -13,6 +13,7 @@ import { Citizen } from '../citizens/citizen.entity';
 import { Crime } from '../crimes/crime.entity';
 import { CrimeMethod } from '../crimes/methods/crime-method.entity';
 import { ApplicationCustomField } from '../custom-fields/application-custom-field.entity';
+import { ApplicationDamage } from '../damages/application-damage.entity';
 import { DecisionType } from '../decision-types/decision-type.entity';
 import { DepartmentService } from '../department-services/department-service.entity';
 import { District } from '../districts/district.entity';
@@ -205,6 +206,7 @@ describe('ApplicationsImportService & ApplicationsImportTemplateService', () => 
       SHEET_NAMES.APPLICATIONS,
       SHEET_NAMES.EXTRA_TRANSFERS,
       SHEET_NAMES.SUSPECT_CLUES,
+      SHEET_NAMES.NON_CARD_DAMAGES,
       SHEET_NAMES.GUIDE,
       SHEET_NAMES.LISTS,
     ]);
@@ -396,6 +398,7 @@ describe('ApplicationsImportService & ApplicationsImportTemplateService', () => 
     const txCitizenRepo = createMockRepo<Citizen>([]);
     const txCardRepo = createMockRepo<Card>([]);
     const txTransferRepo = createMockRepo<Transfer>([]);
+    const txDamageRepo = createMockRepo<ApplicationDamage>([]);
     const txAppRepo = createMockRepo<Application>([]);
     const txCustomFieldRepo = createMockRepo<ApplicationCustomField>([]);
     const txHistoryRepo = createMockRepo<ApplicationStatusHistory>([]);
@@ -404,6 +407,7 @@ describe('ApplicationsImportService & ApplicationsImportTemplateService', () => 
       [Citizen, txCitizenRepo],
       [Card, txCardRepo],
       [Transfer, txTransferRepo],
+      [ApplicationDamage, txDamageRepo],
       [Application, txAppRepo],
       [ApplicationCustomField, txCustomFieldRepo],
       [ApplicationStatusHistory, txHistoryRepo],
@@ -432,6 +436,25 @@ describe('ApplicationsImportService & ApplicationsImportTemplateService', () => 
     r3.getCell(findColIdx(appWs, 'officer_notes')).value = 'Қўшимча изоҳ матни';
     r3.commit();
 
+    // 4-sahifa: A1 arizasiga 2 ta kartasiz moddiy zarar (Uzum Nasiya + TBC onlayn kredit)
+    const dmgWs = wb.getWorksheet(SHEET_NAMES.NON_CARD_DAMAGES)!;
+    const dRow3 = dmgWs.getRow(3);
+    dRow3.getCell(1).value = 'A1';
+    dRow3.getCell(2).value = "Nasiya / Bo'lib to'lash";
+    dRow3.getCell(3).value = 'Uzum Nasiya';
+    dRow3.getCell(4).value = 12000000;
+    dRow3.getCell(5).value = 'UZS';
+    dRow3.getCell(8).value = 'Айфон 15 Про';
+    dRow3.commit();
+
+    const dRow4 = dmgWs.getRow(4);
+    dRow4.getCell(1).value = 'A1';
+    dRow4.getCell(2).value = 'Onlayn kredit / Mikroqarz';
+    dRow4.getCell(3).value = 'TBC Bank';
+    dRow4.getCell(4).value = 20000000;
+    dRow4.getCell(5).value = 'UZS';
+    dRow4.commit();
+
     // 4-qator: Xatoli ariza (bazada yo'q tuman + qisqa karta)
     const r4 = appWs.getRow(4);
     r4.getCell(findColIdx(appWs, 'link_code')).value = 'A2';
@@ -454,6 +477,12 @@ describe('ApplicationsImportService & ApplicationsImportTemplateService', () => 
     expect(savedAppPayload.description).toBe("Fuqaroni kartasidan pul o'g'irlangan");
     expect(savedAppPayload.officer_notes).toBe("Qo'shimcha izoh matni");
     expect(savedAppPayload.application_number).toBe('M0110224/2026-70001');
+    expect(txDamageRepo.save).toHaveBeenCalledTimes(1);
+    const savedDamages = txDamageRepo.save.mock.calls[0][0] as Array<Record<string, unknown>>;
+    expect(savedDamages).toHaveLength(2);
+    expect(savedDamages[0].organization_name).toBe('Uzum Nasiya');
+    expect(savedDamages[0].description).toBe('Ayfon 15 Pro');
+    expect(savedDamages[1].amount).toBe(20000000);
     expect(intelligenceSync.syncApplicationById).toHaveBeenCalledTimes(1);
     expect(slaQueueService.scheduleForApplication).toHaveBeenCalledTimes(1);
     expect(commitRes.errorReportBase64).toBeTruthy();

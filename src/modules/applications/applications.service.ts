@@ -7,7 +7,7 @@ import {
 import { InjectRepository } from '@nestjs/typeorm';
 import { isUUID } from 'class-validator';
 import type { Response } from 'express';
-import { In, Repository } from 'typeorm';
+import { type EntityManager, ILike, In, Repository } from 'typeorm';
 
 import {
   AppealType,
@@ -15,6 +15,7 @@ import {
   ApplicationRepeatType,
   SubmissionForm,
 } from '../../common/enums/appeal-classification.enum';
+import { ApplicationDamageType } from '../../common/enums/damage-type.enum';
 import { Role } from '../../common/enums/role.enum';
 import type { PaginatedResult } from '../../common/interfaces/pagination.interface';
 import type { JwtAccessPayload } from '../../common/types/jwt-payload.interface';
@@ -37,7 +38,11 @@ import { ApplicationsRelationsService } from './applications-relations.service';
 import { ApplicationsResolverService } from './applications-resolver.service';
 import { ApplicationsStatisticsService } from './applications-statistics.service';
 import { ApplicationCustomField } from './custom-fields/application-custom-field.entity';
-import type { CreateApplicationDto } from './dto/create-application.dto';
+import { ApplicationDamage } from './damages/application-damage.entity';
+import type {
+  CreateApplicationDamageDto,
+  CreateApplicationDto,
+} from './dto/create-application.dto';
 import type { UpdateApplicationDto } from './dto/update-application.dto';
 import { ApplicationsExcelService } from './export/applications-excel.service';
 import { CyberControlShablonExcelService } from './export/cybercontrol-shablon-excel.service';
@@ -45,6 +50,8 @@ import {
   ApplicationStatus as ApplicationStatusEntity,
   ApplicationStatusCategory,
 } from './statuses/application-status.entity';
+import { Bank } from './transfers/banks/bank.entity';
+import { PaymentProvider } from './transfers/payment_providers/payment_provider.entity';
 import { Transfer } from './transfers/transfer.entity';
 
 export type {
@@ -181,6 +188,56 @@ export class ApplicationsService {
     }
   }
 
+  private async saveApplicationDamages(
+    manager: EntityManager,
+    applicationId: string,
+    damages: CreateApplicationDamageDto[],
+  ): Promise<void> {
+    const damageRepo = manager.getRepository(ApplicationDamage);
+    const bankRepo = manager.getRepository(Bank);
+    const providerRepo = manager.getRepository(PaymentProvider);
+
+    const entities: ApplicationDamage[] = [];
+    for (let idx = 0; idx < damages.length; idx++) {
+      const d = damages[idx];
+      const amount = Number(d.amount);
+      if (!Number.isFinite(amount) || amount <= 0) continue;
+
+      const orgName = d.organization_name?.trim() || null;
+      let bankId = d.bank_id || null;
+      let providerId = d.payment_provider_id || null;
+
+      if (orgName && !bankId) {
+        const matchedBank = await bankRepo.findOne({ where: { name: ILike(orgName) } });
+        if (matchedBank) bankId = matchedBank.id;
+      }
+      if (orgName && !providerId) {
+        const matchedProvider = await providerRepo.findOne({ where: { name: ILike(orgName) } });
+        if (matchedProvider) providerId = matchedProvider.id;
+      }
+
+      entities.push(
+        damageRepo.create({
+          application_id: applicationId,
+          damage_type: d.damage_type || ApplicationDamageType.ONLINE_CREDIT,
+          organization_name: orgName,
+          bank_id: bankId,
+          payment_provider_id: providerId,
+          amount,
+          currency: (d.currency || 'UZS').trim().toUpperCase() || 'UZS',
+          contract_number: d.contract_number?.trim() || null,
+          damage_date: d.damage_date?.trim() || null,
+          description: d.description?.trim() || null,
+          order: d.order ?? idx,
+        }),
+      );
+    }
+
+    if (entities.length > 0) {
+      await damageRepo.save(entities);
+    }
+  }
+
   async create(dto: CreateApplicationDto, currentUser?: JwtAccessPayload): Promise<Application> {
     if (currentUser?.role === Role.BOSS) {
       throw new ForbiddenException(
@@ -211,6 +268,7 @@ export class ApplicationsService {
 
     const {
       custom_fields,
+      damages,
       date,
       deadline_at,
       sla_days,
@@ -313,6 +371,10 @@ export class ApplicationsService {
           manager,
         );
         await txCustomFieldRepo.save(fieldEntities);
+      }
+
+      if (damages && damages.length > 0) {
+        await this.saveApplicationDamages(manager, saved.id, damages);
       }
 
       return saved.id;
@@ -587,7 +649,7 @@ export class ApplicationsService {
       qb.andWhere('COALESCE(app.date, app.created_at) <= :date_to', { date_to: dTo });
     }
 
-    const lossSubquery = `(SELECT COALESCE(SUM(t.amount), 0) FROM transfers t WHERE t.id = app.transfer_id OR t.application_id = app.id)`;
+    const lossSubquery = `((SELECT COALESCE(SUM(t.amount), 0) FROM transfers t WHERE t.id = app.transfer_id OR t.application_id = app.id) + (SELECT COALESCE(SUM(d.amount), 0) FROM application_damages d WHERE d.application_id = app.id))`;
     if (
       min_amount !== undefined &&
       min_amount !== null &&
@@ -651,6 +713,7 @@ export class ApplicationsService {
       crime: true,
       crime_method: { fields: true },
       card: { bank: true, citizen: true },
+      damages: { bank: true, payment_provider: true },
       transfer: {
         payment_provider: true,
         sender_card: { bank: true, citizen: true },
@@ -888,6 +951,7 @@ export class ApplicationsService {
         district: true,
         crime: true,
         crime_method: true,
+        damages: true,
         transfer: true,
         custom_fields: {
           citizen: {
@@ -991,6 +1055,7 @@ export class ApplicationsService {
         crime: true,
         crime_method: { fields: true },
         card: { bank: true, citizen: true },
+        damages: { bank: true, payment_provider: true },
         transfer: {
           payment_provider: true,
           sender_card: true,
@@ -1313,6 +1378,7 @@ export class ApplicationsService {
 
     const {
       custom_fields,
+      damages,
       date,
       deadline_at,
       sla_days,
@@ -1488,6 +1554,13 @@ export class ApplicationsService {
               manager,
             );
             await txCustomFieldRepo.save(fieldEntities);
+          }
+        }
+
+        if (damages !== undefined) {
+          await manager.getRepository(ApplicationDamage).delete({ application_id: id });
+          if (damages.length > 0) {
+            await this.saveApplicationDamages(manager, id, damages);
           }
         }
 

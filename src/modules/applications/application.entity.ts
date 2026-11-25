@@ -23,6 +23,7 @@ import { Citizen } from './citizens/citizen.entity';
 import { Crime } from './crimes/crime.entity';
 import { CrimeMethod } from './crimes/methods/crime-method.entity';
 import { ApplicationCustomField } from './custom-fields/application-custom-field.entity';
+import { ApplicationDamage } from './damages/application-damage.entity';
 import { DecisionType } from './decision-types/decision-type.entity';
 import { DepartmentService } from './department-services/department-service.entity';
 import { District } from './districts/district.entity';
@@ -225,6 +226,14 @@ export class Application extends BaseEntity {
     cascade: true,
   })
   custom_fields: ApplicationCustomField[];
+
+  // ==========================================================================
+  // 1.1. KARTASIZ MODDIY ZARARLAR (Onlayn kredit, Nasiya, Tovar/Xizmat aldovi)
+  // ==========================================================================
+  @OneToMany(() => ApplicationDamage, (damage) => damage.application, {
+    cascade: true,
+  })
+  damages: ApplicationDamage[];
 
   // ==========================================================================
   // 2. ASOSIY BIRLAMCHI MODELLAR (Har biridan bittadan ManyToOne)

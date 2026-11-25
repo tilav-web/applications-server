@@ -16,6 +16,10 @@ import {
   SubmissionForm,
 } from '../../../common/enums/appeal-classification.enum';
 import { CustomFieldType } from '../../../common/enums/custom-field-type.enum';
+import {
+  APPLICATION_DAMAGE_TYPE_LABELS,
+  ApplicationDamageType,
+} from '../../../common/enums/damage-type.enum';
 import { Role } from '../../../common/enums/role.enum';
 import { TransferDestinationType } from '../../../common/enums/transfer-destination-type.enum';
 import type { JwtAccessPayload } from '../../../common/types/jwt-payload.interface';
@@ -41,6 +45,7 @@ import { Citizen } from '../citizens/citizen.entity';
 import { Crime } from '../crimes/crime.entity';
 import { CrimeMethod } from '../crimes/methods/crime-method.entity';
 import { ApplicationCustomField } from '../custom-fields/application-custom-field.entity';
+import { ApplicationDamage } from '../damages/application-damage.entity';
 import { DecisionType } from '../decision-types/decision-type.entity';
 import { DepartmentService } from '../department-services/department-service.entity';
 import { District } from '../districts/district.entity';
@@ -77,6 +82,7 @@ import {
   type ImportPreviewResponse,
   type ImportPreviewRow,
   type ImportRowStatus,
+  NON_CARD_DAMAGE_IMPORT_COLUMNS,
   normalizeHeaderKey,
   normalizeLookupKey,
   SHEET_NAMES,
@@ -117,6 +123,23 @@ interface ParsedSuspectClueRow {
   errors: string[];
 }
 
+interface ParsedNonCardDamageRow {
+  rowNumber: number;
+  appRef: string;
+  rawValues: Record<string, string | number | null>;
+  damageType: ApplicationDamageType;
+  organizationName: string | null;
+  bankId: string | null;
+  paymentProviderId: string | null;
+  amount: number | null;
+  currency: string;
+  contractNumber: string | null;
+  damageDate: string | null;
+  description: string | null;
+  cellErrors: Map<string, string[]>;
+  errors: string[];
+}
+
 interface ParsedApplicationRow {
   rowNumber: number;
   linkCode: string | null;
@@ -140,6 +163,7 @@ interface ParsedApplicationRow {
   crimeId: string | null;
   crimeLabel: string | null;
   crimeMethodId: string | null;
+  crimeMethodName: string | null;
   awarenessStatusId: string | null;
   awarenessNote: string | null;
   citizenLastName: string | null;
@@ -180,6 +204,7 @@ interface ParsedApplicationRow {
   officerNotes: string | null;
   extraTransfers: ParsedExtraTransferRow[];
   suspectClues: ParsedSuspectClueRow[];
+  nonCardDamages: ParsedNonCardDamageRow[];
   matchedCitizenId: string | null;
   matchedCards: string[];
   status: ImportRowStatus;
@@ -197,6 +222,7 @@ interface ParsedWorkbookAnalysis {
   rows: ParsedApplicationRow[];
   orphanTransfers: ParsedExtraTransferRow[];
   orphanSuspects: ParsedSuspectClueRow[];
+  orphanDamages: ParsedNonCardDamageRow[];
 }
 
 interface ReferenceCatalog {
@@ -229,6 +255,7 @@ const APPEAL_TYPE_LOOKUP = buildEnumLookup<AppealType>(APPEAL_TYPE_LABELS);
 const SUBMISSION_FORM_LOOKUP = buildEnumLookup<SubmissionForm>(SUBMISSION_FORM_LABELS);
 const APPLICANT_TYPE_LOOKUP = buildEnumLookup<ApplicantType>(APPLICANT_TYPE_LABELS);
 const REPEAT_TYPE_LOOKUP = buildEnumLookup<ApplicationRepeatType>(REPEAT_TYPE_LABELS);
+const DAMAGE_TYPE_LOOKUP = buildEnumLookup<ApplicationDamageType>(APPLICATION_DAMAGE_TYPE_LABELS);
 const GENDER_LOOKUP = new Map<string, 'male' | 'female'>([
   [normalizeLookupKey(GENDER_LABELS.male), 'male'],
   ['male', 'male'],
@@ -1175,6 +1202,7 @@ export class ApplicationsImportService {
       // Jinoyat sodir etish usuli
       const crimeMethodText = this.extractText(getCellVal('crime_method'));
       let crimeMethodId: string | null = null;
+      let crimeMethodName: string | null = null;
       if (crimeMethodText) {
         const found = catalog.crimeMethodsByKey.get(normalizeLookupKey(crimeMethodText));
         if (!found) {
@@ -1186,6 +1214,7 @@ export class ApplicationsImportService {
           );
         } else {
           crimeMethodId = found.id;
+          crimeMethodName = found.name;
         }
       }
 
@@ -1747,6 +1776,7 @@ export class ApplicationsImportService {
         crimeId,
         crimeLabel,
         crimeMethodId,
+        crimeMethodName,
         awarenessStatusId,
         awarenessNote,
         citizenLastName,
@@ -1791,6 +1821,7 @@ export class ApplicationsImportService {
         officerNotes,
         extraTransfers: [],
         suspectClues: [],
+        nonCardDamages: [],
         matchedCitizenId: null,
         matchedCards: [],
         status: errors.length > 0 ? 'ERROR' : 'READY',
@@ -2126,6 +2157,152 @@ export class ApplicationsImportService {
       }
     }
 
+    // 4-SAHIFA: Kartasiz moddiy zararlarni o'qish (Kredit, Nasiya, Tovar/Xizmat)
+    const orphanDamages: ParsedNonCardDamageRow[] = [];
+    const damagesSheet = workbook.getWorksheet(SHEET_NAMES.NON_CARD_DAMAGES);
+    if (damagesSheet) {
+      const dHeaders = this.buildHeaderMap(damagesSheet, NON_CARD_DAMAGE_IMPORT_COLUMNS);
+      ignoredExtraColumns.push(
+        ...dHeaders.ignoredHeaders.map((h) => `${SHEET_NAMES.NON_CARD_DAMAGES}: ${h}`),
+      );
+
+      for (let r = 2; r <= damagesSheet.rowCount; r++) {
+        const wsRow = damagesSheet.getRow(r);
+        if (this.isEmptyRow(wsRow, dHeaders.colIndexByKey)) continue;
+
+        const getVal = (key: string): ExcelJS.CellValue => {
+          const idx = dHeaders.colIndexByKey.get(key);
+          return idx ? wsRow.getCell(idx).value : null;
+        };
+
+        const rawRef = this.extractText(getVal('app_ref'));
+        if (this.isSampleRow(rawRef)) continue;
+
+        const rawValues: Record<string, string | number | null> = {};
+        for (const col of NON_CARD_DAMAGE_IMPORT_COLUMNS) {
+          rawValues[col.key] = this.extractRawCellValue(getVal(col.key));
+        }
+
+        const cellErrors = new Map<string, string[]>();
+        const errors: string[] = [];
+
+        if (!rawRef) {
+          this.addCellError(
+            cellErrors,
+            errors,
+            'app_ref',
+            "Ariza bog'lash kodi / Ariza № kiritilishi shart",
+          );
+        }
+
+        const typeText = this.extractText(getVal('damage_type'));
+        let damageType = ApplicationDamageType.ONLINE_CREDIT;
+        if (!typeText) {
+          this.addCellError(cellErrors, errors, 'damage_type', 'Zarar turi tanlanishi shart');
+        } else {
+          const found = DAMAGE_TYPE_LOOKUP.get(normalizeLookupKey(typeText));
+          if (!found) {
+            this.addCellError(
+              cellErrors,
+              errors,
+              'damage_type',
+              `«${typeText}» kartasiz zarar turi noto'g'ri (ro'yxatdan tanlang)`,
+            );
+          } else {
+            damageType = found;
+          }
+        }
+
+        const orgName = this.toLatinText(this.extractText(getVal('organization_name')));
+        let bankId: string | null = null;
+        let paymentProviderId: string | null = null;
+        if (orgName) {
+          const matchedBank = catalog.banksByKey.get(normalizeLookupKey(orgName));
+          if (matchedBank) bankId = matchedBank.id;
+          const matchedProv = catalog.providersByKey.get(normalizeLookupKey(orgName));
+          if (matchedProv) paymentProviderId = matchedProv.id;
+        }
+
+        const amt = this.parsePositiveNumber(getVal('amount'), 'Zarar summasi');
+        if (amt.error) {
+          this.addCellError(cellErrors, errors, 'amount', amt.error);
+        } else if (amt.value === null) {
+          this.addCellError(cellErrors, errors, 'amount', 'Zarar summasi kiritilishi shart');
+        }
+
+        const curText = this.extractText(getVal('currency'));
+        let currency = 'UZS';
+        if (curText) {
+          const u = curText.toUpperCase();
+          if (!CURRENCY_SET.has(u)) {
+            this.addCellError(
+              cellErrors,
+              errors,
+              'currency',
+              `«${curText}» valyutasi noto'g'ri (UZS, USD, EUR, RUB)`,
+            );
+          } else {
+            currency = u;
+          }
+        }
+
+        const contractNumber = this.extractText(getVal('contract_number'));
+        const dmgDate = this.parseDateValue(getVal('damage_date'));
+        if (dmgDate.error) {
+          this.addCellError(cellErrors, errors, 'damage_date', dmgDate.error);
+        }
+        const dmgDesc = this.toLatinText(this.extractText(getVal('description')));
+
+        const parsedDmg: ParsedNonCardDamageRow = {
+          rowNumber: r,
+          appRef: rawRef || '',
+          rawValues,
+          damageType,
+          organizationName: orgName,
+          bankId,
+          paymentProviderId,
+          amount: amt.value,
+          currency,
+          contractNumber,
+          damageDate: dmgDate.value,
+          description: dmgDesc,
+          cellErrors,
+          errors,
+        };
+
+        const normRef = rawRef ? normalizeLookupKey(rawRef) : '';
+        const parentApp = normRef ? appRowByRef.get(normRef) : undefined;
+        if (normRef && duplicateLinkCodes.has(normRef)) {
+          const msg = `«${rawRef}» bog'lash kodi 1-sahifada bir nechta qatorda takrorlangan — qaysi arizaga tegishliligi noaniq`;
+          this.addCellError(cellErrors, errors, 'app_ref', msg);
+          orphanDamages.push(parsedDmg);
+          if (parentApp) {
+            this.addCellError(parentApp.cellErrors, parentApp.errors, 'link_code', msg);
+            parentApp.status = 'ERROR';
+          }
+        } else if (!parentApp) {
+          this.addCellError(
+            cellErrors,
+            errors,
+            'app_ref',
+            `«${rawRef || "bo'sh"}» kodiga mos ariza 1-sahifada topilmadi`,
+          );
+          orphanDamages.push(parsedDmg);
+        } else {
+          parentApp.nonCardDamages.push(parsedDmg);
+          if (errors.length > 0) {
+            this.addCellError(
+              parentApp.cellErrors,
+              parentApp.errors,
+              'link_code',
+              `4-sahifa (${r}-qator, kartasiz zarar): ${errors.join('; ')}`,
+            );
+            parentApp.status = 'ERROR';
+          }
+        }
+      }
+    }
+
     // BATCH DB TEKSHIRUVLARI (N+1 so'rovlarsiz: mavjud arizalar, ota arizalar, fuqarolar, kartalar, transaction_id)
     await this.runBatchDatabaseChecks(rows);
 
@@ -2137,6 +2314,7 @@ export class ApplicationsImportService {
       rows,
       orphanTransfers,
       orphanSuspects,
+      orphanDamages,
     };
   }
 
@@ -2470,6 +2648,7 @@ export class ApplicationsImportService {
 
     const extraTransfers: FailedRowExportPayload['extraTransfers'] = [];
     const suspectClues: FailedRowExportPayload['suspectClues'] = [];
+    const nonCardDamages: FailedRowExportPayload['nonCardDamages'] = [];
 
     for (const app of failedApps) {
       for (const tr of app.extraTransfers) {
@@ -2492,6 +2671,16 @@ export class ApplicationsImportService {
               : [`Asosiy ariza (${app.rowNumber}-qator) xatolik sababli bazaga yozilmadi`],
         });
       }
+      for (const dmg of app.nonCardDamages) {
+        nonCardDamages.push({
+          rawValues: dmg.rawValues,
+          cellErrors: dmg.cellErrors,
+          rowErrors:
+            dmg.errors.length > 0
+              ? dmg.errors
+              : [`Asosiy ariza (${app.rowNumber}-qator) xatolik sababli bazaga yozilmadi`],
+        });
+      }
     }
 
     for (const orphanTr of analysis.orphanTransfers) {
@@ -2510,7 +2699,15 @@ export class ApplicationsImportService {
       });
     }
 
-    return { applications, extraTransfers, suspectClues };
+    for (const orphanDmg of analysis.orphanDamages) {
+      nonCardDamages.push({
+        rawValues: orphanDmg.rawValues,
+        cellErrors: orphanDmg.cellErrors,
+        rowErrors: orphanDmg.errors,
+      });
+    }
+
+    return { applications, extraTransfers, suspectClues, nonCardDamages };
   }
 
   async preview(
@@ -2555,11 +2752,28 @@ export class ApplicationsImportService {
           }
         }
       }
+      for (const dmg of r.nonCardDamages) {
+        for (const [colKey, msgs] of dmg.cellErrors.entries()) {
+          for (const msg of msgs) {
+            cellErrorsList.push({
+              sheet: 'NON_CARD_DAMAGES',
+              rowNumber: dmg.rowNumber,
+              columnKey: colKey,
+              message: msg,
+            });
+          }
+        }
+      }
 
       const extraAmountSum = r.extraTransfers.reduce((acc, t) => acc + Number(t.amount || 0), 0);
-      const totalAmount = Number(r.transferAmount || 0) + extraAmountSum;
+      const nonCardSum = r.nonCardDamages.reduce((acc, d) => acc + Number(d.amount || 0), 0);
+      const totalAmount = Number(r.transferAmount || 0) + extraAmountSum + nonCardSum;
       const hasPrimaryTransfer = Boolean(
-        r.transferAmount || r.receiverCardNumber || r.destinationLabel || r.transferDate,
+        r.victimCardNumber ||
+        r.receiverCardNumber ||
+        r.destinationLabel ||
+        r.paymentProviderId ||
+        r.transferDate,
       );
 
       return {
@@ -2602,6 +2816,13 @@ export class ApplicationsImportService {
         message: s.errors.join('; '),
         columnKey: 'app_ref',
       })),
+      ...analysis.orphanDamages.map((d) => ({
+        sheet: 'NON_CARD_DAMAGES' as const,
+        rowNumber: d.rowNumber,
+        appRef: d.appRef || null,
+        message: d.errors.join('; '),
+        columnKey: 'app_ref',
+      })),
     ];
 
     const readyCount = previewRows.filter((r) => r.status === 'READY').length;
@@ -2630,7 +2851,8 @@ export class ApplicationsImportService {
     if (
       payload.applications.length === 0 &&
       payload.extraTransfers.length === 0 &&
-      payload.suspectClues.length === 0
+      payload.suspectClues.length === 0 &&
+      payload.nonCardDamages.length === 0
     ) {
       throw new BadRequestException('Faylda xatoli qatorlar mavjud emas');
     }
@@ -2847,7 +3069,8 @@ export class ApplicationsImportService {
       !skipErrors &&
       (initialErrorsCount > 0 ||
         analysis.orphanTransfers.length > 0 ||
-        analysis.orphanSuspects.length > 0)
+        analysis.orphanSuspects.length > 0 ||
+        analysis.orphanDamages.length > 0)
     ) {
       throw new BadRequestException(
         `Faylda ${initialErrorsCount} ta xatoli ariza qatori mavjud. Avval xatolarni tuzating yoki 'Xatoli qatorlarni o'tkazib yuborish' rejimidan foydalaning.`,
@@ -2898,6 +3121,7 @@ export class ApplicationsImportService {
         const saved = await this.applicationRepo.manager.transaction(async (manager) => {
           const txAppRepo = manager.getRepository(Application);
           const txTransferRepo = manager.getRepository(Transfer);
+          const txDamageRepo = manager.getRepository(ApplicationDamage);
           const txCustomFieldRepo = manager.getRepository(ApplicationCustomField);
           const txHistoryRepo = manager.getRepository(ApplicationStatusHistory);
 
@@ -2922,14 +3146,27 @@ export class ApplicationsImportService {
             primaryVictimCardId = victimCard.id;
           }
 
-          // 3. Asosiy o'tkazma (agar to'ldirilgan bo'lsa)
+          // 3. Asosiy o'tkazma YOKI kartasiz moddiy zarar (agar 1-sahifada karta/kanal/provaydersiz faqat summa yozilgan bo'lsa)
           let primaryTransferId: string | null = null;
-          const hasPrimaryTransfer = Boolean(
-            row.transferAmount ||
+          const hasCardOrChannelInfo = Boolean(
+            row.victimCardNumber ||
             row.receiverCardNumber ||
             row.destinationLabel ||
-            row.transferDate,
+            row.paymentProviderId ||
+            row.transferDate ||
+            row.transactionId,
           );
+          const hasPrimaryTransfer = Boolean(
+            hasCardOrChannelInfo &&
+            (row.transferAmount ||
+              row.receiverCardNumber ||
+              row.destinationLabel ||
+              row.transferDate),
+          );
+          const sheet1AsNonCardDamage = Boolean(
+            !hasCardOrChannelInfo && row.transferAmount && row.transferAmount > 0,
+          );
+
           if (hasPrimaryTransfer) {
             let receiverCardId: string | null = null;
             if (row.receiverCardNumber) {
@@ -3086,6 +3323,61 @@ export class ApplicationsImportService {
             );
           }
 
+          // 7.5. Kartasiz moddiy zararlar (1-sahifadagi kartasiz summa + 4-sahifadagi bandlar)
+          const damageEntities: ApplicationDamage[] = [];
+          if (sheet1AsNonCardDamage && row.transferAmount) {
+            const methodLower = normalizeLookupKey(row.crimeMethodName || row.description || '');
+            let inferredType = ApplicationDamageType.OTHER;
+            if (methodLower.includes('kredit') || methodLower.includes('qarz')) {
+              inferredType = ApplicationDamageType.ONLINE_CREDIT;
+            } else if (methodLower.includes('nasiya') || methodLower.includes('limit')) {
+              inferredType = ApplicationDamageType.INSTALLMENT;
+            } else if (
+              methodLower.includes('savdo') ||
+              methodLower.includes('sotuvchi') ||
+              methodLower.includes('akkaunt')
+            ) {
+              inferredType = ApplicationDamageType.GOODS_SERVICE;
+            }
+            damageEntities.push(
+              txDamageRepo.create({
+                application_id: savedApp.id,
+                damage_type: inferredType,
+                organization_name: null,
+                bank_id: null,
+                payment_provider_id: null,
+                amount: row.transferAmount,
+                currency: row.transferCurrency || 'UZS',
+                contract_number: null,
+                damage_date: row.date,
+                description: row.crimeMethodName || null,
+                order: 0,
+              }),
+            );
+          }
+          for (let dIdx = 0; dIdx < row.nonCardDamages.length; dIdx++) {
+            const dmg = row.nonCardDamages[dIdx];
+            if (!dmg.amount || dmg.amount <= 0) continue;
+            damageEntities.push(
+              txDamageRepo.create({
+                application_id: savedApp.id,
+                damage_type: dmg.damageType,
+                organization_name: dmg.organizationName,
+                bank_id: dmg.bankId,
+                payment_provider_id: dmg.paymentProviderId,
+                amount: dmg.amount,
+                currency: dmg.currency || 'UZS',
+                contract_number: dmg.contractNumber,
+                damage_date: dmg.damageDate,
+                description: dmg.description,
+                order: damageEntities.length,
+              }),
+            );
+          }
+          if (damageEntities.length > 0) {
+            await txDamageRepo.save(damageEntities);
+          }
+
           // 8. Status tarixi
           await txHistoryRepo.save(
             txHistoryRepo.create({
@@ -3160,7 +3452,8 @@ export class ApplicationsImportService {
     const hasFailedExport =
       failedPayload.applications.length > 0 ||
       failedPayload.extraTransfers.length > 0 ||
-      failedPayload.suspectClues.length > 0;
+      failedPayload.suspectClues.length > 0 ||
+      failedPayload.nonCardDamages.length > 0;
 
     if (hasFailedExport) {
       const errorWb = await this.templateService.generateErrorReportWorkbook(

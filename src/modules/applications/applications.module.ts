@@ -19,6 +19,7 @@ import { CrimesModule } from './crimes/crimes.module';
 import { CrimeMethod } from './crimes/methods/crime-method.entity';
 import { CrimeMethodsModule } from './crimes/methods/crime-methods.module';
 import { ApplicationCustomField } from './custom-fields/application-custom-field.entity';
+import { ApplicationDamage } from './damages/application-damage.entity';
 import { DecisionType } from './decision-types/decision-type.entity';
 import { DecisionTypesModule } from './decision-types/decision-types.module';
 import { DepartmentService } from './department-services/department-service.entity';
@@ -68,6 +69,7 @@ import { WorkplacesModule } from './workplaces/workplaces.module';
       Application,
       ApplicationStatusHistory,
       ApplicationCustomField,
+      ApplicationDamage,
       Citizen,
       Crime,
       CrimeMethod,

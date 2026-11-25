@@ -9,6 +9,7 @@ import {
   SUBMISSION_FORM_LABELS,
   SubmissionForm,
 } from '../../../common/enums/appeal-classification.enum';
+import { APPLICATION_DAMAGE_TYPE_LABELS } from '../../../common/enums/damage-type.enum';
 import {
   applyExcelAutoFilter,
   escapeExcelCriteriaLiteral,
@@ -92,6 +93,9 @@ export class ApplicationsExcelService {
 
     // 2. Sheet 2: Pul o'tkazmalari (Barcha asosiy + qo'shimcha + tranzit tranzaksiyalar)
     this.buildTransfersSheet(workbook, applications, extraTransfersMap);
+
+    // 2.5. Sheet: Kartasiz zararlar (Onlayn kredit, Nasiya, Tovar/Xizmat aldovi)
+    this.buildDamagesSheet(workbook, applications);
 
     // 3. Sheet 3: Gumonlanuvchilar (Raqamli identifikatorlar)
     this.buildSuspectsSheet(workbook, applications);
@@ -204,7 +208,7 @@ export class ApplicationsExcelService {
       const appNumber = app.application_number || `AR-${app.id.slice(0, 8)}`;
 
       const transfersFormula = `COUNTIF('Pul o''tkazmalari'!$B:$B, B${rowNum})`;
-      const amountFormula = `SUMIFS('Pul o''tkazmalari'!$F:$F, 'Pul o''tkazmalari'!$B:$B, B${rowNum}, 'Pul o''tkazmalari'!$G:$G, "UZS")`;
+      const amountFormula = `SUMIFS('Pul o''tkazmalari'!$F:$F, 'Pul o''tkazmalari'!$B:$B, B${rowNum}, 'Pul o''tkazmalari'!$G:$G, "UZS")+SUMIFS('Kartasiz zararlar'!$F:$F, 'Kartasiz zararlar'!$B:$B, B${rowNum}, 'Kartasiz zararlar'!$G:$G, "UZS")`;
       const suspectsFormula = `COUNTIF('Gumonlanuvchilar'!$B:$B, B${rowNum})`;
 
       const dynamicRowData: Record<string, string> = {};
@@ -495,6 +499,70 @@ export class ApplicationsExcelService {
       countRow.getCell('sender_bank').alignment = { horizontal: 'right', vertical: 'middle' };
       countRow.getCell('amount').numFmt = '#,##0';
       countRow.getCell('amount').alignment = { horizontal: 'right', vertical: 'middle' };
+    }
+  }
+
+  /**
+   * 2.5-SHEET: Kartasiz moddiy zararlar (Onlayn kredit, Nasiya, Tovar/Xizmat aldovi)
+   */
+  private buildDamagesSheet(workbook: ExcelJS.Workbook, applications: Application[]): void {
+    const ws = workbook.addWorksheet('Kartasiz zararlar', {
+      views: [{ state: 'frozen', ySplit: 1 }],
+    });
+
+    ws.columns = [
+      { header: '№', key: 'idx', width: 6 }, // A
+      { header: 'Ariza Raqami', key: 'app_num', width: 20 }, // B
+      { header: 'Zarar Turi', key: 'damage_type', width: 26 }, // C
+      { header: 'Tashkilot / Platforma', key: 'org', width: 26 }, // D
+      { header: 'Shartnoma / Buyurtma №', key: 'contract', width: 22 }, // E
+      { header: 'Zarar Summasi', key: 'amount', width: 20 }, // F
+      { header: 'Valyuta', key: 'currency', width: 10 }, // G
+      { header: 'Sana', key: 'damage_date', width: 14 }, // H
+      { header: 'Tafsilot', key: 'description', width: 40 }, // I
+    ];
+
+    styleExcelHeaderRow(ws.getRow(1));
+    applyExcelAutoFilter(ws, 1);
+
+    let rowIdx = 0;
+    for (const app of applications) {
+      const appNumber = app.application_number || `AR-${app.id.slice(0, 8)}`;
+      for (const dmg of app.damages || []) {
+        rowIdx++;
+        const typeLabel = APPLICATION_DAMAGE_TYPE_LABELS[dmg.damage_type] || dmg.damage_type;
+        const row = ws.addRow(
+          sanitizeExcelRow({
+            idx: rowIdx,
+            app_num: appNumber,
+            damage_type: typeLabel,
+            org: dmg.organization_name || dmg.bank?.name || dmg.payment_provider?.name || '—',
+            contract: dmg.contract_number || '—',
+            amount: Number(dmg.amount || 0),
+            currency: dmg.currency || 'UZS',
+            damage_date: dmg.damage_date || '—',
+            description: dmg.description || '—',
+          }),
+        );
+        styleExcelDataRow(row, ['description']);
+        row.getCell('idx').alignment = { horizontal: 'center', vertical: 'middle' };
+        row.getCell('amount').numFmt = '#,##0.00';
+        row.getCell('amount').alignment = { horizontal: 'right', vertical: 'middle' };
+        row.getCell('currency').alignment = { horizontal: 'center', vertical: 'middle' };
+      }
+    }
+
+    if (rowIdx > 0) {
+      const lastDataRow = rowIdx + 1;
+      const totalRow = ws.addRow({
+        contract: 'JAMI (UZS):',
+        amount: { formula: `SUMIF(G2:G${lastDataRow}, "UZS", F2:F${lastDataRow})` },
+        currency: 'UZS',
+      });
+      styleExcelTotalRow(totalRow);
+      totalRow.getCell('contract').alignment = { horizontal: 'right', vertical: 'middle' };
+      totalRow.getCell('amount').numFmt = '#,##0.00';
+      totalRow.getCell('amount').alignment = { horizontal: 'right', vertical: 'middle' };
     }
   }
 

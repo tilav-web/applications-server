@@ -8,6 +8,10 @@ import {
   SUBMISSION_FORM_LABELS,
   SubmissionForm,
 } from '../../../common/enums/appeal-classification.enum';
+import {
+  APPLICATION_DAMAGE_TYPE_LABELS,
+  ApplicationDamageType,
+} from '../../../common/enums/damage-type.enum';
 import { TransferDestinationType } from '../../../common/enums/transfer-destination-type.enum';
 import { DESTINATION_TYPE_LABELS } from '../../../common/utils/excel-style.util';
 import { cyrillicToLatinNormalized } from '../../../common/utils/uzbek-latin.util';
@@ -21,7 +25,8 @@ export const SHEET_NAMES = {
   APPLICATIONS: '1. Arizalar',
   EXTRA_TRANSFERS: "2. Qo'shimcha o'tkazmalar",
   SUSPECT_CLUES: '3. Gumonlanuvchi izlari',
-  GUIDE: "4. Yo'riqnoma va Enumlar",
+  NON_CARD_DAMAGES: '4. Kartasiz zararlar',
+  GUIDE: "5. Yo'riqnoma va Enumlar",
   LISTS: '_Royxatlar',
 } as const;
 
@@ -50,7 +55,8 @@ export type ImportDropdownKey =
   | 'destination_types'
   | 'decision_types'
   | 'rejection_reasons'
-  | 'suspect_fields';
+  | 'suspect_fields'
+  | 'damage_types';
 
 export interface ImportColumnDef {
   key: string;
@@ -638,6 +644,73 @@ export const SUSPECT_CLUE_IMPORT_COLUMNS: ImportColumnDef[] = [
   },
 ];
 
+export const NON_CARD_DAMAGE_IMPORT_COLUMNS: ImportColumnDef[] = [
+  {
+    key: 'app_ref',
+    header: "Ariza bog'lash kodi / Ariza № *",
+    width: 26,
+    group: 'core',
+    required: true,
+    isTextFormat: true,
+    sampleValue: IMPORT_SAMPLE_ROW_MARKER,
+  },
+  {
+    key: 'damage_type',
+    header: 'Zarar turi (Enum) *',
+    width: 28,
+    group: 'classification',
+    required: true,
+    dropdownKey: 'damage_types',
+    sampleValue: APPLICATION_DAMAGE_TYPE_LABELS[ApplicationDamageType.INSTALLMENT],
+  },
+  {
+    key: 'organization_name',
+    header: 'Tashkilot / Platforma',
+    width: 26,
+    group: 'finance',
+    sampleValue: 'Uzum Nasiya',
+  },
+  {
+    key: 'amount',
+    header: 'Zarar summasi *',
+    width: 20,
+    group: 'finance',
+    required: true,
+    sampleValue: 12500000,
+  },
+  {
+    key: 'currency',
+    header: 'Valyuta (Enum)',
+    width: 14,
+    group: 'finance',
+    dropdownKey: 'currencies',
+    sampleValue: 'UZS',
+  },
+  {
+    key: 'contract_number',
+    header: 'Shartnoma / Buyurtma №',
+    width: 22,
+    group: 'core',
+    isTextFormat: true,
+    sampleValue: 'UZN-2026-12345',
+  },
+  {
+    key: 'damage_date',
+    header: 'Sana',
+    width: 15,
+    group: 'core',
+    isTextFormat: true,
+    sampleValue: '2026-11-24',
+  },
+  {
+    key: 'description',
+    header: 'Tafsilot (Nima olingani)',
+    width: 38,
+    group: 'notes',
+    sampleValue: 'Fuqaro nomiga iPhone 15 Pro 12 oyga nasiyaga rasmiylashtirilgan',
+  },
+];
+
 export function normalizeLookupKey(raw: string | null | undefined): string {
   if (!raw) return '';
   return cyrillicToLatinNormalized(String(raw)).toLowerCase().replace(/\s+/g, ' ').trim();
@@ -650,7 +723,7 @@ export function normalizeHeaderKey(raw: string | null | undefined): string {
 export type ImportRowStatus = 'READY' | 'DUPLICATE' | 'ERROR';
 
 export interface ImportCellError {
-  sheet: 'APPLICATIONS' | 'EXTRA_TRANSFERS' | 'SUSPECT_CLUES';
+  sheet: 'APPLICATIONS' | 'EXTRA_TRANSFERS' | 'SUSPECT_CLUES' | 'NON_CARD_DAMAGES';
   rowNumber: number;
   columnKey: string;
   message: string;
@@ -679,7 +752,7 @@ export interface ImportPreviewRow {
 }
 
 export interface ImportOrphanRowError {
-  sheet: 'EXTRA_TRANSFERS' | 'SUSPECT_CLUES';
+  sheet: 'EXTRA_TRANSFERS' | 'SUSPECT_CLUES' | 'NON_CARD_DAMAGES';
   rowNumber: number;
   appRef: string | null;
   message: string;
@@ -735,6 +808,11 @@ export interface FailedRowExportPayload {
     rowErrors: string[];
   }>;
   suspectClues: Array<{
+    rawValues: Record<string, string | number | null>;
+    cellErrors: Map<string, string[]>;
+    rowErrors: string[];
+  }>;
+  nonCardDamages: Array<{
     rawValues: Record<string, string | number | null>;
     cellErrors: Map<string, string[]>;
     rowErrors: string[];

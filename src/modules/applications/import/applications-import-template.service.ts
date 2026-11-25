@@ -13,6 +13,10 @@ import {
   SUBMISSION_FORM_LABELS,
   SubmissionForm,
 } from '../../../common/enums/appeal-classification.enum';
+import {
+  APPLICATION_DAMAGE_TYPE_LABELS,
+  ApplicationDamageType,
+} from '../../../common/enums/damage-type.enum';
 import { TransferDestinationType } from '../../../common/enums/transfer-destination-type.enum';
 import type { JwtAccessPayload } from '../../../common/types/jwt-payload.interface';
 import { getAllowedDistrictIds } from '../../../common/utils/district-scope.util';
@@ -49,6 +53,7 @@ import {
   IMPORT_TEMPLATE_SIGNATURE,
   type ImportColumnDef,
   type ImportDropdownKey,
+  NON_CARD_DAMAGE_IMPORT_COLUMNS,
   SHEET_NAMES,
   SUSPECT_CLUE_IMPORT_COLUMNS,
 } from './applications-import.types';
@@ -282,6 +287,9 @@ export class ApplicationsImportTemplateService {
       decision_types: decisionTypeNames,
       rejection_reasons: rejectionReasonNames,
       suspect_fields: suspectFieldLabels,
+      damage_types: Object.values(ApplicationDamageType).map(
+        (k) => APPLICATION_DAMAGE_TYPE_LABELS[k],
+      ),
     };
 
     const defaultStatus =
@@ -682,6 +690,21 @@ export class ApplicationsImportTemplateService {
       );
     }
 
+    for (const dmgType of Object.values(ApplicationDamageType)) {
+      addRuleRow(
+        'Kartasiz zarar turi (4-sahifa)',
+        APPLICATION_DAMAGE_TYPE_LABELS[dmgType],
+        dmgType,
+        dmgType === ApplicationDamageType.ONLINE_CREDIT
+          ? 'Fuqaro nomiga onlayn kredit / mikroqarz rasmiylashtirilganda'
+          : dmgType === ApplicationDamageType.INSTALLMENT
+            ? 'Uzum Nasiya, Alif Nasiya, Open kabi muddatli to‘lovga narsa olinganda'
+            : dmgType === ApplicationDamageType.GOODS_SERVICE
+              ? 'Tovar, xizmat yoki akkaunt oldi-sotdisida aldash orqali zarar'
+              : 'Naqd pul, bank hisobi yoki boshqa kartasiz moddiy zarar',
+      );
+    }
+
     ws.addRow([]);
     addSectionHeader("3. SHABLONGA YUKLANGAN JONLI BAZA MA'LUMOTNOMALARI");
     addRuleRow("Ma'lumotnoma nomi", 'Mavjud yozuvlar soni', 'Holat', 'Generatsiya vaqti');
@@ -752,10 +775,24 @@ export class ApplicationsImportTemplateService {
       },
     );
 
-    // 4-sahifa: Yo'riqnoma va Enumlar
+    // 4-sahifa: Kartasiz moddiy zararlar (Kredit / Nasiya / Tovar)
+    this.setupDataSheet(
+      workbook,
+      SHEET_NAMES.NON_CARD_DAMAGES,
+      NON_CARD_DAMAGE_IMPORT_COLUMNS,
+      dropdownRanges,
+      {
+        includeSampleRow: true,
+        sampleDefaults: dataset.sampleDefaults,
+        validationStartRow: 3,
+        validationEndRow: IMPORT_MAX_ROWS + 2,
+      },
+    );
+
+    // 5-sahifa: Yo'riqnoma va Enumlar
     this.buildGuideSheet(workbook, dataset.stats);
 
-    // 5-sahifa: Yashirin dropdown ro'yxatlar (eng oxirida!)
+    // 6-sahifa: Yashirin dropdown ro'yxatlar (eng oxirida!)
     this.buildHiddenListsSheet(workbook, dataset.lists);
 
     return workbook;
@@ -872,6 +909,11 @@ export class ApplicationsImportTemplateService {
       payload.extraTransfers,
     );
     writeFailedSheet(SHEET_NAMES.SUSPECT_CLUES, SUSPECT_CLUE_IMPORT_COLUMNS, payload.suspectClues);
+    writeFailedSheet(
+      SHEET_NAMES.NON_CARD_DAMAGES,
+      NON_CARD_DAMAGE_IMPORT_COLUMNS,
+      payload.nonCardDamages,
+    );
     this.buildGuideSheet(workbook, dataset.stats);
     this.buildHiddenListsSheet(workbook, dataset.lists);
 

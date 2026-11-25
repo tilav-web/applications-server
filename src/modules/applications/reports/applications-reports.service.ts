@@ -868,6 +868,7 @@ export class ApplicationsReportsService {
       .leftJoinAndSelect('transfer.payment_provider', 'payment_provider')
       .leftJoinAndSelect('transfer.sender_card', 'sender_card')
       .leftJoinAndSelect('sender_card.bank', 'sender_bank')
+      .leftJoinAndSelect('app.damages', 'damages')
       .leftJoinAndSelect('app.custom_fields', 'custom_fields')
       .leftJoinAndSelect('custom_fields.citizen', 'cf_citizen')
       .leftJoinAndSelect('custom_fields.card', 'cf_card')
@@ -1010,6 +1011,26 @@ export class ApplicationsReportsService {
           '—'
         : '—';
 
+      const seenTransferIds = new Set<string>();
+      let totalRegistryLoss = 0;
+      if (app.transfer) {
+        if (app.transfer.id) seenTransferIds.add(app.transfer.id);
+        totalRegistryLoss += Number(app.transfer.amount || 0);
+      }
+      if (app.custom_fields) {
+        for (const cf of app.custom_fields) {
+          if (cf.transfer && (!cf.transfer.id || !seenTransferIds.has(cf.transfer.id))) {
+            if (cf.transfer.id) seenTransferIds.add(cf.transfer.id);
+            totalRegistryLoss += Number(cf.transfer.amount || 0);
+          }
+        }
+      }
+      if (Array.isArray(app.damages)) {
+        for (const dmg of app.damages) {
+          totalRegistryLoss += Number(dmg.amount || 0);
+        }
+      }
+
       return {
         index: skip + idx + 1,
         id: app.id,
@@ -1021,7 +1042,7 @@ export class ApplicationsReportsService {
         author_name: authorName || '—',
         description: app.description || '—',
         crime_type: app.crime?.article || app.crime?.title || '—',
-        loss_amount: Number(app.transfer?.amount || 0),
+        loss_amount: totalRegistryLoss,
         crime_method: app.crime_method?.name || '—',
         additional_notes: app.officer_notes || '',
         card_numbers: cardList.join(', ') || '—',

@@ -19,6 +19,48 @@ import {
   SubmissionForm,
 } from '../../../common/enums/appeal-classification.enum';
 import { CustomFieldType } from '../../../common/enums/custom-field-type.enum';
+import { ApplicationDamageType } from '../../../common/enums/damage-type.enum';
+
+export class CreateApplicationDamageDto {
+  @IsOptional()
+  @IsEnum(ApplicationDamageType)
+  damage_type?: ApplicationDamageType;
+
+  @IsOptional()
+  @IsString()
+  organization_name?: string | null;
+
+  @IsOptional()
+  @IsUUID('4')
+  bank_id?: string | null;
+
+  @IsOptional()
+  @IsUUID('4')
+  payment_provider_id?: string | null;
+
+  @IsNumber()
+  amount: number;
+
+  @IsOptional()
+  @IsString()
+  currency?: string | null;
+
+  @IsOptional()
+  @IsString()
+  contract_number?: string | null;
+
+  @IsOptional()
+  @IsString()
+  damage_date?: string | null;
+
+  @IsOptional()
+  @IsString()
+  description?: string | null;
+
+  @IsOptional()
+  @IsNumber()
+  order?: number;
+}
 
 export class CreateApplicationCustomFieldDto {
   @IsOptional()
@@ -272,4 +314,11 @@ export class CreateApplicationDto {
   @ValidateNested({ each: true })
   @Type(() => CreateApplicationCustomFieldDto)
   custom_fields?: CreateApplicationCustomFieldDto[];
+
+  // Kartasiz moddiy zararlar (Kredit, Nasiya, Tovar/Xizmat aldovi va b.)
+  @IsOptional()
+  @IsArray()
+  @ValidateNested({ each: true })
+  @Type(() => CreateApplicationDamageDto)
+  damages?: CreateApplicationDamageDto[];
 }

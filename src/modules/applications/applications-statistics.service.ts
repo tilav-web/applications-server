@@ -13,6 +13,7 @@ import type { JwtAccessPayload } from '../../common/types/jwt-payload.interface'
 import { User } from '../users/user.entity';
 import { Application } from './application.entity';
 import { shouldIncludeInDamageTotal } from './application-chain.util';
+import { ApplicationDamage } from './damages/application-damage.entity';
 import { District } from './districts/district.entity';
 import { ApplicationStatusCategory } from './statuses/application-status.entity';
 import { Transfer } from './transfers/transfer.entity';
@@ -24,6 +25,8 @@ export class ApplicationsStatisticsService {
     private readonly applicationRepo: Repository<Application>,
     @InjectRepository(Transfer)
     private readonly transferRepo: Repository<Transfer>,
+    @InjectRepository(ApplicationDamage)
+    private readonly damageRepo: Repository<ApplicationDamage>,
     @InjectRepository(District)
     private readonly districtRepo: Repository<District>,
     @InjectRepository(User)
@@ -241,16 +244,28 @@ export class ApplicationsStatisticsService {
 
     const appIds = applications.map((a) => a.id);
     const extraTransfersByApp = new Map<string, Transfer[]>();
+    const damagesByApp = new Map<string, ApplicationDamage[]>();
     if (appIds.length > 0) {
-      const extraTransfers = await this.transferRepo.find({
-        where: { application_id: In(appIds) },
-        relations: { payment_provider: true },
-      });
+      const [extraTransfers, allDamages] = await Promise.all([
+        this.transferRepo.find({
+          where: { application_id: In(appIds) },
+          relations: { payment_provider: true },
+        }),
+        this.damageRepo.find({
+          where: { application_id: In(appIds) },
+        }),
+      ]);
       for (const tr of extraTransfers) {
         if (!tr.application_id) continue;
         const arr = extraTransfersByApp.get(tr.application_id) || [];
         arr.push(tr);
         extraTransfersByApp.set(tr.application_id, arr);
+      }
+      for (const dmg of allDamages) {
+        if (!dmg.application_id) continue;
+        const arr = damagesByApp.get(dmg.application_id) || [];
+        arr.push(dmg);
+        damagesByApp.set(dmg.application_id, arr);
       }
     }
 
@@ -263,7 +278,7 @@ export class ApplicationsStatisticsService {
       return Array.from(byId.values());
     };
 
-    const getAppTotalLoss = (app: Application): number => {
+    const getAppTransferLoss = (app: Application): number => {
       const list = getAppTransfers(app);
       let sum = 0;
       for (const tr of list) {
@@ -273,6 +288,20 @@ export class ApplicationsStatisticsService {
       }
       return sum;
     };
+
+    const getAppNonCardDamageLoss = (app: Application): number => {
+      const list = damagesByApp.get(app.id) || [];
+      let sum = 0;
+      for (const d of list) {
+        if (!d.currency || d.currency.toUpperCase() === 'UZS') {
+          sum += Number(d.amount || 0);
+        }
+      }
+      return sum;
+    };
+
+    const getAppTotalLoss = (app: Application): number =>
+      getAppTransferLoss(app) + getAppNonCardDamageLoss(app);
 
     const classifyAppBucket = (
       app: Application,
@@ -335,20 +364,43 @@ export class ApplicationsStatisticsService {
         prevEnd,
       });
 
+    const prevDamageQb = this.damageRepo
+      .createQueryBuilder('dmg')
+      .innerJoin(
+        Application,
+        'app',
+        "app.is_deleted = false AND COALESCE(app.repeat_type, 'PRIMARY') != 'DUPLICATE' AND dmg.application_id = app.id",
+      )
+      .select('COALESCE(SUM(dmg.amount), 0)', 'loss')
+      .where("(dmg.currency IS NULL OR UPPER(dmg.currency) = 'UZS')")
+      .andWhere('COALESCE(app.date, app.created_at) BETWEEN :prevStart AND :prevEnd', {
+        prevStart,
+        prevEnd,
+      });
+
     if (assignedDistrictIds !== null) {
       if (assignedDistrictIds.length > 0) {
         prevLossQb.andWhere('app.district_id IN (:...userDistricts)', {
           userDistricts: assignedDistrictIds,
         });
+        prevDamageQb.andWhere('app.district_id IN (:...userDistricts)', {
+          userDistricts: assignedDistrictIds,
+        });
       } else {
         prevLossQb.andWhere('1 = 0');
+        prevDamageQb.andWhere('1 = 0');
       }
     }
 
-    const prevLossRaw = await prevLossQb.getRawOne<{ loss?: string | number }>();
-    const prevLoss = Number(prevLossRaw?.loss ?? 0);
+    const [prevLossRaw, prevDamageRaw] = await Promise.all([
+      prevLossQb.getRawOne<{ loss?: string | number }>(),
+      prevDamageQb.getRawOne<{ loss?: string | number }>(),
+    ]);
+    const prevLoss = Number(prevLossRaw?.loss ?? 0) + Number(prevDamageRaw?.loss ?? 0);
 
     let totalLoss = 0;
+    let cardTransfersLoss = 0;
+    let nonCardDamagesLoss = 0;
     let resolvedLoss = 0;
     let maxLoss = 0;
     let newCount = 0;
@@ -458,9 +510,16 @@ export class ApplicationsStatisticsService {
       }
 
       const appTransfers = getAppTransfers(app);
-      const rawAmount = getAppTotalLoss(app);
+      const rawTransferLoss = getAppTransferLoss(app);
+      const rawNonCardLoss = getAppNonCardDamageLoss(app);
+      const rawAmount = rawTransferLoss + rawNonCardLoss;
       // Dublikat arizalar zarar summasini 2 marta qo'shib yubormasligi uchun hisobdan chiqariladi
-      const amount = shouldIncludeInDamageTotal(app.repeat_type) ? rawAmount : 0;
+      const includeInTotal = shouldIncludeInDamageTotal(app.repeat_type);
+      const amount = includeInTotal ? rawAmount : 0;
+      if (includeInTotal) {
+        cardTransfersLoss += rawTransferLoss;
+        nonCardDamagesLoss += rawNonCardLoss;
+      }
       if (amount > 0) {
         totalLoss += amount;
         if (amount > maxLoss) maxLoss = amount;
@@ -827,6 +886,8 @@ export class ApplicationsStatisticsService {
         resolvedApplications: resolvedCount,
         rejectedApplications: rejectedCount,
         totalLoss,
+        cardTransfersLoss,
+        nonCardDamagesLoss,
         resolvedLoss,
         avgLoss,
         maxLoss,
