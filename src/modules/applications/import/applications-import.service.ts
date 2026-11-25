@@ -29,6 +29,7 @@ import {
   normalizePinfl,
   normalizeUzPhone,
 } from '../../../common/utils/normalization.util';
+import { cyrillicToLatinNormalized } from '../../../common/utils/uzbek-latin.util';
 import { IntelligenceSyncService } from '../../intelligence/intelligence-sync.service';
 import { SlaQueueService } from '../../notifications/sla-queue.service';
 import { User } from '../../users/user.entity';
@@ -552,10 +553,28 @@ export class ApplicationsImportService {
     ws: ExcelJS.Worksheet,
     columns: ImportColumnDef[],
   ): { colIndexByKey: Map<string, number>; ignoredHeaders: string[]; matchedCount: number } {
-    const defByNormHeader = new Map<string, ImportColumnDef>();
+    const defByNormHeader = new Map<string, string>();
     for (const col of columns) {
-      defByNormHeader.set(normalizeHeaderKey(col.header), col);
-      defByNormHeader.set(normalizeHeaderKey(col.key), col);
+      defByNormHeader.set(normalizeHeaderKey(col.header), col.key);
+      defByNormHeader.set(normalizeHeaderKey(col.key), col.key);
+    }
+
+    // Eski shablon sarlavhalari bilan to'liq moslik (backward compatibility)
+    const legacyAliases: Array<[string, string]> = [
+      ['Ariza raqami', 'application_number'],
+      ['Jinoyat moddasi', 'crime'],
+      ["To'lov provayderi", 'payment_provider'],
+      ['Xodim qaydlari', 'officer_notes'],
+      ['Yashash mahallasi', 'citizen_neighborhood'],
+      ['Arizachi Familiyasi', 'citizen_last_name'],
+      ['Arizachi Ismi', 'citizen_first_name'],
+      ['Arizachi Otasining ismi', 'citizen_middle_name'],
+    ];
+    for (const [alias, targetKey] of legacyAliases) {
+      const normAlias = normalizeHeaderKey(alias);
+      if (!defByNormHeader.has(normAlias)) {
+        defByNormHeader.set(normAlias, targetKey);
+      }
     }
 
     const ignoredHelperKey = normalizeHeaderKey(ERROR_REASON_HEADER);
@@ -571,15 +590,45 @@ export class ApplicationsImportService {
       if (norm === ignoredHelperKey || norm === 'holat') {
         continue;
       }
-      const def = defByNormHeader.get(norm);
-      if (def && !colIndexByKey.has(def.key)) {
-        colIndexByKey.set(def.key, c);
-      } else if (!def) {
+      const matchedKey = defByNormHeader.get(norm);
+      if (matchedKey && !colIndexByKey.has(matchedKey)) {
+        colIndexByKey.set(matchedKey, c);
+      } else if (!matchedKey) {
         ignoredHeaders.push(text);
       }
     }
 
     return { colIndexByKey, ignoredHeaders, matchedCount: colIndexByKey.size };
+  }
+
+  private toLatinText(raw: string | null): string | null {
+    if (!raw) return null;
+    const trimmed = raw.trim();
+    if (!trimmed) return null;
+    if (/^https?:\/\//i.test(trimmed) || /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(trimmed)) {
+      return trimmed;
+    }
+    return cyrillicToLatinNormalized(trimmed);
+  }
+
+  private splitUzbekFullName(raw: string): {
+    lastName: string | null;
+    firstName: string | null;
+    middleName: string | null;
+  } {
+    const latin = cyrillicToLatinNormalized(raw).replace(/\s+/g, ' ').trim();
+    if (!latin) {
+      return { lastName: null, firstName: null, middleName: null };
+    }
+    const parts = latin.split(' ').filter(Boolean);
+    if (parts.length === 1) {
+      return { lastName: formatUzbekName(parts[0]), firstName: null, middleName: null };
+    }
+    return {
+      lastName: formatUzbekName(parts[0]),
+      firstName: formatUzbekName(parts[1]),
+      middleName: parts.length > 2 ? formatUzbekName(parts.slice(2).join(' ')) : null,
+    };
   }
 
   private async loadReferenceCatalog(): Promise<ReferenceCatalog> {
@@ -1086,7 +1135,7 @@ export class ApplicationsImportService {
       }
 
       const parentApplicationNumber = this.extractText(getCellVal('parent_application_number'));
-      const repeatReason = this.extractText(getCellVal('repeat_reason'));
+      const repeatReason = this.toLatinText(this.extractText(getCellVal('repeat_reason')));
       if (parentApplicationNumber && repeatType === ApplicationRepeatType.PRIMARY) {
         this.addCellError(
           cellErrors,
@@ -1115,7 +1164,7 @@ export class ApplicationsImportService {
         }
       }
 
-      const description = this.extractText(getCellVal('description'));
+      const description = this.toLatinText(this.extractText(getCellVal('description')));
       if (!crimeId && !crimeText && !description) {
         const msg =
           "Jinoyat moddasi yoki Fabula (Voqea bayoni) dan kamida bittasi to'ldirilishi shart";
@@ -1156,7 +1205,7 @@ export class ApplicationsImportService {
           awarenessStatusId = found.id;
         }
       }
-      const awarenessNote = this.extractText(getCellVal('awareness_note'));
+      const awarenessNote = this.toLatinText(this.extractText(getCellVal('awareness_note')));
       if (awarenessNote && awarenessNote.length > 300) {
         this.addCellError(
           cellErrors,
@@ -1166,24 +1215,63 @@ export class ApplicationsImportService {
         );
       }
 
-      // Fuqaro maydonlari
-      const rawLastName = this.extractText(getCellVal('citizen_last_name'));
-      const rawFirstName = this.extractText(getCellVal('citizen_first_name'));
-      const rawMiddleName = this.extractText(getCellVal('citizen_middle_name'));
-      if (!rawLastName) {
+      // Fuqaro maydonlari (Yagona F.I.SH ustuni yoki eski 3 ta ustun)
+      const rawFullName = this.extractText(getCellVal('citizen_full_name'));
+      let citizenLastName: string | null = null;
+      let citizenFirstName: string | null = null;
+      let citizenMiddleName: string | null = null;
+
+      if (rawFullName) {
+        const split = this.splitUzbekFullName(rawFullName);
+        citizenLastName = split.lastName;
+        citizenFirstName = split.firstName;
+        citizenMiddleName = split.middleName;
+        if (!citizenLastName || !citizenFirstName) {
+          this.addCellError(
+            cellErrors,
+            errors,
+            'citizen_full_name',
+            "Arizachi F.I.SH kamida Familiya va Ismdan iborat bo'lishi kerak (masalan: Aliyev Vali)",
+          );
+        }
+      } else if (
+        appHeaders.colIndexByKey.has('citizen_last_name') ||
+        appHeaders.colIndexByKey.has('citizen_first_name')
+      ) {
+        const rawLastName = this.extractText(getCellVal('citizen_last_name'));
+        const rawFirstName = this.extractText(getCellVal('citizen_first_name'));
+        const rawMiddleName = this.extractText(getCellVal('citizen_middle_name'));
+        citizenLastName = rawLastName
+          ? formatUzbekName(cyrillicToLatinNormalized(rawLastName))
+          : null;
+        citizenFirstName = rawFirstName
+          ? formatUzbekName(cyrillicToLatinNormalized(rawFirstName))
+          : null;
+        citizenMiddleName = rawMiddleName
+          ? formatUzbekName(cyrillicToLatinNormalized(rawMiddleName))
+          : null;
+        if (!citizenLastName) {
+          this.addCellError(
+            cellErrors,
+            errors,
+            'citizen_full_name',
+            'Arizachi familiyasi kiritilishi shart',
+          );
+        }
+        if (!citizenFirstName) {
+          this.addCellError(
+            cellErrors,
+            errors,
+            'citizen_full_name',
+            'Arizachi ismi kiritilishi shart',
+          );
+        }
+      } else {
         this.addCellError(
           cellErrors,
           errors,
-          'citizen_last_name',
-          'Arizachi familiyasi kiritilishi shart',
-        );
-      }
-      if (!rawFirstName) {
-        this.addCellError(
-          cellErrors,
-          errors,
-          'citizen_first_name',
-          'Arizachi ismi kiritilishi shart',
+          'citizen_full_name',
+          'Arizachi (F.I.SH) kiritilishi shart',
         );
       }
 
@@ -1327,7 +1415,7 @@ export class ApplicationsImportService {
         }
       }
 
-      const citizenAddress = this.extractText(getCellVal('citizen_address'));
+      const citizenAddress = this.toLatinText(this.extractText(getCellVal('citizen_address')));
 
       // Kasb toifasi va Kasb turi
       const occCatText = this.extractText(getCellVal('occupation_category'));
@@ -1429,7 +1517,7 @@ export class ApplicationsImportService {
           workplaceId = foundWp.id;
         }
       }
-      const workPosition = this.extractText(getCellVal('work_position'));
+      const workPosition = this.toLatinText(this.extractText(getCellVal('work_position')));
 
       // Asosiy moliyaviy o'tkazma va kartalar
       const victimCardParsed = this.parseCardNumber(getCellVal('victim_card_number'));
@@ -1553,7 +1641,7 @@ export class ApplicationsImportService {
         );
       }
 
-      const destinationLabel = this.extractText(getCellVal('destination_label'));
+      const destinationLabel = this.toLatinText(this.extractText(getCellVal('destination_label')));
 
       const transferDateParsed = this.parseDateValue(getCellVal('transfer_date'));
       if (transferDateParsed.error) {
@@ -1623,7 +1711,18 @@ export class ApplicationsImportService {
         }
       }
 
-      const officerNotes = this.extractText(getCellVal('officer_notes'));
+      const rawEMaterialOfficer = this.extractText(getCellVal('e_material_officer'));
+      const rawOfficerNotes = this.toLatinText(this.extractText(getCellVal('officer_notes')));
+      const officerNotesParts: string[] = [];
+      if (rawEMaterialOfficer) {
+        officerNotesParts.push(
+          `E-material ijrochisi: ${formatUzbekName(cyrillicToLatinNormalized(rawEMaterialOfficer))}`,
+        );
+      }
+      if (rawOfficerNotes) {
+        officerNotesParts.push(rawOfficerNotes);
+      }
+      const officerNotes = officerNotesParts.length > 0 ? officerNotesParts.join('\n') : null;
 
       rows.push({
         rowNumber: r,
@@ -1650,9 +1749,9 @@ export class ApplicationsImportService {
         crimeMethodId,
         awarenessStatusId,
         awarenessNote,
-        citizenLastName: rawLastName ? formatUzbekName(rawLastName) : null,
-        citizenFirstName: rawFirstName ? formatUzbekName(rawFirstName) : null,
-        citizenMiddleName: rawMiddleName ? formatUzbekName(rawMiddleName) : null,
+        citizenLastName,
+        citizenFirstName,
+        citizenMiddleName,
         citizenGender,
         citizenBirthDate: birthDateParsed.value,
         citizenPhone,
@@ -1667,14 +1766,18 @@ export class ApplicationsImportService {
         workPosition,
         victimCardNumber: victimCardParsed.value,
         victimBankId,
-        victimCardFullName: victimCardFullName ? formatUzbekName(victimCardFullName) : null,
+        victimCardFullName: victimCardFullName
+          ? formatUzbekName(cyrillicToLatinNormalized(victimCardFullName))
+          : null,
         transferAmount: amountParsed.value,
         transferCurrency,
         paymentProviderId,
         destinationType,
         receiverCardNumber: receiverCardParsed.value,
         receiverBankId,
-        receiverCardFullName: receiverCardFullName ? formatUzbekName(receiverCardFullName) : null,
+        receiverCardFullName: receiverCardFullName
+          ? formatUzbekName(cyrillicToLatinNormalized(receiverCardFullName))
+          : null,
         destinationLabel,
         transferDate: transferDateParsed.value,
         transferTime: transferTimeParsed.value,
@@ -1851,7 +1954,7 @@ export class ApplicationsImportService {
         }
 
         const recFullName = this.extractText(getVal('receiver_card_full_name'));
-        const destinationLabel = this.extractText(getVal('destination_label'));
+        const destinationLabel = this.toLatinText(this.extractText(getVal('destination_label')));
         const tDate = this.parseDateValue(getVal('transfer_date'));
         if (tDate.error) this.addCellError(cellErrors, errors, 'transfer_date', tDate.error);
         const tTime = this.parseTimeValue(getVal('transfer_time'));
@@ -1870,7 +1973,9 @@ export class ApplicationsImportService {
           destinationType,
           receiverCardNumber: recCard.value,
           receiverBankId,
-          receiverCardFullName: recFullName ? formatUzbekName(recFullName) : null,
+          receiverCardFullName: recFullName
+            ? formatUzbekName(cyrillicToLatinNormalized(recFullName))
+            : null,
           destinationLabel,
           transferDate: tDate.value,
           transferTime: tTime.value,
@@ -1974,7 +2079,7 @@ export class ApplicationsImportService {
         if (!clueVal) {
           this.addCellError(cellErrors, errors, 'value', 'Iz qiymati kiritilishi shart');
         }
-        const clueNote = this.extractText(getVal('note'));
+        const clueNote = this.toLatinText(this.extractText(getVal('note')));
 
         const parsedClue: ParsedSuspectClueRow = {
           rowNumber: r,

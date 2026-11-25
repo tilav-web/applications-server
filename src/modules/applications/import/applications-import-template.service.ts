@@ -415,9 +415,19 @@ export class ApplicationsImportTemplateService {
       width: c.width,
     }));
 
+    // Barcha ustunlarda matn katak ichida pastga sindirilishi (wrapText) va normal shrift
+    allCols.forEach((col, i) => {
+      const colRef = ws.getColumn(i + 1);
+      colRef.font = { name: 'Calibri', size: 10, color: { argb: 'FF0F172A' } };
+      colRef.alignment = { vertical: 'top', horizontal: 'left', wrapText: true };
+      if (col.isTextFormat) {
+        colRef.numFmt = '@';
+      }
+    });
+
     // 1-qator: sarlavhalar
     const headerRow = ws.getRow(1);
-    headerRow.height = 34;
+    headerRow.height = 36;
     allCols.forEach((col, i) => {
       const cell = headerRow.getCell(i + 1);
       const colors = col.isErrorCol
@@ -434,17 +444,9 @@ export class ApplicationsImportTemplateService {
       };
     });
 
-    // Matn ustunlariga @ format berish (16 xonali karta va 14 xonali JSHSHIR buzilmasligi uchun)
-    allCols.forEach((col, i) => {
-      if (col.isTextFormat) {
-        ws.getColumn(i + 1).numFmt = '@';
-      }
-    });
-
     // 2-qator: namuna qatori (faqat bo'sh shablonda)
     if (options.includeSampleRow) {
       const sampleRow = ws.getRow(2);
-      sampleRow.height = 24;
       allCols.forEach((col, i) => {
         const cell = sampleRow.getCell(i + 1);
         const fallback = options.sampleDefaults?.[col.key];
@@ -458,7 +460,7 @@ export class ApplicationsImportTemplateService {
         }
         cell.font = { name: 'Calibri', size: 9.5, italic: true, color: { argb: 'FF64748B' } };
         cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFF1F5F9' } };
-        cell.alignment = { vertical: 'middle', horizontal: 'left' };
+        cell.alignment = { vertical: 'top', horizontal: 'left', wrapText: true };
         cell.border = {
           top: { style: 'thin', color: { argb: 'FFCBD5E1' } },
           left: { style: 'thin', color: { argb: 'FFE2E8F0' } },
@@ -469,13 +471,18 @@ export class ApplicationsImportTemplateService {
       sampleRow.commit();
     }
 
-    // Excel Data Validation (dropdown) qo'llash
+    // Kiritish qatorlarida (3..1002) ham wrapText, normal shrift va Excel Data Validation (dropdown) qo'llash
     for (let r = options.validationStartRow; r <= options.validationEndRow; r++) {
       allCols.forEach((col, i) => {
+        const cell = ws.getCell(r, i + 1);
+        cell.alignment = { vertical: 'top', horizontal: 'left', wrapText: true };
+        cell.font = { name: 'Calibri', size: 10, color: { argb: 'FF0F172A' } };
+        if (col.isTextFormat) {
+          cell.numFmt = '@';
+        }
         if (!col.dropdownKey) return;
         const formula = dropdownRanges.get(col.dropdownKey);
         if (!formula) return;
-        const cell = ws.getCell(r, i + 1);
         cell.dataValidation = {
           type: 'list',
           allowBlank: true,
@@ -549,7 +556,7 @@ export class ApplicationsImportTemplateService {
     addSectionHeader('1. ASOSIY TO‘LDIRISH QOIDALARI');
     addRuleRow(
       'Majburiy ustunlar (*)',
-      'Ariza sanasi, Tuman, Familiya, Ism, Jinoyat moddasi (yoki Fabula)',
+      'Ariza sanasi, Tuman, Arizachi (F.I.SH), Jinoyat turi (yoki Fabula)',
       'REQUIRED',
       'Bundan tashqari, fuqaro uchun kamida bitta identifikator (**): Telefon, Pasport yoki JSHSHIR kiritilishi shart.',
     );
@@ -828,7 +835,7 @@ export class ApplicationsImportTemplateService {
             };
           } else {
             cell.font = { name: 'Calibri', size: 10, color: { argb: 'FF0F172A' } };
-            cell.alignment = { vertical: 'middle', horizontal: 'left' };
+            cell.alignment = { vertical: 'top', horizontal: 'left', wrapText: true };
             cell.border = {
               top: { style: 'thin', color: { argb: 'FFE2E8F0' } },
               left: { style: 'thin', color: { argb: 'FFE2E8F0' } },

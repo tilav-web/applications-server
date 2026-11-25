@@ -223,8 +223,22 @@ describe('ApplicationsImportService & ApplicationsImportTemplateService', () => 
 
     const appWs = wb.getWorksheet(SHEET_NAMES.APPLICATIONS)!;
     expect(appWs.getCell(2, 1).value).toBe(IMPORT_SAMPLE_ROW_MARKER);
+    // A–Y ustunlar kunlik reestr ketma-ketligiga mosligini va wrapText: true yoqilganini tekshiramiz
+    expect(APP_IMPORT_COLUMNS[0].key).toBe('link_code'); // A
+    expect(APP_IMPORT_COLUMNS[1].key).toBe('source'); // B
+    expect(APP_IMPORT_COLUMNS[2].key).toBe('e_material_officer'); // C
+    expect(APP_IMPORT_COLUMNS[3].key).toBe('date'); // D
+    expect(APP_IMPORT_COLUMNS[4].key).toBe('district'); // E
+    expect(APP_IMPORT_COLUMNS[5].key).toBe('application_number'); // F
+    expect(APP_IMPORT_COLUMNS[6].key).toBe('citizen_full_name'); // G
+    expect(APP_IMPORT_COLUMNS[7].key).toBe('description'); // H
+    expect(APP_IMPORT_COLUMNS[8].key).toBe('crime'); // I
+    expect(APP_IMPORT_COLUMNS[9].key).toBe('transfer_amount'); // J
+    expect(APP_IMPORT_COLUMNS[24].key).toBe('awareness_status'); // Y
     const districtCol = findColIdx(appWs, 'district');
+    const descCol = findColIdx(appWs, 'description');
     expect(appWs.getCell(3, districtCol).dataValidation?.type).toBe('list');
+    expect(appWs.getCell(3, descCol).alignment?.wrapText).toBe(true);
     expect(String(appWs.getCell(3, districtCol).dataValidation?.formulae?.[0])).toContain(
       SHEET_NAMES.LISTS,
     );
@@ -263,15 +277,14 @@ describe('ApplicationsImportService & ApplicationsImportTemplateService', () => 
     const extraCol = APP_IMPORT_COLUMNS.length + 1;
     appWs.getCell(1, extraCol).value = 'Mening shaxsiy izohim';
 
-    // 3-qator: To'g'ri ariza (Krillda tuman yozilgan: "Қарши ш.")
+    // 3-qator: To'g'ri ariza (Krillda tuman va to'liq F.I.SH yozilgan)
     const row3 = appWs.getRow(3);
     row3.getCell(findColIdx(appWs, 'link_code')).value = '1';
     row3.getCell(findColIdx(appWs, 'application_number')).value = '2026-10001';
     row3.getCell(findColIdx(appWs, 'date')).value = '2026-11-25';
     row3.getCell(findColIdx(appWs, 'district')).value = 'Қарши ш.';
     row3.getCell(findColIdx(appWs, 'crime')).value = '168-modda — Firibgarlik';
-    row3.getCell(findColIdx(appWs, 'citizen_last_name')).value = 'Karimov';
-    row3.getCell(findColIdx(appWs, 'citizen_first_name')).value = 'Sardor';
+    row3.getCell(findColIdx(appWs, 'citizen_full_name')).value = 'КАРИМОВ САРДОР ОЛИМ ЎҒЛИ';
     row3.getCell(findColIdx(appWs, 'citizen_phone')).value = '+998901234567';
     row3.getCell(findColIdx(appWs, 'citizen_neighborhood')).value = 'Guliston MFY';
     row3.getCell(findColIdx(appWs, 'victim_card_number')).value = '8600123456789012';
@@ -289,8 +302,7 @@ describe('ApplicationsImportService & ApplicationsImportTemplateService', () => 
     row4.getCell(findColIdx(appWs, 'date')).value = '2026-11-25';
     row4.getCell(findColIdx(appWs, 'district')).value = 'Nomalum Tuman 99';
     row4.getCell(findColIdx(appWs, 'crime')).value = '168-modda';
-    row4.getCell(findColIdx(appWs, 'citizen_last_name')).value = 'Sobirov';
-    row4.getCell(findColIdx(appWs, 'citizen_first_name')).value = 'Jasur';
+    row4.getCell(findColIdx(appWs, 'citizen_full_name')).value = 'Sobirov Jasur';
     row4.getCell(findColIdx(appWs, 'citizen_phone')).value = '+998907778899';
     row4.getCell(findColIdx(appWs, 'victim_card_number')).value = '8600123'; // 16 raqam emas!
     row4.commit();
@@ -323,6 +335,7 @@ describe('ApplicationsImportService & ApplicationsImportTemplateService', () => 
     const first = preview.rows[0];
     expect(first.status).toBe('READY');
     expect(first.districtName).toBe('Qarshi sh.');
+    expect(first.citizenFullName).toBe("Karimov Sardor Olim o'g'li");
     expect(first.transfersCount).toBe(2); // 1 asosiy + 1 qo'shimcha
     expect(first.totalAmount).toBe(3000000);
     expect(first.suspectCluesCount).toBe(1);
@@ -344,8 +357,7 @@ describe('ApplicationsImportService & ApplicationsImportTemplateService', () => 
     r3.getCell(findColIdx(appWs, 'date')).value = '2026-11-25';
     r3.getCell(findColIdx(appWs, 'district')).value = 'Qarshi sh.';
     r3.getCell(findColIdx(appWs, 'crime')).value = '168-modda';
-    r3.getCell(findColIdx(appWs, 'citizen_last_name')).value = 'Aliyev';
-    r3.getCell(findColIdx(appWs, 'citizen_first_name')).value = 'Botir';
+    r3.getCell(findColIdx(appWs, 'citizen_full_name')).value = 'Aliyev Botir';
     r3.getCell(findColIdx(appWs, 'citizen_phone')).value = '+998901112233';
     r3.getCell(findColIdx(appWs, 'transfer_amount')).value = 1000000;
     r3.commit();
@@ -355,8 +367,7 @@ describe('ApplicationsImportService & ApplicationsImportTemplateService', () => 
     r4.getCell(findColIdx(appWs, 'date')).value = '2026-11-25';
     r4.getCell(findColIdx(appWs, 'district')).value = 'Qarshi sh.';
     r4.getCell(findColIdx(appWs, 'crime')).value = '168-modda';
-    r4.getCell(findColIdx(appWs, 'citizen_last_name')).value = 'Aliyev';
-    r4.getCell(findColIdx(appWs, 'citizen_first_name')).value = 'Botir';
+    r4.getCell(findColIdx(appWs, 'citizen_full_name')).value = 'Aliyev Botir';
     r4.getCell(findColIdx(appWs, 'citizen_phone')).value = '901112233'; // normalizatsiya bilan 998901112233 bo'ladi!
     r4.getCell(findColIdx(appWs, 'transfer_amount')).value = 1000000;
     r4.commit();
@@ -368,8 +379,7 @@ describe('ApplicationsImportService & ApplicationsImportTemplateService', () => 
       row.getCell(findColIdx(appWs, 'date')).value = '2026-11-25';
       row.getCell(findColIdx(appWs, 'district')).value = 'Kitob';
       row.getCell(findColIdx(appWs, 'crime')).value = '168-modda';
-      row.getCell(findColIdx(appWs, 'citizen_last_name')).value = 'Toshmatov';
-      row.getCell(findColIdx(appWs, 'citizen_first_name')).value = 'Rustam';
+      row.getCell(findColIdx(appWs, 'citizen_full_name')).value = 'Toshmatov Rustam';
       row.getCell(findColIdx(appWs, 'citizen_phone')).value = '+998912223344';
       row.commit();
     }
@@ -409,16 +419,17 @@ describe('ApplicationsImportService & ApplicationsImportTemplateService', () => 
     const wb = await templateService.generateTemplateWorkbook();
     const appWs = wb.getWorksheet(SHEET_NAMES.APPLICATIONS)!;
 
-    // 3-qator: Tayyor (yangi) ariza
+    // 3-qator: Tayyor (yangi) ariza (Krillda F.I.SH, fabula va izoh -> Lotinga o'girilib saqlanishi shart)
     const r3 = appWs.getRow(3);
     r3.getCell(findColIdx(appWs, 'link_code')).value = 'A1';
-    r3.getCell(findColIdx(appWs, 'application_number')).value = '2026-70001';
+    r3.getCell(findColIdx(appWs, 'application_number')).value = 'M0110224/2026-70001';
     r3.getCell(findColIdx(appWs, 'date')).value = '2026-11-25';
-    r3.getCell(findColIdx(appWs, 'district')).value = 'Qarshi sh.';
+    r3.getCell(findColIdx(appWs, 'district')).value = 'Қарши ш.';
     r3.getCell(findColIdx(appWs, 'crime')).value = '168-modda';
-    r3.getCell(findColIdx(appWs, 'citizen_last_name')).value = 'Rahimov';
-    r3.getCell(findColIdx(appWs, 'citizen_first_name')).value = 'Dilshod';
+    r3.getCell(findColIdx(appWs, 'citizen_full_name')).value = 'РАҲИМОВ ДИЛШОД ҒАНИ ЎҒЛИ';
     r3.getCell(findColIdx(appWs, 'citizen_phone')).value = '+998931234567';
+    r3.getCell(findColIdx(appWs, 'description')).value = 'Фуқарони картасидан пул ўғирланган';
+    r3.getCell(findColIdx(appWs, 'officer_notes')).value = 'Қўшимча изоҳ матни';
     r3.commit();
 
     // 4-qator: Xatoli ariza (bazada yo'q tuman + qisqa karta)
@@ -428,8 +439,7 @@ describe('ApplicationsImportService & ApplicationsImportTemplateService', () => 
     r4.getCell(findColIdx(appWs, 'date')).value = '2026-11-25';
     r4.getCell(findColIdx(appWs, 'district')).value = 'Xato Tuman';
     r4.getCell(findColIdx(appWs, 'crime')).value = '168-modda';
-    r4.getCell(findColIdx(appWs, 'citizen_last_name')).value = 'Qodirov';
-    r4.getCell(findColIdx(appWs, 'citizen_first_name')).value = 'Alisher';
+    r4.getCell(findColIdx(appWs, 'citizen_full_name')).value = 'Qodirov Alisher';
     r4.getCell(findColIdx(appWs, 'citizen_phone')).value = '+998941234567';
     r4.getCell(findColIdx(appWs, 'victim_card_number')).value = '12345';
     r4.commit();
@@ -438,7 +448,12 @@ describe('ApplicationsImportService & ApplicationsImportTemplateService', () => 
 
     expect(commitRes.createdCount).toBe(1);
     expect(commitRes.failedCount).toBe(1);
-    expect(commitRes.createdApplications[0].application_number).toBe('2026-70001');
+    expect(commitRes.createdApplications[0].application_number).toBe('M0110224/2026-70001');
+    expect(commitRes.createdApplications[0].citizen_name).toBe("Rahimov Dilshod G'ani o'g'li");
+    const savedAppPayload = txAppRepo.create.mock.calls[0][0];
+    expect(savedAppPayload.description).toBe("Fuqaroni kartasidan pul o'g'irlangan");
+    expect(savedAppPayload.officer_notes).toBe("Qo'shimcha izoh matni");
+    expect(savedAppPayload.application_number).toBe('M0110224/2026-70001');
     expect(intelligenceSync.syncApplicationById).toHaveBeenCalledTimes(1);
     expect(slaQueueService.scheduleForApplication).toHaveBeenCalledTimes(1);
     expect(commitRes.errorReportBase64).toBeTruthy();
@@ -469,7 +484,7 @@ describe('ApplicationsImportService & ApplicationsImportTemplateService', () => 
     expect((badCardCell.fill as ExcelJS.FillPattern).fgColor?.argb).toBe('FFFEE2E2');
     expect(badCardCell.note).toBeTruthy();
 
-    const goodNameCell = errAppWs.getCell(2, findColIdx(errAppWs, 'citizen_last_name'));
+    const goodNameCell = errAppWs.getCell(2, findColIdx(errAppWs, 'citizen_full_name'));
     expect((goodNameCell.fill as ExcelJS.FillPattern | undefined)?.fgColor?.argb).not.toBe(
       'FFFEE2E2',
     );

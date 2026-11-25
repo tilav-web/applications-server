@@ -81,22 +81,30 @@ export const ALLOWED_DESTINATION_TYPES: TransferDestinationType[] = [
 ];
 
 export const APP_IMPORT_COLUMNS: ImportColumnDef[] = [
-  // Asosiy rekvizitlar
+  // =========================================================================
+  // 1-BLOK (A–H): E-material asosiy ma'lumotlari (Kunlik reestr A–H ketma-ketligi)
+  // =========================================================================
   {
     key: 'link_code',
     header: "Bog'lash kodi (№)",
-    width: 18,
+    width: 16,
     group: 'core',
     isTextFormat: true,
     sampleValue: IMPORT_SAMPLE_ROW_MARKER,
   },
   {
-    key: 'application_number',
-    header: 'Ariza raqami',
-    width: 18,
+    key: 'source',
+    header: 'Murojaat manbasi',
+    width: 20,
     group: 'core',
-    isTextFormat: true,
-    sampleValue: '2026-00001',
+    dropdownKey: 'sources',
+  },
+  {
+    key: 'e_material_officer',
+    header: 'E-material ijrochisi',
+    width: 26,
+    group: 'core',
+    sampleValue: '',
   },
   {
     key: 'date',
@@ -108,13 +116,6 @@ export const APP_IMPORT_COLUMNS: ImportColumnDef[] = [
     sampleValue: '2026-11-25',
   },
   {
-    key: 'status',
-    header: 'Ariza holati (Status)',
-    width: 22,
-    group: 'core',
-    dropdownKey: 'statuses',
-  },
-  {
     key: 'district',
     header: 'Tuman (Ariza hududi) *',
     width: 22,
@@ -123,21 +124,235 @@ export const APP_IMPORT_COLUMNS: ImportColumnDef[] = [
     dropdownKey: 'districts',
   },
   {
-    key: 'source',
-    header: 'Murojaat manbasi',
-    width: 20,
+    key: 'application_number',
+    header: 'Ariza raqami (E-material №)',
+    width: 24,
     group: 'core',
-    dropdownKey: 'sources',
+    isTextFormat: true,
+    sampleValue: 'M0110224/2026-00001',
+  },
+  {
+    key: 'citizen_full_name',
+    header: 'Arizachi (F.I.SH) *',
+    width: 32,
+    group: 'citizen',
+    required: true,
+    sampleValue: "Aliyev Vali Akram o'g'li",
+  },
+  {
+    key: 'description',
+    header: 'Fabula (Voqea bayoni) *',
+    width: 44,
+    group: 'notes',
+    sampleValue: 'Telegram orqali soxta havola yuborib, plastik kartadan pul yechib olingan.',
+  },
+
+  // =========================================================================
+  // 2-BLOK (I–O): Jinoyat va asosiy pul o'tkazmasi (Kunlik reestr I–O)
+  // =========================================================================
+  {
+    key: 'crime',
+    header: 'Jinoyat turi / moddasi *',
+    width: 26,
+    group: 'classification',
+    dropdownKey: 'crimes',
+  },
+  {
+    key: 'transfer_amount',
+    header: "Zarar / O'tkazma summasi",
+    width: 20,
+    group: 'finance',
+    sampleValue: 1500000,
+  },
+  {
+    key: 'crime_method',
+    header: 'Jinoyat sodir etish usuli',
+    width: 36,
+    group: 'classification',
+    dropdownKey: 'crime_methods',
+  },
+  {
+    key: 'officer_notes',
+    header: "Qo'shimcha izoh (Xodim qaydlari)",
+    width: 34,
+    group: 'notes',
+    sampleValue: '',
+  },
+  {
+    key: 'victim_card_number',
+    header: 'Jabrlanuvchi karta raqami',
+    width: 22,
+    group: 'finance',
+    isTextFormat: true,
+    sampleValue: '8600123456789012',
+  },
+  {
+    key: 'victim_card_bank',
+    header: 'Jabrlanuvchi karta banki',
+    width: 22,
+    group: 'finance',
+    dropdownKey: 'banks',
+  },
+  {
+    key: 'payment_provider',
+    header: "To'lov provayderi (Ilova)",
+    width: 22,
+    group: 'finance',
+    dropdownKey: 'payment_providers',
+  },
+
+  // =========================================================================
+  // 3-BLOK (P–V): Arizachi shaxsiy ma'lumotlari (Kunlik reestr P–V)
+  // =========================================================================
+  {
+    key: 'citizen_phone',
+    header: 'Telefon raqami **',
+    width: 19,
+    group: 'citizen',
+    isTextFormat: true,
+    sampleValue: '+998901234567',
+  },
+  {
+    key: 'citizen_birth_date',
+    header: "Tug'ilgan sanasi",
+    width: 16,
+    group: 'citizen',
+    isTextFormat: true,
+    sampleValue: '1991-05-14',
+  },
+  {
+    key: 'citizen_gender',
+    header: 'Jinsi (Enum)',
+    width: 14,
+    group: 'citizen',
+    dropdownKey: 'genders',
+    sampleValue: GENDER_LABELS.male,
+  },
+  {
+    key: 'citizen_district',
+    header: 'Yashash tumani',
+    width: 22,
+    group: 'citizen',
+    dropdownKey: 'districts',
+  },
+  {
+    key: 'citizen_neighborhood',
+    header: 'Yashash mahallasi (MFY)',
+    width: 30,
+    group: 'citizen',
+    dropdownKey: 'neighborhoods',
+  },
+  {
+    key: 'occupation',
+    header: 'Kasb turi',
+    width: 28,
+    group: 'citizen',
+    dropdownKey: 'occupations',
+  },
+  {
+    key: 'workplace',
+    header: 'Ish joyi / Tashkilot',
+    width: 32,
+    group: 'citizen',
+    dropdownKey: 'workplaces',
+  },
+
+  // =========================================================================
+  // 4-BLOK (W–Y): Firibgar kartasi va Targ'ibot (Kunlik reestr W–Y)
+  // =========================================================================
+  {
+    key: 'receiver_card_number',
+    header: 'Qabul qiluvchi (Firibgar) karta',
+    width: 24,
+    group: 'finance',
+    isTextFormat: true,
+    sampleValue: '9860987654321098',
+  },
+  {
+    key: 'receiver_card_bank',
+    header: 'Firibgar karta banki',
+    width: 22,
+    group: 'finance',
+    dropdownKey: 'banks',
+  },
+  {
+    key: 'awareness_status',
+    header: "Targ'ibot holati",
+    width: 32,
+    group: 'classification',
+    dropdownKey: 'awareness_statuses',
+  },
+
+  // =========================================================================
+  // 5-BLOK (Z–AZ): Qo'shimcha tizim rekvizitlari (Ixtiyoriy)
+  // =========================================================================
+  {
+    key: 'repeat_type',
+    header: 'Takroriylik turi (Enum)',
+    width: 20,
+    group: 'classification',
+    dropdownKey: 'repeat_types',
+    sampleValue: REPEAT_TYPE_LABELS[ApplicationRepeatType.PRIMARY],
+  },
+  {
+    key: 'parent_application_number',
+    header: 'Avvalgi ariza raqami',
+    width: 22,
+    group: 'classification',
+    isTextFormat: true,
+    sampleValue: '',
+  },
+  {
+    key: 'repeat_reason',
+    header: 'Takroriylik sababi',
+    width: 24,
+    group: 'classification',
+    sampleValue: '',
+  },
+  {
+    key: 'status',
+    header: 'Ariza holati (Status)',
+    width: 24,
+    group: 'core',
+    dropdownKey: 'statuses',
+  },
+  {
+    key: 'decision_type',
+    header: 'Yakuniy qaror turi',
+    width: 26,
+    group: 'decision',
+    dropdownKey: 'decision_types',
+  },
+  {
+    key: 'decision_number',
+    header: 'Qaror raqami',
+    width: 18,
+    group: 'decision',
+    isTextFormat: true,
+    sampleValue: '',
+  },
+  {
+    key: 'decision_date',
+    header: 'Qaror sanasi',
+    width: 15,
+    group: 'decision',
+    isTextFormat: true,
+    sampleValue: '',
+  },
+  {
+    key: 'rejection_reason',
+    header: 'Rad etish sababi',
+    width: 26,
+    group: 'decision',
+    dropdownKey: 'rejection_reasons',
   },
   {
     key: 'department_service',
     header: 'Sohaviy xizmat',
-    width: 22,
+    width: 24,
     group: 'core',
     dropdownKey: 'department_services',
   },
-
-  // O'RQ-445 Murojaat tasnifi va Jinoyat
   {
     key: 'appeal_type',
     header: 'Murojaat turi (Enum)',
@@ -163,104 +378,11 @@ export const APP_IMPORT_COLUMNS: ImportColumnDef[] = [
     sampleValue: APPLICANT_TYPE_LABELS[ApplicantType.INDIVIDUAL],
   },
   {
-    key: 'repeat_type',
-    header: 'Takroriylik turi (Enum)',
-    width: 20,
-    group: 'classification',
-    dropdownKey: 'repeat_types',
-    sampleValue: REPEAT_TYPE_LABELS[ApplicationRepeatType.PRIMARY],
-  },
-  {
-    key: 'parent_application_number',
-    header: 'Avvalgi ariza raqami',
-    width: 20,
-    group: 'classification',
-    isTextFormat: true,
-    sampleValue: '',
-  },
-  {
-    key: 'repeat_reason',
-    header: 'Takroriylik sababi',
-    width: 24,
-    group: 'classification',
-    sampleValue: '',
-  },
-  {
-    key: 'crime',
-    header: 'Jinoyat moddasi *',
-    width: 28,
-    group: 'classification',
-    dropdownKey: 'crimes',
-  },
-  {
-    key: 'crime_method',
-    header: 'Jinoyat sodir etish usuli',
-    width: 34,
-    group: 'classification',
-    dropdownKey: 'crime_methods',
-  },
-  {
-    key: 'awareness_status',
-    header: "Targ'ibot holati",
-    width: 30,
-    group: 'classification',
-    dropdownKey: 'awareness_statuses',
-  },
-  {
     key: 'awareness_note',
     header: "Targ'ibot izohi",
-    width: 24,
+    width: 26,
     group: 'classification',
     sampleValue: '',
-  },
-
-  // Arizachi fuqaro
-  {
-    key: 'citizen_last_name',
-    header: 'Arizachi Familiyasi *',
-    width: 20,
-    group: 'citizen',
-    required: true,
-    sampleValue: 'Aliyev',
-  },
-  {
-    key: 'citizen_first_name',
-    header: 'Arizachi Ismi *',
-    width: 20,
-    group: 'citizen',
-    required: true,
-    sampleValue: 'Vali',
-  },
-  {
-    key: 'citizen_middle_name',
-    header: 'Arizachi Otasining ismi',
-    width: 22,
-    group: 'citizen',
-    sampleValue: "Akram o'g'li",
-  },
-  {
-    key: 'citizen_gender',
-    header: 'Jinsi (Enum)',
-    width: 14,
-    group: 'citizen',
-    dropdownKey: 'genders',
-    sampleValue: GENDER_LABELS.male,
-  },
-  {
-    key: 'citizen_birth_date',
-    header: "Tug'ilgan sanasi",
-    width: 16,
-    group: 'citizen',
-    isTextFormat: true,
-    sampleValue: '1991-05-14',
-  },
-  {
-    key: 'citizen_phone',
-    header: 'Telefon raqami **',
-    width: 19,
-    group: 'citizen',
-    isTextFormat: true,
-    sampleValue: '+998901234567',
   },
   {
     key: 'citizen_passport',
@@ -279,20 +401,6 @@ export const APP_IMPORT_COLUMNS: ImportColumnDef[] = [
     sampleValue: '31405911234567',
   },
   {
-    key: 'citizen_district',
-    header: 'Yashash tumani',
-    width: 22,
-    group: 'citizen',
-    dropdownKey: 'districts',
-  },
-  {
-    key: 'citizen_neighborhood',
-    header: 'Yashash mahallasi',
-    width: 30,
-    group: 'citizen',
-    dropdownKey: 'neighborhoods',
-  },
-  {
     key: 'citizen_address',
     header: "Yashash manzili (Ko'cha/Uy)",
     width: 28,
@@ -307,42 +415,11 @@ export const APP_IMPORT_COLUMNS: ImportColumnDef[] = [
     dropdownKey: 'occupation_categories',
   },
   {
-    key: 'occupation',
-    header: 'Kasb turi',
-    width: 28,
-    group: 'citizen',
-    dropdownKey: 'occupations',
-  },
-  {
-    key: 'workplace',
-    header: 'Ish joyi / Tashkilot',
-    width: 32,
-    group: 'citizen',
-    dropdownKey: 'workplaces',
-  },
-  {
     key: 'work_position',
     header: 'Lavozimi',
     width: 22,
     group: 'citizen',
     sampleValue: 'Mutaxassis',
-  },
-
-  // Asosiy moliyaviy o'tkazma va kartalar
-  {
-    key: 'victim_card_number',
-    header: 'Jabrlanuvchi karta raqami',
-    width: 22,
-    group: 'finance',
-    isTextFormat: true,
-    sampleValue: '8600123456789012',
-  },
-  {
-    key: 'victim_card_bank',
-    header: 'Jabrlanuvchi karta banki',
-    width: 22,
-    group: 'finance',
-    dropdownKey: 'banks',
   },
   {
     key: 'victim_card_full_name',
@@ -350,13 +427,6 @@ export const APP_IMPORT_COLUMNS: ImportColumnDef[] = [
     width: 24,
     group: 'finance',
     sampleValue: 'Aliyev Vali',
-  },
-  {
-    key: 'transfer_amount',
-    header: "Zarar / O'tkazma summasi",
-    width: 22,
-    group: 'finance',
-    sampleValue: 1500000,
   },
   {
     key: 'transfer_currency',
@@ -367,34 +437,12 @@ export const APP_IMPORT_COLUMNS: ImportColumnDef[] = [
     sampleValue: 'UZS',
   },
   {
-    key: 'payment_provider',
-    header: "To'lov provayderi",
-    width: 20,
-    group: 'finance',
-    dropdownKey: 'payment_providers',
-  },
-  {
     key: 'destination_type',
     header: 'Chiqish kanali turi (Enum)',
     width: 24,
     group: 'finance',
     dropdownKey: 'destination_types',
     sampleValue: DESTINATION_TYPE_LABELS[TransferDestinationType.CARD],
-  },
-  {
-    key: 'receiver_card_number',
-    header: 'Qabul qiluvchi (Firibgar) karta',
-    width: 24,
-    group: 'finance',
-    isTextFormat: true,
-    sampleValue: '9860987654321098',
-  },
-  {
-    key: 'receiver_card_bank',
-    header: 'Firibgar karta banki',
-    width: 22,
-    group: 'finance',
-    dropdownKey: 'banks',
   },
   {
     key: 'receiver_card_full_name',
@@ -434,60 +482,12 @@ export const APP_IMPORT_COLUMNS: ImportColumnDef[] = [
     isTextFormat: true,
     sampleValue: '',
   },
-
-  // Protsessual muddat va qaror
   {
     key: 'sla_days',
     header: 'Protsessual muddat (SLA kun)',
     width: 22,
     group: 'decision',
     sampleValue: 10,
-  },
-  {
-    key: 'decision_type',
-    header: 'Yakuniy qaror turi',
-    width: 26,
-    group: 'decision',
-    dropdownKey: 'decision_types',
-  },
-  {
-    key: 'decision_number',
-    header: 'Qaror raqami',
-    width: 18,
-    group: 'decision',
-    isTextFormat: true,
-    sampleValue: '',
-  },
-  {
-    key: 'decision_date',
-    header: 'Qaror sanasi',
-    width: 15,
-    group: 'decision',
-    isTextFormat: true,
-    sampleValue: '',
-  },
-  {
-    key: 'rejection_reason',
-    header: 'Rad etish sababi',
-    width: 26,
-    group: 'decision',
-    dropdownKey: 'rejection_reasons',
-  },
-
-  // Fabula va qaydlar
-  {
-    key: 'description',
-    header: 'Fabula (Voqea bayoni) *',
-    width: 44,
-    group: 'notes',
-    sampleValue: 'Telegram orqali soxta havola yuborib, plastik kartadan pul yechib olingan.',
-  },
-  {
-    key: 'officer_notes',
-    header: 'Xodim qaydlari',
-    width: 30,
-    group: 'notes',
-    sampleValue: '',
   },
 ];
 
