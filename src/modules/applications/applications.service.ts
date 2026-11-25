@@ -46,6 +46,8 @@ import type {
 import type { UpdateApplicationDto } from './dto/update-application.dto';
 import { ApplicationsExcelService } from './export/applications-excel.service';
 import { CyberControlShablonExcelService } from './export/cybercontrol-shablon-excel.service';
+import { ApplicationExternalSystem } from './external-systems/application-external-system.entity';
+import { ExternalSystem } from './external-systems/external-system.entity';
 import {
   ApplicationStatus as ApplicationStatusEntity,
   ApplicationStatusCategory,
@@ -238,6 +240,110 @@ export class ApplicationsService {
     }
   }
 
+  private async syncApplicationExternalSystems(
+    manager: EntityManager,
+    applicationId: string,
+    externalSystemIds: string[],
+    enteredByUserId: string | null,
+  ): Promise<void> {
+    const linkRepo = manager.getRepository(ApplicationExternalSystem);
+    const systemRepo = manager.getRepository(ExternalSystem);
+
+    const uniqueValidIds = Array.from(
+      new Set((externalSystemIds || []).map((id) => id?.trim()).filter((id) => isUUID(id))),
+    );
+
+    const validSystemIds =
+      uniqueValidIds.length > 0
+        ? (await systemRepo.find({ where: { id: In(uniqueValidIds) }, select: { id: true } })).map(
+            (s) => s.id,
+          )
+        : [];
+    const targetSet = new Set(validSystemIds);
+
+    const existingLinks = await linkRepo.find({ where: { application_id: applicationId } });
+    const existingSet = new Set(existingLinks.map((l) => l.external_system_id));
+
+    const toRemoveIds = existingLinks
+      .filter((l) => !targetSet.has(l.external_system_id))
+      .map((l) => l.id);
+    if (toRemoveIds.length > 0) {
+      await linkRepo.delete({ id: In(toRemoveIds) });
+    }
+
+    const toInsert = validSystemIds
+      .filter((sysId) => !existingSet.has(sysId))
+      .map((sysId) =>
+        linkRepo.create({
+          application_id: applicationId,
+          external_system_id: sysId,
+          entered_at: new Date(),
+          entered_by_id: enteredByUserId,
+        }),
+      );
+    if (toInsert.length > 0) {
+      await linkRepo.save(toInsert);
+    }
+  }
+
+  async toggleExternalSystem(
+    applicationId: string,
+    externalSystemId: string,
+    entered: boolean,
+    currentUser?: JwtAccessPayload,
+  ): Promise<Application> {
+    if (currentUser?.role === Role.BOSS) {
+      throw new ForbiddenException(
+        "Rahbar (Boss) hisobi faqat ma'lumotlarni ko'rish (read-only) rejimida ishlaydi",
+      );
+    }
+
+    const application = await this.findOne(applicationId, currentUser);
+    if (currentUser && currentUser.role === Role.DISTRICT_OFFICER) {
+      const assignedDistrictIds = await getAllowedDistrictIds(this.userRepo, currentUser);
+      assertDistrictAccess(
+        assignedDistrictIds,
+        application.district_id,
+        "Siz faqat o'zingizga biriktirilgan tuman(lar) arizalarini tahrirlashingiz mumkin",
+      );
+    }
+
+    const user = currentUser
+      ? await this.userRepo.findOne({ where: { auth_id: currentUser.sub } })
+      : null;
+
+    await this.applicationRepo.manager.transaction(async (manager) => {
+      const systemRepo = manager.getRepository(ExternalSystem);
+      const linkRepo = manager.getRepository(ApplicationExternalSystem);
+
+      const sys = await systemRepo.findOne({ where: { id: externalSystemId } });
+      if (!sys) {
+        throw new NotFoundException('Tashqi tizim topilmadi');
+      }
+
+      const existing = await linkRepo.findOne({
+        where: { application_id: applicationId, external_system_id: externalSystemId },
+      });
+
+      if (entered) {
+        if (!existing) {
+          await linkRepo.save(
+            linkRepo.create({
+              application_id: applicationId,
+              external_system_id: externalSystemId,
+              entered_at: new Date(),
+              entered_by_id: user?.id || null,
+            }),
+          );
+        }
+      } else if (existing) {
+        await linkRepo.remove(existing);
+      }
+    });
+
+    return this.findOne(applicationId, currentUser);
+  }
+
   async create(dto: CreateApplicationDto, currentUser?: JwtAccessPayload): Promise<Application> {
     if (currentUser?.role === Role.BOSS) {
       throw new ForbiddenException(
@@ -269,6 +375,7 @@ export class ApplicationsService {
     const {
       custom_fields,
       damages,
+      external_system_ids,
       date,
       deadline_at,
       sla_days,
@@ -377,6 +484,15 @@ export class ApplicationsService {
         await this.saveApplicationDamages(manager, saved.id, damages);
       }
 
+      if (external_system_ids && external_system_ids.length > 0) {
+        await this.syncApplicationExternalSystems(
+          manager,
+          saved.id,
+          external_system_ids,
+          creatorUserId,
+        );
+      }
+
       return saved.id;
     });
 
@@ -414,6 +530,9 @@ export class ApplicationsService {
           appeal_type?: string;
           submission_form?: string;
           awareness_status_id?: string;
+          external_system_id?: string;
+          external_system_status?: string;
+          missing_external_system_id?: string;
         } = 1,
     limitParam = 10,
     searchParam?: string,
@@ -444,6 +563,9 @@ export class ApplicationsService {
     let appeal_type: string | undefined;
     let submission_form: string | undefined;
     let awareness_status_id: string | undefined;
+    let external_system_id: string | undefined;
+    let external_system_status: string | undefined;
+    let missing_external_system_id: string | undefined;
 
     if (typeof pageOrParams === 'object') {
       page = Number(pageOrParams.page) || 1;
@@ -470,6 +592,9 @@ export class ApplicationsService {
       appeal_type = pageOrParams.appeal_type;
       submission_form = pageOrParams.submission_form;
       awareness_status_id = pageOrParams.awareness_status_id;
+      external_system_id = pageOrParams.external_system_id;
+      external_system_status = pageOrParams.external_system_status;
+      missing_external_system_id = pageOrParams.missing_external_system_id;
     } else {
       page = Number(pageOrParams) || 1;
       limit = Number(limitParam) || 10;
@@ -688,6 +813,24 @@ export class ApplicationsService {
       });
     }
 
+    const effectiveExtSysId = (missing_external_system_id || external_system_id || '').trim();
+    if (effectiveExtSysId && isUUID(effectiveExtSysId)) {
+      const wantEntered =
+        !missing_external_system_id &&
+        (external_system_status || '').trim().toLowerCase() === 'entered';
+      if (wantEntered) {
+        qb.andWhere(
+          `EXISTS (SELECT 1 FROM application_external_systems aes WHERE aes.application_id = app.id AND aes.external_system_id = :extSysId)`,
+          { extSysId: effectiveExtSysId },
+        );
+      } else {
+        qb.andWhere(
+          `NOT EXISTS (SELECT 1 FROM application_external_systems aes WHERE aes.application_id = app.id AND aes.external_system_id = :extSysId)`,
+          { extSysId: effectiveExtSysId },
+        );
+      }
+    }
+
     qb.orderBy('app.created_at', 'DESC');
 
     const relations = {
@@ -714,6 +857,7 @@ export class ApplicationsService {
       crime_method: { fields: true },
       card: { bank: true, citizen: true },
       damages: { bank: true, payment_provider: true },
+      external_systems: { external_system: true },
       transfer: {
         payment_provider: true,
         sender_card: { bank: true, citizen: true },
@@ -859,6 +1003,9 @@ export class ApplicationsService {
       appeal_type?: string;
       submission_form?: string;
       awareness_status_id?: string;
+      external_system_id?: string;
+      external_system_status?: string;
+      missing_external_system_id?: string;
     },
     res: Response,
     currentUser?: JwtAccessPayload,
@@ -1056,6 +1203,7 @@ export class ApplicationsService {
         crime_method: { fields: true },
         card: { bank: true, citizen: true },
         damages: { bank: true, payment_provider: true },
+        external_systems: { external_system: true },
         transfer: {
           payment_provider: true,
           sender_card: true,
@@ -1379,6 +1527,7 @@ export class ApplicationsService {
     const {
       custom_fields,
       damages,
+      external_system_ids,
       date,
       deadline_at,
       sla_days,
@@ -1562,6 +1711,18 @@ export class ApplicationsService {
           if (damages.length > 0) {
             await this.saveApplicationDamages(manager, id, damages);
           }
+        }
+
+        if (external_system_ids !== undefined) {
+          const actor = currentUser
+            ? await manager.getRepository(User).findOne({ where: { auth_id: currentUser.sub } })
+            : null;
+          await this.syncApplicationExternalSystems(
+            manager,
+            id,
+            external_system_ids,
+            actor?.id || null,
+          );
         }
 
         return { statusChanged: isStatusChanged, deadlineChanged: isDeadlineChanged };

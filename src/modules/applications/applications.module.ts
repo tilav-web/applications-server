@@ -30,6 +30,9 @@ import { ApplicationDocument } from './documents/application-document.entity';
 import { DocumentsModule } from './documents/documents.module';
 import { ApplicationsExcelService } from './export/applications-excel.service';
 import { CyberControlShablonExcelService } from './export/cybercontrol-shablon-excel.service';
+import { ApplicationExternalSystem } from './external-systems/application-external-system.entity';
+import { ExternalSystem } from './external-systems/external-system.entity';
+import { ExternalSystemsModule } from './external-systems/external-systems.module';
 import { ApplicationsImportController } from './import/applications-import.controller';
 import { ApplicationsImportService } from './import/applications-import.service';
 import { ApplicationsImportTemplateService } from './import/applications-import-template.service';
@@ -70,6 +73,8 @@ import { WorkplacesModule } from './workplaces/workplaces.module';
       ApplicationStatusHistory,
       ApplicationCustomField,
       ApplicationDamage,
+      ApplicationExternalSystem,
+      ExternalSystem,
       Citizen,
       Crime,
       CrimeMethod,
@@ -103,6 +108,7 @@ import { WorkplacesModule } from './workplaces/workplaces.module';
     NeighborhoodsModule,
     ApplicationStatusesModule,
     AwarenessStatusesModule,
+    ExternalSystemsModule,
     SuspectFieldConfigsModule,
     BanksModule,
     PaymentProvidersModule,
@@ -147,6 +153,7 @@ import { WorkplacesModule } from './workplaces/workplaces.module';
     CrimeMethodsModule,
     OccupationsModule,
     ApplicationSourcesModule,
+    ExternalSystemsModule,
     DepartmentServicesModule,
     RejectionReasonsModule,
     DecisionTypesModule,

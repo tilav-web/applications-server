@@ -71,6 +71,9 @@ export class ApplicationsController {
     @Query('appeal_type') appeal_type?: string,
     @Query('submission_form') submission_form?: string,
     @Query('awareness_status_id') awareness_status_id?: string,
+    @Query('external_system_id') external_system_id?: string,
+    @Query('external_system_status') external_system_status?: string,
+    @Query('missing_external_system_id') missing_external_system_id?: string,
     @CurrentUser() currentUser?: JwtAccessPayload,
   ) {
     const pagination = normalizePagination(page, limit, 10);
@@ -100,6 +103,9 @@ export class ApplicationsController {
         appeal_type,
         submission_form,
         awareness_status_id,
+        external_system_id,
+        external_system_status,
+        missing_external_system_id,
       },
       10,
       undefined,
@@ -204,6 +210,9 @@ export class ApplicationsController {
     @Query('appeal_type') appeal_type?: string,
     @Query('submission_form') submission_form?: string,
     @Query('awareness_status_id') awareness_status_id?: string,
+    @Query('external_system_id') external_system_id?: string,
+    @Query('external_system_status') external_system_status?: string,
+    @Query('missing_external_system_id') missing_external_system_id?: string,
     @CurrentUser() currentUser?: JwtAccessPayload,
   ) {
     return this.applicationsService.exportToExcel(
@@ -229,6 +238,9 @@ export class ApplicationsController {
         appeal_type,
         submission_form,
         awareness_status_id,
+        external_system_id,
+        external_system_status,
+        missing_external_system_id,
       },
       res,
       currentUser,
@@ -238,6 +250,28 @@ export class ApplicationsController {
   @Get(':id')
   findOne(@Param('id', ParseUUIDPipe) id: string, @CurrentUser() currentUser?: JwtAccessPayload) {
     return this.applicationsService.findOne(id, currentUser);
+  }
+
+  @Patch(':id/external-systems')
+  @Roles(
+    Role.SUPER_ADMIN,
+    Role.ADMIN,
+    Role.STAFF,
+    Role.INSPECTOR,
+    Role.OPERATOR,
+    Role.DISTRICT_OFFICER,
+  )
+  toggleExternalSystem(
+    @Param('id', ParseUUIDPipe) id: string,
+    @Body() body: { external_system_id: string; entered: boolean },
+    @CurrentUser() currentUser?: JwtAccessPayload,
+  ) {
+    return this.applicationsService.toggleExternalSystem(
+      id,
+      body.external_system_id,
+      Boolean(body.entered),
+      currentUser,
+    );
   }
 
   @Patch(':id')

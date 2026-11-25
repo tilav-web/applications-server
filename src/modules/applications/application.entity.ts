@@ -28,6 +28,7 @@ import { DecisionType } from './decision-types/decision-type.entity';
 import { DepartmentService } from './department-services/department-service.entity';
 import { District } from './districts/district.entity';
 import { ApplicationDocument } from './documents/application-document.entity';
+import { ApplicationExternalSystem } from './external-systems/application-external-system.entity';
 import { RejectionReason } from './rejection-reasons/rejection-reason.entity';
 import { ApplicationSource } from './sources/application-source.entity';
 import { ApplicationStatus as ApplicationStatusEntity } from './statuses/application-status.entity';
@@ -401,6 +402,10 @@ export class Application extends BaseEntity {
   // 12. Arizaga biriktirilgan va yaratilgan Word hujjatlar
   @OneToMany(() => ApplicationDocument, (doc: ApplicationDocument) => doc.application)
   documents: ApplicationDocument[];
+
+  // 13. Ariza kiritilgan tashqi axborot tizimlari (CardBlock, E-Elektron, ...)
+  @OneToMany(() => ApplicationExternalSystem, (aes) => aes.application)
+  external_systems: ApplicationExternalSystem[];
 
   /**
    * Tahliliy bog'liqliklar hisoboti (Virtual/Hisoblangan maydon)

@@ -321,4 +321,10 @@ export class CreateApplicationDto {
   @ValidateNested({ each: true })
   @Type(() => CreateApplicationDamageDto)
   damages?: CreateApplicationDamageDto[];
+
+  // Ariza kiritilgan tashqi tizimlar ID lari (CardBlock, E-Elektron, E-Material, ...)
+  @IsOptional()
+  @IsArray()
+  @IsUUID('4', { each: true })
+  external_system_ids?: string[];
 }
