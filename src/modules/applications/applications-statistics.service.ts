@@ -2,11 +2,17 @@ import { Injectable } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { In, Repository } from 'typeorm';
 
+import {
+  AppealType,
+  ApplicationRepeatType,
+  SubmissionForm,
+} from '../../common/enums/appeal-classification.enum';
 import { ApplicationStatus } from '../../common/enums/application-status.enum';
 import { Role } from '../../common/enums/role.enum';
 import type { JwtAccessPayload } from '../../common/types/jwt-payload.interface';
 import { User } from '../users/user.entity';
 import { Application } from './application.entity';
+import { shouldIncludeInDamageTotal } from './application-chain.util';
 import { District } from './districts/district.entity';
 import { ApplicationStatusCategory } from './statuses/application-status.entity';
 import { Transfer } from './transfers/transfer.entity';
@@ -208,6 +214,7 @@ export class ApplicationsStatisticsService {
     const appsQb = this.applicationRepo
       .createQueryBuilder('app')
       .leftJoinAndSelect('app.application_status', 'application_status')
+      .leftJoinAndSelect('app.awareness_status', 'awareness_status')
       .leftJoinAndSelect('app.transfer', 'transfer')
       .leftJoinAndSelect('app.citizen', 'citizen')
       .leftJoinAndSelect('citizen.neighborhood', 'citizen_neighborhood')
@@ -319,7 +326,7 @@ export class ApplicationsStatisticsService {
       .innerJoin(
         Application,
         'app',
-        'app.is_deleted = false AND (app.transfer_id = tr.id OR tr.application_id = app.id)',
+        "app.is_deleted = false AND COALESCE(app.repeat_type, 'PRIMARY') != 'DUPLICATE' AND (app.transfer_id = tr.id OR tr.application_id = app.id)",
       )
       .select('COALESCE(SUM(tr.amount), 0)', 'loss')
       .where("(tr.currency IS NULL OR UPPER(tr.currency) = 'UZS')")
@@ -348,6 +355,23 @@ export class ApplicationsStatisticsService {
     let inProgressCount = 0;
     let resolvedCount = 0;
     let rejectedCount = 0;
+
+    const byRepeatType = {
+      primary: 0,
+      repeat: 0,
+      duplicate: 0,
+      supplemental: 0,
+    };
+    const byAppealType = {
+      appeal: 0,
+      complaint: 0,
+      proposal: 0,
+    };
+    const bySubmissionForm = {
+      written: 0,
+      oral: 0,
+      electronic: 0,
+    };
 
     const districtMap = new Map<
       string,
@@ -379,6 +403,20 @@ export class ApplicationsStatisticsService {
       { id: string; article: string; title: string | null; gravity: string | null; count: number }
     >();
     const providerMap = new Map<string, { name: string; count: number; totalAmount: number }>();
+    const awarenessMap = new Map<
+      string,
+      {
+        id: string;
+        name: string;
+        code: string | null;
+        is_informed: boolean;
+        source_channel: string | null;
+        count: number;
+      }
+    >();
+    let awarenessInformedCount = 0;
+    let awarenessNotInformedCount = 0;
+    let awarenessUnspecifiedCount = 0;
 
     for (const app of applications) {
       const bucket = classifyAppBucket(app);
@@ -387,8 +425,42 @@ export class ApplicationsStatisticsService {
       else if (bucket === 'RESOLVED') resolvedCount++;
       else rejectedCount++;
 
+      // Murojaat tasnifi va takroriylik hisoblagichlari
+      if (app.repeat_type === ApplicationRepeatType.REPEAT) byRepeatType.repeat++;
+      else if (app.repeat_type === ApplicationRepeatType.DUPLICATE) byRepeatType.duplicate++;
+      else if (app.repeat_type === ApplicationRepeatType.SUPPLEMENTAL) byRepeatType.supplemental++;
+      else byRepeatType.primary++;
+
+      if (app.appeal_type === AppealType.COMPLAINT) byAppealType.complaint++;
+      else if (app.appeal_type === AppealType.PROPOSAL) byAppealType.proposal++;
+      else byAppealType.appeal++;
+
+      if (app.submission_form === SubmissionForm.ORAL) bySubmissionForm.oral++;
+      else if (app.submission_form === SubmissionForm.ELECTRONIC) bySubmissionForm.electronic++;
+      else bySubmissionForm.written++;
+
+      // Targ'ibot holati hisoblagichlari
+      if (app.awareness_status) {
+        if (app.awareness_status.is_informed) awarenessInformedCount++;
+        else awarenessNotInformedCount++;
+        const aEntry = awarenessMap.get(app.awareness_status.id) || {
+          id: app.awareness_status.id,
+          name: app.awareness_status.name,
+          code: app.awareness_status.code || null,
+          is_informed: Boolean(app.awareness_status.is_informed),
+          source_channel: app.awareness_status.source_channel || null,
+          count: 0,
+        };
+        aEntry.count++;
+        awarenessMap.set(app.awareness_status.id, aEntry);
+      } else {
+        awarenessUnspecifiedCount++;
+      }
+
       const appTransfers = getAppTransfers(app);
-      const amount = getAppTotalLoss(app);
+      const rawAmount = getAppTotalLoss(app);
+      // Dublikat arizalar zarar summasini 2 marta qo'shib yubormasligi uchun hisobdan chiqariladi
+      const amount = shouldIncludeInDamageTotal(app.repeat_type) ? rawAmount : 0;
       if (amount > 0) {
         totalLoss += amount;
         if (amount > maxLoss) maxLoss = amount;
@@ -720,8 +792,29 @@ export class ApplicationsStatisticsService {
           : null,
         district_name: a.district?.name || null,
         crime_article: a.crime?.article || null,
+        appeal_type: a.appeal_type || AppealType.APPEAL,
+        repeat_type: a.repeat_type || ApplicationRepeatType.PRIMARY,
+        repeat_sequence: a.repeat_sequence || 1,
         amount: getAppTotalLoss(a) || null,
       }));
+
+    const awarenessKnownTotal = awarenessInformedCount + awarenessNotInformedCount;
+    const byAwarenessStatus = {
+      informedCount: awarenessInformedCount,
+      notInformedCount: awarenessNotInformedCount,
+      unspecifiedCount: awarenessUnspecifiedCount,
+      informedPercent:
+        awarenessKnownTotal > 0
+          ? Math.round((awarenessInformedCount / awarenessKnownTotal) * 100)
+          : 0,
+      items: Array.from(awarenessMap.values())
+        .sort((a, b) => b.count - a.count)
+        .map((item) => ({
+          ...item,
+          percent:
+            awarenessKnownTotal > 0 ? Math.round((item.count / awarenessKnownTotal) * 100) : 0,
+        })),
+    };
 
     return {
       period,
@@ -743,6 +836,10 @@ export class ApplicationsStatisticsService {
           lossPercentChange,
         },
       },
+      byRepeatType,
+      byAppealType,
+      bySubmissionForm,
+      byAwarenessStatus,
       timeline,
       byStatus,
       byDistrict,

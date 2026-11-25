@@ -1,3 +1,13 @@
+import {
+  APPEAL_TYPE_LABELS,
+  AppealType,
+  APPLICANT_TYPE_LABELS,
+  ApplicantType,
+  ApplicationRepeatType,
+  REPEAT_TYPE_LABELS,
+  SUBMISSION_FORM_LABELS,
+  SubmissionForm,
+} from '../../../../common/enums/appeal-classification.enum';
 import { formatTitleCase, formatUzbekName } from '../../../../common/utils/name-formatter.util';
 import { Application } from '../../application.entity';
 import { Transfer } from '../../transfers/transfer.entity';
@@ -434,6 +444,25 @@ export function buildTemplateContext(
       },
       created_at: formatDateUzbek(application.created_at, script),
       updated_at: formatDateUzbek(application.updated_at, script),
+      appeal_type: adapt(
+        APPEAL_TYPE_LABELS[application.appeal_type || AppealType.APPEAL] || 'Ariza',
+      ),
+      submission_form: adapt(
+        SUBMISSION_FORM_LABELS[application.submission_form || SubmissionForm.WRITTEN] || 'Yozma',
+      ),
+      applicant_type: adapt(
+        APPLICANT_TYPE_LABELS[application.applicant_type || ApplicantType.INDIVIDUAL] ||
+          'Yakka tartibdagi',
+      ),
+      repeat_type: adapt(
+        REPEAT_TYPE_LABELS[application.repeat_type || ApplicationRepeatType.PRIMARY] || 'Birlamchi',
+      ),
+      repeat_sequence: String(application.repeat_sequence || 1),
+      repeat_reason: adapt(application.repeat_reason || ''),
+      parent_number: application.parent_application?.application_number || '',
+      root_number: application.root_application?.application_number || '',
+      awareness_status: adapt(application.awareness_status?.name || ''),
+      awareness_note: adapt(application.awareness_note || ''),
       suspect_details: adapt(suspectDetailsStr),
       suspect_tree_summary: adapt(suspectSummaryStr),
     },

@@ -225,10 +225,6 @@ export class OccupationsService implements OnModuleInit {
       { table: 'citizens', column: 'occupation_id', label: 'fuqaro' },
       { table: 'workplace_occupations', column: 'occupation_id', label: 'ish joyi / tashkilot' },
     ]);
-    await assertNoDependencies(this.occupationRepo.manager, `«${occ.name}» kasb turi`, occ.id, [
-      { table: 'citizens', column: 'occupation_id', label: 'fuqaro' },
-      { table: 'workplace_occupations', column: 'occupation_id', label: 'ish joyi / tashkilot' },
-    ]);
     await this.occupationRepo.remove(occ);
     return { success: true, message: "Kasb o'chirildi" };
   }
@@ -270,7 +266,7 @@ export class OccupationsService implements OnModuleInit {
       },
       {
         code: 'TALIM_FAN',
-        category: "Ta'lim va fan",
+        category: "Ta'lim tashkiloti",
         items: [
           "Maktab o'qituvchisi",
           "Oliy ta'lim o'qituvchisi / professor",

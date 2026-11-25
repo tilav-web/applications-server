@@ -2,6 +2,14 @@ import { Injectable } from '@nestjs/common';
 import * as ExcelJS from 'exceljs';
 
 import {
+  APPEAL_TYPE_LABELS,
+  AppealType,
+  ApplicationRepeatType,
+  REPEAT_TYPE_LABELS,
+  SUBMISSION_FORM_LABELS,
+  SubmissionForm,
+} from '../../../common/enums/appeal-classification.enum';
+import {
   applyExcelAutoFilter,
   escapeExcelCriteriaLiteral,
   formatDestinationType,
@@ -141,7 +149,7 @@ export class ApplicationsExcelService {
       { header: 'Murojaat Manbasi', key: 'source', width: 18 }, // D (4)
       { header: 'Holati (JPK)', key: 'status', width: 24 }, // E (5)
       { header: 'Hudud (Tuman)', key: 'district', width: 18 }, // F (6)
-      { header: 'Neighborhood', key: 'neighborhood', width: 22 }, // G (7)
+      { header: 'Mahalla', key: 'neighborhood', width: 22 }, // G (7)
       { header: 'Jinoyat Moddasi', key: 'crime', width: 24 }, // H (8)
       { header: 'Jinoyat Usuli', key: 'crime_method', width: 28 }, // I (9)
       { header: 'Arizachi (F.I.SH)', key: 'citizen_name', width: 28 }, // J (10)
@@ -164,6 +172,11 @@ export class ApplicationsExcelService {
       { header: "Mas'ul Ijrochi", key: 'officer', width: 22 }, // AA (27)
       { header: 'Tafsilot (Fabula)', key: 'description', width: 45 }, // AB (28)
       { header: 'Xodim Qaydlari', key: 'notes', width: 32 }, // AC (29)
+      { header: 'Murojaat Turi', key: 'appeal_type', width: 16 }, // AD (30)
+      { header: 'Murojaat Shakli', key: 'submission_form', width: 16 }, // AE (31)
+      { header: 'Takroriylik', key: 'repeat_type', width: 18 }, // AF (32)
+      { header: 'Asosiy Ariza Raqami', key: 'root_app_num', width: 20 }, // AG (33)
+      { header: "Targ'ibot Holati", key: 'awareness_status', width: 38 }, // AH (34)
       ...dynamicColumns.map((col) => ({
         header: col.header,
         key: `dyn_${col.key}`,
@@ -283,6 +296,22 @@ export class ApplicationsExcelService {
           officer: officerStr,
           description: app.description || '—',
           notes: app.officer_notes || '—',
+          appeal_type: APPEAL_TYPE_LABELS[app.appeal_type || AppealType.APPEAL] || 'Ariza',
+          submission_form:
+            SUBMISSION_FORM_LABELS[app.submission_form || SubmissionForm.WRITTEN] || 'Yozma',
+          repeat_type:
+            app.repeat_type && app.repeat_type !== ApplicationRepeatType.PRIMARY
+              ? `${REPEAT_TYPE_LABELS[app.repeat_type] || app.repeat_type} (#${app.repeat_sequence || 2})`
+              : REPEAT_TYPE_LABELS[ApplicationRepeatType.PRIMARY],
+          root_app_num:
+            app.root_application?.application_number ||
+            app.parent_application?.application_number ||
+            '—',
+          awareness_status: app.awareness_status?.name
+            ? app.awareness_note
+              ? `${app.awareness_status.name} (${app.awareness_note})`
+              : app.awareness_status.name
+            : '—',
           ...dynamicRowData,
         }),
       );

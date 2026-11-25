@@ -1,6 +1,7 @@
 import { Type } from 'class-transformer';
 import {
   IsArray,
+  IsBoolean,
   IsDateString,
   IsEnum,
   IsNumber,
@@ -11,6 +12,12 @@ import {
   ValidateNested,
 } from 'class-validator';
 
+import {
+  AppealType,
+  ApplicantType,
+  ApplicationRepeatType,
+  SubmissionForm,
+} from '../../../common/enums/appeal-classification.enum';
 import { CustomFieldType } from '../../../common/enums/custom-field-type.enum';
 
 export class CreateApplicationCustomFieldDto {
@@ -145,6 +152,39 @@ export class CreateApplicationDto {
   @IsString()
   status_change_note?: string | null;
 
+  // Murojaat tasnifi va takroriy/dublikat zanjiri (O'RQ-445)
+  @IsOptional()
+  @IsEnum(AppealType)
+  appeal_type?: AppealType;
+
+  @IsOptional()
+  @IsEnum(SubmissionForm)
+  submission_form?: SubmissionForm;
+
+  @IsOptional()
+  @IsEnum(ApplicantType)
+  applicant_type?: ApplicantType;
+
+  @IsOptional()
+  @IsEnum(ApplicationRepeatType)
+  repeat_type?: ApplicationRepeatType;
+
+  @IsOptional()
+  @IsUUID('4')
+  parent_application_id?: string | null;
+
+  @IsOptional()
+  @IsString()
+  repeat_reason?: string | null;
+
+  @IsOptional()
+  @IsBoolean()
+  is_review_terminated?: boolean;
+
+  @IsOptional()
+  @IsString()
+  termination_note?: string | null;
+
   // Birlamchi Asosiy Modellar (Har biridan bittadan ManyToOne)
   @IsOptional()
   @IsUUID('4')
@@ -193,6 +233,14 @@ export class CreateApplicationDto {
   @IsOptional()
   @IsUUID('4')
   source_id?: string | null;
+
+  @IsOptional()
+  @IsUUID('4')
+  awareness_status_id?: string | null;
+
+  @IsOptional()
+  @IsString()
+  awareness_note?: string | null;
 
   @IsOptional()
   @IsUUID('4')

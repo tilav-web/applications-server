@@ -10,6 +10,8 @@ import { ApplicationsService } from './applications.service';
 import { ApplicationsRelationsService } from './applications-relations.service';
 import { ApplicationsResolverService } from './applications-resolver.service';
 import { ApplicationsStatisticsService } from './applications-statistics.service';
+import { AwarenessStatus } from './awareness-statuses/awareness-status.entity';
+import { AwarenessStatusesModule } from './awareness-statuses/awareness-statuses.module';
 import { Citizen } from './citizens/citizen.entity';
 import { CitizensModule } from './citizens/citizens.module';
 import { Crime } from './crimes/crime.entity';
@@ -81,6 +83,7 @@ import { WorkplacesModule } from './workplaces/workplaces.module';
       OccupationCategory,
       Occupation,
       ApplicationSource,
+      AwarenessStatus,
       DepartmentService,
       RejectionReason,
       DecisionType,
@@ -94,6 +97,7 @@ import { WorkplacesModule } from './workplaces/workplaces.module';
     DistrictsModule,
     NeighborhoodsModule,
     ApplicationStatusesModule,
+    AwarenessStatusesModule,
     SuspectFieldConfigsModule,
     BanksModule,
     PaymentProvidersModule,

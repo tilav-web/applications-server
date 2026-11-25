@@ -1109,7 +1109,7 @@ export class DetectedCrimesService {
       { header: 'F.I.O.', key: 'name', width: 28 },
       { header: 'Pasport', key: 'passport', width: 16 },
       { header: 'Telefon', key: 'phone', width: 18 },
-      { header: 'Hudud (Tuman / Neighborhood)', key: 'region', width: 26 },
+      { header: 'Hudud (Tuman / Mahalla)', key: 'region', width: 26 },
       { header: 'Kasbi', key: 'occupation', width: 22 },
       { header: 'Ish joyi', key: 'workplace', width: 28 },
       { header: 'Jinoyatdagi roli', key: 'role', width: 22 },

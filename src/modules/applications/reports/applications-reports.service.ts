@@ -131,6 +131,7 @@ export interface RegistryReportItem {
   providers: string;
   phone_number: string;
   birth_date: string;
+  awareness_status: string;
 }
 
 @Injectable()
@@ -859,6 +860,7 @@ export class ApplicationsReportsService {
       .leftJoinAndSelect('app.crime', 'crime')
       .leftJoinAndSelect('app.crime_method', 'crime_method')
       .leftJoinAndSelect('app.source', 'source')
+      .leftJoinAndSelect('app.awareness_status', 'awareness_status')
       .leftJoinAndSelect('app.created_by', 'created_by')
       .leftJoinAndSelect('app.card', 'card')
       .leftJoinAndSelect('card.bank', 'card_bank')
@@ -1029,6 +1031,7 @@ export class ApplicationsReportsService {
         birth_date: app.citizen?.birth_date
           ? new Date(app.citizen.birth_date).toISOString().substring(0, 10)
           : '—',
+        awareness_status: app.awareness_status?.name || '—',
       };
     });
 
@@ -1523,6 +1526,7 @@ export class ApplicationsReportsService {
       { text: 'Қайси мобил\nиловадан', width: 16, fill: 'FFFEF08A' },
       { text: 'Аризачининг\nтелефон рақами', width: 18, fill: 'FFBBF7D0' },
       { text: 'Туғилган куни,\nойи, йили', width: 15, fill: 'FFBBF7D0' },
+      { text: 'Тарғибот\nҳолати', width: 34, fill: 'FFE0E7FF' },
     ];
 
     headers.forEach((h, idx) => {
@@ -1580,6 +1584,7 @@ export class ApplicationsReportsService {
         sanitizeExcelValue(item.providers),
         sanitizeExcelValue(item.phone_number),
         sanitizeExcelValue(item.birth_date),
+        sanitizeExcelValue(item.awareness_status),
       ];
 
       row.height = 24;

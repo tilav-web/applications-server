@@ -9,6 +9,12 @@ import { isUUID } from 'class-validator';
 import type { Response } from 'express';
 import { In, Repository } from 'typeorm';
 
+import {
+  AppealType,
+  ApplicantType,
+  ApplicationRepeatType,
+  SubmissionForm,
+} from '../../common/enums/appeal-classification.enum';
 import { Role } from '../../common/enums/role.enum';
 import type { PaginatedResult } from '../../common/interfaces/pagination.interface';
 import type { JwtAccessPayload } from '../../common/types/jwt-payload.interface';
@@ -21,6 +27,11 @@ import { NotificationsService } from '../notifications/notifications.service';
 import { SlaQueueService } from '../notifications/sla-queue.service';
 import { User } from '../users/user.entity';
 import { Application } from './application.entity';
+import {
+  assertNoChainCycle,
+  computeNextRepeatSequence,
+  resolveRootApplicationId,
+} from './application-chain.util';
 import { ApplicationStatusHistory } from './application-status-history.entity';
 import { ApplicationsRelationsService } from './applications-relations.service';
 import { ApplicationsResolverService } from './applications-resolver.service';
@@ -64,6 +75,111 @@ export class ApplicationsService {
     private readonly relationsService: ApplicationsRelationsService,
     private readonly statisticsService: ApplicationsStatisticsService,
   ) {}
+
+  private async resolveApplicationChain(
+    txAppRepo: Repository<Application>,
+    repeatType: ApplicationRepeatType | undefined,
+    parentApplicationId: string | null | undefined,
+    currentId?: string,
+  ): Promise<{
+    repeat_type: ApplicationRepeatType;
+    parent_application_id: string | null;
+    root_application_id: string | null;
+    repeat_sequence: number;
+  }> {
+    const effectiveRepeatType = repeatType || ApplicationRepeatType.PRIMARY;
+    if (effectiveRepeatType === ApplicationRepeatType.PRIMARY) {
+      return {
+        repeat_type: ApplicationRepeatType.PRIMARY,
+        parent_application_id: null,
+        root_application_id: null,
+        repeat_sequence: 1,
+      };
+    }
+
+    if (!parentApplicationId) {
+      return {
+        repeat_type: effectiveRepeatType,
+        parent_application_id: null,
+        root_application_id: null,
+        repeat_sequence: 2,
+      };
+    }
+
+    const parent = await txAppRepo.findOne({
+      where: { id: parentApplicationId, is_deleted: false },
+      select: {
+        id: true,
+        parent_application_id: true,
+        root_application_id: true,
+        repeat_sequence: true,
+      },
+    });
+    if (!parent) {
+      throw new NotFoundException("Bog'lanayotgan avvalgi ariza topilmadi");
+    }
+
+    // Sikl himoyasi: ota zanjir bo'ylab yuqoriga yurib joriy ID uchramasligini tekshiramiz
+    const ancestorIds = new Set<string>();
+    let cursor: string | null | undefined = parent.parent_application_id;
+    let hops = 0;
+    while (cursor && hops < 30) {
+      ancestorIds.add(cursor);
+      const anc = await txAppRepo.findOne({
+        where: { id: cursor },
+        select: { id: true, parent_application_id: true },
+      });
+      cursor = anc?.parent_application_id || null;
+      hops++;
+    }
+    assertNoChainCycle(currentId, parent.id, ancestorIds);
+
+    const rootId = resolveRootApplicationId(parent);
+    const maxSeqQb = txAppRepo
+      .createQueryBuilder('a')
+      .select('COALESCE(MAX(a.repeat_sequence), 1)', 'maxSeq')
+      .where('a.is_deleted = false')
+      .andWhere('(a.id = :rootId OR a.root_application_id = :rootId)', { rootId });
+    if (currentId) {
+      maxSeqQb.andWhere('a.id != :currentId', { currentId });
+    }
+    const maxSeqRaw = await maxSeqQb.getRawOne<{ maxSeq?: string | number }>();
+    const nextSeq = computeNextRepeatSequence(Number(maxSeqRaw?.maxSeq || 1));
+
+    return {
+      repeat_type: effectiveRepeatType,
+      parent_application_id: parent.id,
+      root_application_id: rootId,
+      repeat_sequence: nextSeq,
+    };
+  }
+
+  private async attachChainCounts(items: Application[]): Promise<void> {
+    if (items.length === 0) return;
+    const rootIds = Array.from(new Set(items.map((item) => item.root_application_id || item.id)));
+    if (rootIds.length === 0) return;
+
+    const rows = await this.applicationRepo
+      .createQueryBuilder('a')
+      .select('COALESCE(a.root_application_id, a.id)', 'rootId')
+      .addSelect('COUNT(a.id)::int', 'cnt')
+      .where('a.is_deleted = false')
+      .andWhere('(a.id IN (:...rootIds) OR a.root_application_id IN (:...rootIds))', {
+        rootIds,
+      })
+      .groupBy('COALESCE(a.root_application_id, a.id)')
+      .getRawMany<{ rootId: string; cnt: string | number }>();
+
+    const countMap = new Map<string, number>();
+    for (const r of rows) {
+      countMap.set(r.rootId, Number(r.cnt || 1));
+    }
+
+    for (const item of items) {
+      const rootKey = item.root_application_id || item.id;
+      item.chain_count = countMap.get(rootKey) ?? 1;
+    }
+  }
 
   async create(dto: CreateApplicationDto, currentUser?: JwtAccessPayload): Promise<Application> {
     if (currentUser?.role === Role.BOSS) {
@@ -143,9 +259,22 @@ export class ApplicationsService {
       }
       const isClosedStatus = statusObj?.category === ApplicationStatusCategory.CLOSED;
 
+      const chainResolved = await this.resolveApplicationChain(
+        txAppRepo,
+        dto.repeat_type,
+        dto.parent_application_id,
+      );
+
       const application = txAppRepo.create({
         ...applicationData,
         ...resolved,
+        appeal_type: dto.appeal_type || AppealType.APPEAL,
+        submission_form: dto.submission_form || SubmissionForm.WRITTEN,
+        applicant_type: dto.applicant_type || ApplicantType.INDIVIDUAL,
+        ...chainResolved,
+        repeat_reason: dto.repeat_reason?.trim() || null,
+        is_review_terminated: Boolean(dto.is_review_terminated),
+        termination_note: dto.termination_note?.trim() || null,
         created_by_id: creatorUserId,
         is_deleted: false,
         application_number: appNumber,
@@ -219,6 +348,10 @@ export class ApplicationsService {
           max_amount?: string | number;
           relations_filter?: string;
           sla_filter?: string;
+          repeat_type?: string;
+          appeal_type?: string;
+          submission_form?: string;
+          awareness_status_id?: string;
         } = 1,
     limitParam = 10,
     searchParam?: string,
@@ -245,6 +378,10 @@ export class ApplicationsService {
     let max_amount: string | number | undefined;
     let relations_filter: string | undefined;
     let sla_filter: string | undefined;
+    let repeat_type: string | undefined;
+    let appeal_type: string | undefined;
+    let submission_form: string | undefined;
+    let awareness_status_id: string | undefined;
 
     if (typeof pageOrParams === 'object') {
       page = Number(pageOrParams.page) || 1;
@@ -267,6 +404,10 @@ export class ApplicationsService {
       max_amount = pageOrParams.max_amount;
       relations_filter = pageOrParams.relations_filter;
       sla_filter = pageOrParams.sla_filter;
+      repeat_type = pageOrParams.repeat_type;
+      appeal_type = pageOrParams.appeal_type;
+      submission_form = pageOrParams.submission_form;
+      awareness_status_id = pageOrParams.awareness_status_id;
     } else {
       page = Number(pageOrParams) || 1;
       limit = Number(limitParam) || 10;
@@ -464,10 +605,34 @@ export class ApplicationsService {
       qb.andWhere(`${lossSubquery} <= :maxAmount`, { maxAmount: Number(max_amount) });
     }
 
+    if (repeat_type && repeat_type.trim()) {
+      qb.andWhere('app.repeat_type = :repeat_type', {
+        repeat_type: repeat_type.trim().toUpperCase(),
+      });
+    }
+    if (appeal_type && appeal_type.trim()) {
+      qb.andWhere('app.appeal_type = :appeal_type', {
+        appeal_type: appeal_type.trim().toUpperCase(),
+      });
+    }
+    if (submission_form && submission_form.trim()) {
+      qb.andWhere('app.submission_form = :submission_form', {
+        submission_form: submission_form.trim().toUpperCase(),
+      });
+    }
+    if (awareness_status_id && isUUID(awareness_status_id.trim())) {
+      qb.andWhere('app.awareness_status_id = :awareness_status_id', {
+        awareness_status_id: awareness_status_id.trim(),
+      });
+    }
+
     qb.orderBy('app.created_at', 'DESC');
 
     const relations = {
       application_status: true,
+      awareness_status: true,
+      parent_application: true,
+      root_application: true,
       documents: true,
       source: true,
       department_service: true,
@@ -540,6 +705,7 @@ export class ApplicationsService {
       });
       allItems.sort((a, b) => allIds.indexOf(a.id) - allIds.indexOf(b.id));
       await this.relationsService.attachRelationsSummaries(allItems, allowedDistrictIds);
+      await this.attachChainCounts(allItems);
 
       const filtered = allItems.filter((item) => {
         if (relations_filter === 'with_relations') {
@@ -586,6 +752,7 @@ export class ApplicationsService {
       });
       items.sort((a, b) => ids.indexOf(a.id) - ids.indexOf(b.id));
       await this.relationsService.attachRelationsSummaries(items, allowedDistrictIds);
+      await this.attachChainCounts(items);
     }
 
     const totalPages = Math.ceil(total / limit) || 1;
@@ -625,6 +792,10 @@ export class ApplicationsService {
       min_amount?: string | number;
       max_amount?: string | number;
       relations_filter?: string;
+      repeat_type?: string;
+      appeal_type?: string;
+      submission_form?: string;
+      awareness_status_id?: string;
     },
     res: Response,
     currentUser?: JwtAccessPayload,
@@ -790,6 +961,9 @@ export class ApplicationsService {
       where: { id, is_deleted: false },
       relations: {
         application_status: true,
+        awareness_status: true,
+        parent_application: true,
+        root_application: true,
         status_history: { changed_by: true },
         documents: true,
         source: true,
@@ -866,7 +1040,134 @@ export class ApplicationsService {
       );
     }
 
+    await this.attachChainCounts([application]);
     return application;
+  }
+
+  /**
+   * Murojaat zanjiri (Birlamchi -> Takroriy -> Dublikat -> Qo'shimcha) xronologik ro'yxati
+   */
+  async getApplicationChain(id: string, currentUser?: JwtAccessPayload) {
+    const current = await this.findOne(id, currentUser);
+    const rootId = current.root_application_id || current.id;
+
+    let assignedDistrictIds: string[] | null = null;
+    if (currentUser && currentUser.role === Role.DISTRICT_OFFICER) {
+      assignedDistrictIds = await getAllowedDistrictIds(this.userRepo, currentUser);
+    }
+
+    const qb = this.applicationRepo
+      .createQueryBuilder('app')
+      .leftJoinAndSelect('app.application_status', 'application_status')
+      .leftJoinAndSelect('app.district', 'district')
+      .leftJoinAndSelect('app.source', 'source')
+      .leftJoinAndSelect('app.decision_type', 'decision_type')
+      .leftJoinAndSelect('app.citizen', 'citizen')
+      .leftJoinAndSelect('app.transfer', 'transfer')
+      .where('app.is_deleted = false')
+      .andWhere('(app.id = :rootId OR app.root_application_id = :rootId)', { rootId })
+      .orderBy('app.repeat_sequence', 'ASC')
+      .addOrderBy('COALESCE(app.date, app.created_at)', 'ASC')
+      .addOrderBy('app.created_at', 'ASC');
+
+    if (assignedDistrictIds !== null) {
+      if (assignedDistrictIds.length > 0) {
+        qb.andWhere('app.district_id IN (:...userDistricts)', {
+          userDistricts: assignedDistrictIds,
+        });
+      } else {
+        qb.andWhere('app.id = :currentId', { currentId: current.id });
+      }
+    }
+
+    const chainApps = await qb.getMany();
+
+    return {
+      root_application_id: rootId,
+      current_application_id: current.id,
+      total: chainApps.length,
+      items: chainApps.map((a) => ({
+        id: a.id,
+        application_number: a.application_number,
+        date: a.date || a.created_at,
+        appeal_type: a.appeal_type,
+        submission_form: a.submission_form,
+        applicant_type: a.applicant_type,
+        repeat_type: a.repeat_type,
+        repeat_sequence: a.repeat_sequence,
+        repeat_reason: a.repeat_reason,
+        is_review_terminated: a.is_review_terminated,
+        termination_note: a.termination_note,
+        parent_application_id: a.parent_application_id,
+        status: a.status,
+        status_name: a.application_status?.name || a.status || 'Yangi',
+        status_color: a.application_status?.color || 'blue',
+        district_name: a.district?.name || null,
+        source_name: a.source?.name || null,
+        decision_type_name: a.decision_type?.name || null,
+        decision_date: a.decision_date,
+        citizen_name: a.citizen
+          ? [a.citizen.last_name, a.citizen.first_name, a.citizen.middle_name]
+              .filter(Boolean)
+              .join(' ')
+          : null,
+        transfer_amount: a.transfer?.amount ? Number(a.transfer.amount) : 0,
+        transfer_currency: a.transfer?.currency || 'UZS',
+      })),
+    };
+  }
+
+  /**
+   * Fuqaroning avvalgi arizalari (yangi ariza yaratayotganda takroriylikni avtomatik aniqlash uchun)
+   */
+  async findByCitizen(citizenId: string, excludeId?: string, currentUser?: JwtAccessPayload) {
+    let assignedDistrictIds: string[] | null = null;
+    if (currentUser && currentUser.role === Role.DISTRICT_OFFICER) {
+      assignedDistrictIds = await getAllowedDistrictIds(this.userRepo, currentUser);
+      if (assignedDistrictIds && assignedDistrictIds.length === 0) {
+        return [];
+      }
+    }
+
+    const qb = this.applicationRepo
+      .createQueryBuilder('app')
+      .leftJoinAndSelect('app.application_status', 'application_status')
+      .leftJoinAndSelect('app.district', 'district')
+      .leftJoinAndSelect('app.crime', 'crime')
+      .leftJoinAndSelect('app.source', 'source')
+      .where('app.is_deleted = false')
+      .andWhere('app.citizen_id = :citizenId', { citizenId })
+      .orderBy('COALESCE(app.date, app.created_at)', 'DESC')
+      .take(20);
+
+    if (excludeId && isUUID(excludeId)) {
+      qb.andWhere('app.id != :excludeId', { excludeId });
+    }
+    if (assignedDistrictIds !== null) {
+      qb.andWhere('app.district_id IN (:...userDistricts)', {
+        userDistricts: assignedDistrictIds,
+      });
+    }
+
+    const apps = await qb.getMany();
+    return apps.map((a) => ({
+      id: a.id,
+      application_number: a.application_number,
+      date: a.date || a.created_at,
+      appeal_type: a.appeal_type,
+      repeat_type: a.repeat_type,
+      repeat_sequence: a.repeat_sequence,
+      root_application_id: a.root_application_id,
+      status_name: a.application_status?.name || a.status || 'Yangi',
+      status_color: a.application_status?.color || 'blue',
+      district_id: a.district_id,
+      district_name: a.district?.name || null,
+      crime_id: a.crime_id,
+      crime_name: a.crime?.article || a.crime?.title || null,
+      crime_method_id: a.crime_method_id,
+      source_name: a.source?.name || null,
+      description: a.description ? a.description.slice(0, 140) : null,
+    }));
   }
 
   async extendDeadline(
@@ -1079,8 +1380,41 @@ export class ApplicationsService {
         delete (application as unknown as Record<string, unknown>).rejection_reason;
         delete (application as unknown as Record<string, unknown>).decision_type;
         delete (application as unknown as Record<string, unknown>).workplace;
+        delete (application as unknown as Record<string, unknown>).parent_application;
+        delete (application as unknown as Record<string, unknown>).root_application;
+        delete (application as unknown as Record<string, unknown>).awareness_status;
+
+        const prevRepeatType = application.repeat_type;
+        const prevParentId = application.parent_application_id;
 
         Object.assign(application, applicationData, resolved);
+
+        if (dto.repeat_type !== undefined || dto.parent_application_id !== undefined) {
+          const nextRepeatType = dto.repeat_type ?? application.repeat_type;
+          const nextParentId =
+            dto.parent_application_id !== undefined
+              ? dto.parent_application_id
+              : application.parent_application_id;
+
+          if (nextRepeatType !== prevRepeatType || nextParentId !== prevParentId) {
+            const chainResolved = await this.resolveApplicationChain(
+              txAppRepo,
+              nextRepeatType,
+              nextParentId,
+              id,
+            );
+            application.repeat_type = chainResolved.repeat_type;
+            application.parent_application_id = chainResolved.parent_application_id;
+            application.root_application_id = chainResolved.root_application_id;
+            application.repeat_sequence = chainResolved.repeat_sequence;
+          }
+        }
+        if (dto.repeat_reason !== undefined) {
+          application.repeat_reason = dto.repeat_reason ? dto.repeat_reason.trim() : null;
+        }
+        if (dto.termination_note !== undefined) {
+          application.termination_note = dto.termination_note ? dto.termination_note.trim() : null;
+        }
         if (applicationData.application_number !== undefined) {
           application.application_number = applicationData.application_number
             ? applicationData.application_number.trim()

@@ -67,6 +67,10 @@ export class ApplicationsController {
     @Query('max_amount') max_amount?: string,
     @Query('relations_filter') relations_filter?: string,
     @Query('sla_filter') sla_filter?: string,
+    @Query('repeat_type') repeat_type?: string,
+    @Query('appeal_type') appeal_type?: string,
+    @Query('submission_form') submission_form?: string,
+    @Query('awareness_status_id') awareness_status_id?: string,
     @CurrentUser() currentUser?: JwtAccessPayload,
   ) {
     const pagination = normalizePagination(page, limit, 10);
@@ -92,6 +96,10 @@ export class ApplicationsController {
         max_amount,
         relations_filter,
         sla_filter,
+        repeat_type,
+        appeal_type,
+        submission_form,
+        awareness_status_id,
       },
       10,
       undefined,
@@ -141,6 +149,20 @@ export class ApplicationsController {
     return this.applicationsService.getStatistics(period, startDate, endDate, currentUser);
   }
 
+  @Get('by-citizen/:citizenId')
+  findByCitizen(
+    @Param('citizenId', ParseUUIDPipe) citizenId: string,
+    @Query('exclude_id') excludeId?: string,
+    @CurrentUser() currentUser?: JwtAccessPayload,
+  ) {
+    return this.applicationsService.findByCitizen(citizenId, excludeId, currentUser);
+  }
+
+  @Get(':id/chain')
+  getChain(@Param('id', ParseUUIDPipe) id: string, @CurrentUser() currentUser?: JwtAccessPayload) {
+    return this.applicationsService.getApplicationChain(id, currentUser);
+  }
+
   @Get(':id/relations')
   getRelations(
     @Param('id', ParseUUIDPipe) id: string,
@@ -178,6 +200,10 @@ export class ApplicationsController {
     @Query('min_amount') min_amount?: string,
     @Query('max_amount') max_amount?: string,
     @Query('relations_filter') relations_filter?: string,
+    @Query('repeat_type') repeat_type?: string,
+    @Query('appeal_type') appeal_type?: string,
+    @Query('submission_form') submission_form?: string,
+    @Query('awareness_status_id') awareness_status_id?: string,
     @CurrentUser() currentUser?: JwtAccessPayload,
   ) {
     return this.applicationsService.exportToExcel(
@@ -199,6 +225,10 @@ export class ApplicationsController {
         min_amount,
         max_amount,
         relations_filter,
+        repeat_type,
+        appeal_type,
+        submission_form,
+        awareness_status_id,
       },
       res,
       currentUser,

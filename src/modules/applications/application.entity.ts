@@ -10,8 +10,15 @@ import {
 } from 'typeorm';
 
 import { BaseEntity } from '../../common/database/base.entity';
+import {
+  AppealType,
+  ApplicantType,
+  ApplicationRepeatType,
+  SubmissionForm,
+} from '../../common/enums/appeal-classification.enum';
 import { User } from '../users/user.entity';
 import { ApplicationStatusHistory } from './application-status-history.entity';
+import { AwarenessStatus } from './awareness-statuses/awareness-status.entity';
 import { Citizen } from './citizens/citizen.entity';
 import { Crime } from './crimes/crime.entity';
 import { CrimeMethod } from './crimes/methods/crime-method.entity';
@@ -44,6 +51,11 @@ export interface SuspectTreeNode {
 @Index('IDX_applications_transfer_id', ['transfer_id'])
 @Index('IDX_applications_created_by_id', ['created_by_id'])
 @Index('IDX_applications_deadline_at', ['deadline_at'])
+@Index('IDX_applications_appeal_type', ['appeal_type'])
+@Index('IDX_applications_repeat_type', ['repeat_type'])
+@Index('IDX_applications_parent_application_id', ['parent_application_id'])
+@Index('IDX_applications_root_application_id', ['root_application_id'])
+@Index('IDX_applications_awareness_status_id', ['awareness_status_id'])
 export class Application extends BaseEntity {
   /**
    * Arizaning rasmiy qayd raqami.
@@ -129,6 +141,79 @@ export class Application extends BaseEntity {
 
   @Column({ name: 'closed_at', type: 'timestamp with time zone', nullable: true })
   closed_at: Date | null;
+
+  // ==========================================================================
+  // MUROJAAT TASNIFI VA TAKRORIY / DUBLIKAT / QO'SHIMCHA ZANJIRI (O'RQ-445)
+  // ==========================================================================
+  @Column({
+    name: 'appeal_type',
+    type: 'varchar',
+    length: 30,
+    default: AppealType.APPEAL,
+  })
+  appeal_type: AppealType;
+
+  @Column({
+    name: 'submission_form',
+    type: 'varchar',
+    length: 30,
+    default: SubmissionForm.WRITTEN,
+  })
+  submission_form: SubmissionForm;
+
+  @Column({
+    name: 'applicant_type',
+    type: 'varchar',
+    length: 30,
+    default: ApplicantType.INDIVIDUAL,
+  })
+  applicant_type: ApplicantType;
+
+  @Column({
+    name: 'repeat_type',
+    type: 'varchar',
+    length: 30,
+    default: ApplicationRepeatType.PRIMARY,
+  })
+  repeat_type: ApplicationRepeatType;
+
+  @Column({ name: 'parent_application_id', type: 'uuid', nullable: true })
+  parent_application_id: string | null;
+
+  @ManyToOne(() => Application, (app) => app.child_applications, {
+    nullable: true,
+    onDelete: 'SET NULL',
+  })
+  @JoinColumn({ name: 'parent_application_id' })
+  parent_application: Application | null;
+
+  @OneToMany(() => Application, (app) => app.parent_application)
+  child_applications: Application[];
+
+  @Column({ name: 'root_application_id', type: 'uuid', nullable: true })
+  root_application_id: string | null;
+
+  @ManyToOne(() => Application, {
+    nullable: true,
+    onDelete: 'SET NULL',
+  })
+  @JoinColumn({ name: 'root_application_id' })
+  root_application: Application | null;
+
+  @Column({ name: 'repeat_sequence', type: 'int', default: 1 })
+  repeat_sequence: number;
+
+  @Column({ name: 'repeat_reason', type: 'text', nullable: true })
+  repeat_reason: string | null;
+
+  @Column({ name: 'is_review_terminated', type: 'boolean', default: false })
+  is_review_terminated: boolean;
+
+  @Column({ name: 'termination_note', type: 'text', nullable: true })
+  termination_note: string | null;
+
+  /** Zanjirdagi jami bog'liq murojaatlar soni (Virtual/hisoblangan maydon) */
+  chain_count?: number;
 
   @OneToMany(() => ApplicationStatusHistory, (h: ApplicationStatusHistory) => h.application)
   status_history: ApplicationStatusHistory[];
@@ -221,6 +306,20 @@ export class Application extends BaseEntity {
   })
   @JoinColumn({ name: 'source_id' })
   source: ApplicationSource | null;
+
+  // 6.1. Fuqaro targ'ibot qilinganligi holati (Qilinmagan / IIB / Onlayn va b.)
+  @Column({ name: 'awareness_status_id', type: 'uuid', nullable: true })
+  awareness_status_id: string | null;
+
+  @ManyToOne(() => AwarenessStatus, {
+    nullable: true,
+    onDelete: 'SET NULL',
+  })
+  @JoinColumn({ name: 'awareness_status_id' })
+  awareness_status: AwarenessStatus | null;
+
+  @Column({ name: 'awareness_note', type: 'varchar', length: 300, nullable: true })
+  awareness_note: string | null;
 
   // 7. Sohaviy xizmat (UYOKK, JQK, Terrorizm, HQPX, YHX, JTSX, Probatsiya, MMIX)
   @Column({ name: 'department_service_id', type: 'uuid', nullable: true })

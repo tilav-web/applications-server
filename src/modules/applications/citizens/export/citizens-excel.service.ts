@@ -32,7 +32,7 @@ export class CitizensExcelService {
       { header: 'Asosiy Telefon', key: 'phone', width: 18 }, // G
       { header: "Qo'shimcha Telefonlar", key: 'extra_phones', width: 24 }, // H
       { header: 'Tuman / Shahar', key: 'district', width: 18 }, // I
-      { header: 'Neighborhood', key: 'neighborhood', width: 22 }, // J
+      { header: 'Mahalla', key: 'neighborhood', width: 22 }, // J
       { header: 'Yashash Manzili', key: 'address', width: 32 }, // K
       { header: 'Kasb Toifasi', key: 'occ_category', width: 24 }, // L
       { header: 'Kasb Turi', key: 'occupation', width: 24 }, // M
