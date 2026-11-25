@@ -29,6 +29,9 @@ import { ApplicationDocument } from './documents/application-document.entity';
 import { DocumentsModule } from './documents/documents.module';
 import { ApplicationsExcelService } from './export/applications-excel.service';
 import { CyberControlShablonExcelService } from './export/cybercontrol-shablon-excel.service';
+import { ApplicationsImportController } from './import/applications-import.controller';
+import { ApplicationsImportService } from './import/applications-import.service';
+import { ApplicationsImportTemplateService } from './import/applications-import-template.service';
 import { Neighborhood } from './neighborhoods/neighborhood.entity';
 import { NeighborhoodsModule } from './neighborhoods/neighborhoods.module';
 import { Occupation } from './occupations/occupation.entity';
@@ -112,7 +115,11 @@ import { WorkplacesModule } from './workplaces/workplaces.module';
     DecisionTypesModule,
     WorkplacesModule,
   ],
-  controllers: [ApplicationsController, ApplicationsReportsController],
+  controllers: [
+    ApplicationsImportController,
+    ApplicationsController,
+    ApplicationsReportsController,
+  ],
   providers: [
     ApplicationsService,
     ApplicationsResolverService,
@@ -120,6 +127,8 @@ import { WorkplacesModule } from './workplaces/workplaces.module';
     ApplicationsStatisticsService,
     ApplicationsExcelService,
     CyberControlShablonExcelService,
+    ApplicationsImportTemplateService,
+    ApplicationsImportService,
     ApplicationsReportsService,
   ],
   exports: [
@@ -129,6 +138,8 @@ import { WorkplacesModule } from './workplaces/workplaces.module';
     ApplicationsStatisticsService,
     ApplicationsExcelService,
     CyberControlShablonExcelService,
+    ApplicationsImportTemplateService,
+    ApplicationsImportService,
     ApplicationsReportsService,
     SuspectFieldConfigsModule,
     CrimeMethodsModule,
