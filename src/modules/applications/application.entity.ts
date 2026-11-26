@@ -407,6 +407,16 @@ export class Application extends BaseEntity {
   @OneToMany(() => ApplicationExternalSystem, (aes) => aes.application)
   external_systems: ApplicationExternalSystem[];
 
+  // 14. Ro'yxatda tezkor vizual belgilash rangi (real-vaqt sinxronizatsiyali)
+  @Column({ name: 'row_color', type: 'varchar', length: 20, nullable: true })
+  row_color: string | null;
+
+  @Column({ name: 'row_color_by', type: 'varchar', length: 120, nullable: true })
+  row_color_by: string | null;
+
+  @Column({ name: 'row_color_updated_at', type: 'timestamp with time zone', nullable: true })
+  row_color_updated_at: Date | null;
+
   /**
    * Tahliliy bog'liqliklar hisoboti (Virtual/Hisoblangan maydon)
    */

@@ -34,6 +34,11 @@ import {
   resolveRootApplicationId,
 } from './application-chain.util';
 import { ApplicationStatusHistory } from './application-status-history.entity';
+import {
+  ALLOWED_ROW_COLORS,
+  type ApplicationRowColor,
+  ApplicationsRealtimeService,
+} from './applications-realtime.service';
 import { ApplicationsRelationsService } from './applications-relations.service';
 import { ApplicationsResolverService } from './applications-resolver.service';
 import { ApplicationsStatisticsService } from './applications-statistics.service';
@@ -83,6 +88,7 @@ export class ApplicationsService {
     private readonly resolverService: ApplicationsResolverService,
     private readonly relationsService: ApplicationsRelationsService,
     private readonly statisticsService: ApplicationsStatisticsService,
+    private readonly realtimeService: ApplicationsRealtimeService,
   ) {}
 
   private async resolveApplicationChain(
@@ -533,6 +539,7 @@ export class ApplicationsService {
           external_system_id?: string;
           external_system_status?: string;
           missing_external_system_id?: string;
+          row_color?: string;
         } = 1,
     limitParam = 10,
     searchParam?: string,
@@ -566,6 +573,7 @@ export class ApplicationsService {
     let external_system_id: string | undefined;
     let external_system_status: string | undefined;
     let missing_external_system_id: string | undefined;
+    let row_color: string | undefined;
 
     if (typeof pageOrParams === 'object') {
       page = Number(pageOrParams.page) || 1;
@@ -595,6 +603,7 @@ export class ApplicationsService {
       external_system_id = pageOrParams.external_system_id;
       external_system_status = pageOrParams.external_system_status;
       missing_external_system_id = pageOrParams.missing_external_system_id;
+      row_color = pageOrParams.row_color;
     } else {
       page = Number(pageOrParams) || 1;
       limit = Number(limitParam) || 10;
@@ -828,6 +837,17 @@ export class ApplicationsService {
       }
     }
 
+    if (row_color && row_color.trim()) {
+      const rc = row_color.trim().toLowerCase();
+      if (rc === 'any') {
+        qb.andWhere('app.row_color IS NOT NULL');
+      } else if (rc === 'none') {
+        qb.andWhere('app.row_color IS NULL');
+      } else if ((ALLOWED_ROW_COLORS as readonly string[]).includes(rc)) {
+        qb.andWhere('app.row_color = :row_color', { row_color: rc });
+      }
+    }
+
     qb.orderBy('app.created_at', 'DESC');
 
     const relations = {
@@ -1003,6 +1023,7 @@ export class ApplicationsService {
       external_system_id?: string;
       external_system_status?: string;
       missing_external_system_id?: string;
+      row_color?: string;
     },
     res: Response,
     currentUser?: JwtAccessPayload,
@@ -1780,6 +1801,189 @@ export class ApplicationsService {
     await this.intelligenceSync.syncApplicationById(id);
     void this.slaQueueService.cancelForApplication(id);
     return { success: true, message: "Ariza muvaffaqiyatli o'chirildi" };
+  }
+
+  async getRealtimeDistrictScope(currentUser?: JwtAccessPayload): Promise<string[] | null> {
+    if (currentUser && currentUser.role === Role.DISTRICT_OFFICER) {
+      return getAllowedDistrictIds(this.userRepo, currentUser);
+    }
+    return null;
+  }
+
+  private normalizeRowColor(raw?: string | null): ApplicationRowColor | null {
+    if (raw === null || raw === undefined) return null;
+    const trimmed = String(raw).trim().toLowerCase();
+    if (!trimmed) return null;
+    if (!(ALLOWED_ROW_COLORS as readonly string[]).includes(trimmed)) {
+      throw new BadRequestException(
+        `Noto'g'ri rang qiymati. Ruxsat etilgan ranglar: ${ALLOWED_ROW_COLORS.join(', ')}`,
+      );
+    }
+    return trimmed as ApplicationRowColor;
+  }
+
+  private async resolveActorDisplayName(currentUser?: JwtAccessPayload): Promise<string | null> {
+    if (!currentUser) return null;
+    const user = await this.userRepo.findOne({
+      where: { auth_id: currentUser.sub },
+      select: { id: true, first_name: true, last_name: true },
+    });
+    const full = [user?.last_name, user?.first_name].filter(Boolean).join(' ').trim();
+    return full || currentUser.username || null;
+  }
+
+  async updateRowColor(
+    id: string,
+    rawColor: string | null | undefined,
+    currentUser?: JwtAccessPayload,
+  ): Promise<{
+    id: string;
+    row_color: ApplicationRowColor | null;
+    row_color_by: string | null;
+    row_color_updated_at: string | null;
+  }> {
+    if (currentUser?.role === Role.BOSS) {
+      throw new ForbiddenException(
+        "Rahbar (Boss) hisobi faqat ma'lumotlarni ko'rish (read-only) rejimida ishlaydi",
+      );
+    }
+
+    const color = this.normalizeRowColor(rawColor);
+
+    const app = await this.applicationRepo.findOne({
+      where: { id, is_deleted: false },
+      select: { id: true, district_id: true },
+    });
+    if (!app) {
+      throw new NotFoundException(`Ariza (ID: ${id}) topilmadi`);
+    }
+
+    if (currentUser && currentUser.role === Role.DISTRICT_OFFICER) {
+      const allowedDistrictIds = await getAllowedDistrictIds(this.userRepo, currentUser);
+      assertDistrictAccess(
+        allowedDistrictIds,
+        app.district_id,
+        "Siz faqat o'zingizga biriktirilgan tuman(lar) arizalarini belgilashingiz mumkin",
+      );
+    }
+
+    const actorName = await this.resolveActorDisplayName(currentUser);
+    const now = color ? new Date() : null;
+    const actorBy = color ? actorName : null;
+
+    await this.applicationRepo.update(id, {
+      row_color: color,
+      row_color_by: actorBy,
+      row_color_updated_at: now,
+    });
+
+    const updatedAtIso = now ? now.toISOString() : null;
+    this.realtimeService.broadcastRowColorUpdate({
+      type: 'row_color_updated',
+      items: [
+        {
+          id: app.id,
+          district_id: app.district_id ?? null,
+          row_color: color,
+          row_color_by: actorBy,
+          row_color_updated_at: updatedAtIso,
+        },
+      ],
+      actor_auth_id: currentUser?.sub ?? null,
+      actor_name: actorName,
+    });
+
+    return {
+      id: app.id,
+      row_color: color,
+      row_color_by: actorBy,
+      row_color_updated_at: updatedAtIso,
+    };
+  }
+
+  async bulkUpdateRowColor(
+    ids: string[],
+    rawColor: string | null | undefined,
+    currentUser?: JwtAccessPayload,
+  ): Promise<{
+    updatedCount: number;
+    items: Array<{
+      id: string;
+      row_color: ApplicationRowColor | null;
+      row_color_by: string | null;
+      row_color_updated_at: string | null;
+    }>;
+  }> {
+    if (currentUser?.role === Role.BOSS) {
+      throw new ForbiddenException(
+        "Rahbar (Boss) hisobi faqat ma'lumotlarni ko'rish (read-only) rejimida ishlaydi",
+      );
+    }
+
+    const color = this.normalizeRowColor(rawColor);
+    const uniqueIds = Array.from(new Set((ids || []).filter((id) => isUUID(id))));
+    if (uniqueIds.length === 0) {
+      throw new BadRequestException('Kamida bitta ariza tanlanishi shart');
+    }
+
+    const apps = await this.applicationRepo.find({
+      where: { id: In(uniqueIds), is_deleted: false },
+      select: { id: true, district_id: true },
+    });
+
+    let targetApps = apps;
+    if (currentUser && currentUser.role === Role.DISTRICT_OFFICER) {
+      const allowedDistrictIds = (await getAllowedDistrictIds(this.userRepo, currentUser)) ?? [];
+      targetApps = apps.filter(
+        (a) => a.district_id !== null && allowedDistrictIds.includes(a.district_id),
+      );
+      if (targetApps.length === 0) {
+        throw new ForbiddenException(
+          "Siz faqat o'zingizga biriktirilgan tuman(lar) arizalarini belgilashingiz mumkin",
+        );
+      }
+    }
+
+    if (targetApps.length === 0) {
+      throw new NotFoundException('Tanlangan arizalar topilmadi');
+    }
+
+    const actorName = await this.resolveActorDisplayName(currentUser);
+    const now = color ? new Date() : null;
+    const actorBy = color ? actorName : null;
+    const updatedAtIso = now ? now.toISOString() : null;
+
+    await this.applicationRepo.update(
+      { id: In(targetApps.map((a) => a.id)) },
+      {
+        row_color: color,
+        row_color_by: actorBy,
+        row_color_updated_at: now,
+      },
+    );
+
+    this.realtimeService.broadcastRowColorUpdate({
+      type: 'row_color_updated',
+      items: targetApps.map((app) => ({
+        id: app.id,
+        district_id: app.district_id ?? null,
+        row_color: color,
+        row_color_by: actorBy,
+        row_color_updated_at: updatedAtIso,
+      })),
+      actor_auth_id: currentUser?.sub ?? null,
+      actor_name: actorName,
+    });
+
+    return {
+      updatedCount: targetApps.length,
+      items: targetApps.map((app) => ({
+        id: app.id,
+        row_color: color,
+        row_color_by: actorBy,
+        row_color_updated_at: updatedAtIso,
+      })),
+    };
   }
 
   async getStatistics(

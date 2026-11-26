@@ -273,6 +273,9 @@ export class AuditInterceptor implements NestInterceptor {
 
     const method = req.method?.toUpperCase() || 'GET';
     const rawPath = req.path || req.originalUrl?.split('?')[0] || '/';
+    if (rawPath.includes('/events/stream')) {
+      return next.handle();
+    }
     const ip = (req.ip || req.socket?.remoteAddress || 'unknown').replace(/^::ffff:/, '');
     const userAgent =
       typeof req.headers['user-agent'] === 'string' ? req.headers['user-agent'] : null;

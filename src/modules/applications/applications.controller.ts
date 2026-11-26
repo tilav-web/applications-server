@@ -8,10 +8,12 @@ import {
   Patch,
   Post,
   Query,
+  Req,
   Res,
   UseGuards,
 } from '@nestjs/common';
-import type { Response } from 'express';
+import { SkipThrottle } from '@nestjs/throttler';
+import type { Request, Response } from 'express';
 
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
 import { Roles } from '../../common/decorators/roles.decorator';
@@ -21,16 +23,21 @@ import { RolesGuard } from '../../common/guards/roles.guard';
 import type { JwtAccessPayload } from '../../common/types/jwt-payload.interface';
 import { normalizePagination } from '../../common/utils/pagination.util';
 import { ApplicationsService } from './applications.service';
+import { ApplicationsRealtimeService } from './applications-realtime.service';
 import { CreateApplicationDto } from './dto/create-application.dto';
 import { ExportCyberControlDto } from './dto/export-cybercontrol.dto';
 import { ExtendDeadlineDto } from './dto/extend-deadline.dto';
 import { UpdateApplicationDto } from './dto/update-application.dto';
+import { BulkUpdateRowColorDto, UpdateRowColorDto } from './dto/update-row-color.dto';
 import { APPLICATION_MASTER_TEMPLATE } from './schemas/default-application-template.schema';
 
 @Controller('applications')
 @UseGuards(JwtAuthGuard, RolesGuard)
 export class ApplicationsController {
-  constructor(private readonly applicationsService: ApplicationsService) {}
+  constructor(
+    private readonly applicationsService: ApplicationsService,
+    private readonly realtimeService: ApplicationsRealtimeService,
+  ) {}
 
   @Post()
   @Roles(
@@ -74,6 +81,7 @@ export class ApplicationsController {
     @Query('external_system_id') external_system_id?: string,
     @Query('external_system_status') external_system_status?: string,
     @Query('missing_external_system_id') missing_external_system_id?: string,
+    @Query('row_color') row_color?: string,
     @CurrentUser() currentUser?: JwtAccessPayload,
   ) {
     const pagination = normalizePagination(page, limit, 10);
@@ -106,12 +114,34 @@ export class ApplicationsController {
         external_system_id,
         external_system_status,
         missing_external_system_id,
+        row_color,
       },
       10,
       undefined,
       undefined,
       currentUser,
     );
+  }
+
+  /**
+   * Real-vaqt SSE oqimi: arizalar qatori rangi o'zgarganda barcha online hodimlarga
+   * darhol yetkazish va online hodimlar sonini yuborish.
+   */
+  @Get('events/stream')
+  @SkipThrottle()
+  async streamEvents(
+    @Req() req: Request,
+    @Res() res: Response,
+    @CurrentUser() currentUser?: JwtAccessPayload,
+  ) {
+    const allowedDistrictIds = await this.applicationsService.getRealtimeDistrictScope(currentUser);
+    const unregister = this.realtimeService.registerClient(
+      res,
+      currentUser?.sub || 'anonymous',
+      allowedDistrictIds,
+    );
+    req.on('close', unregister);
+    res.on('close', unregister);
   }
 
   @Get('sla/overview')
@@ -213,6 +243,7 @@ export class ApplicationsController {
     @Query('external_system_id') external_system_id?: string,
     @Query('external_system_status') external_system_status?: string,
     @Query('missing_external_system_id') missing_external_system_id?: string,
+    @Query('row_color') row_color?: string,
     @CurrentUser() currentUser?: JwtAccessPayload,
   ) {
     return this.applicationsService.exportToExcel(
@@ -241,6 +272,7 @@ export class ApplicationsController {
         external_system_id,
         external_system_status,
         missing_external_system_id,
+        row_color,
       },
       res,
       currentUser,
@@ -250,6 +282,39 @@ export class ApplicationsController {
   @Get(':id')
   findOne(@Param('id', ParseUUIDPipe) id: string, @CurrentUser() currentUser?: JwtAccessPayload) {
     return this.applicationsService.findOne(id, currentUser);
+  }
+
+  @Patch('bulk/row-color')
+  @Roles(
+    Role.SUPER_ADMIN,
+    Role.ADMIN,
+    Role.STAFF,
+    Role.INSPECTOR,
+    Role.OPERATOR,
+    Role.DISTRICT_OFFICER,
+  )
+  bulkUpdateRowColor(
+    @Body() body: BulkUpdateRowColorDto,
+    @CurrentUser() currentUser?: JwtAccessPayload,
+  ) {
+    return this.applicationsService.bulkUpdateRowColor(body.ids, body.row_color, currentUser);
+  }
+
+  @Patch(':id/row-color')
+  @Roles(
+    Role.SUPER_ADMIN,
+    Role.ADMIN,
+    Role.STAFF,
+    Role.INSPECTOR,
+    Role.OPERATOR,
+    Role.DISTRICT_OFFICER,
+  )
+  updateRowColor(
+    @Param('id', ParseUUIDPipe) id: string,
+    @Body() body: UpdateRowColorDto,
+    @CurrentUser() currentUser?: JwtAccessPayload,
+  ) {
+    return this.applicationsService.updateRowColor(id, body.row_color, currentUser);
   }
 
   @Patch(':id/external-systems')

@@ -7,6 +7,7 @@ import { Application } from './application.entity';
 import { ApplicationStatusHistory } from './application-status-history.entity';
 import { ApplicationsController } from './applications.controller';
 import { ApplicationsService } from './applications.service';
+import { ApplicationsRealtimeService } from './applications-realtime.service';
 import { ApplicationsRelationsService } from './applications-relations.service';
 import { ApplicationsResolverService } from './applications-resolver.service';
 import { ApplicationsStatisticsService } from './applications-statistics.service';
@@ -130,6 +131,7 @@ import { WorkplacesModule } from './workplaces/workplaces.module';
   ],
   providers: [
     ApplicationsService,
+    ApplicationsRealtimeService,
     ApplicationsResolverService,
     ApplicationsRelationsService,
     ApplicationsStatisticsService,
@@ -141,6 +143,7 @@ import { WorkplacesModule } from './workplaces/workplaces.module';
   ],
   exports: [
     ApplicationsService,
+    ApplicationsRealtimeService,
     ApplicationsResolverService,
     ApplicationsRelationsService,
     ApplicationsStatisticsService,
