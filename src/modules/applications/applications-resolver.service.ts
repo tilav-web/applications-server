@@ -52,6 +52,240 @@ export class ApplicationsResolverService {
     private readonly workplacesService: WorkplacesService,
   ) {}
 
+  private parseTransferAmount(raw: unknown): number | null {
+    if (raw === null || raw === undefined || raw === '') return null;
+    if (typeof raw === 'number') {
+      return Number.isFinite(raw) && raw > 0 ? raw : null;
+    }
+    if (typeof raw !== 'string') return null;
+    const cleaned = raw.replace(/[\s\u00A0\u202F,]/g, '').replace(/[^\d.-]/g, '');
+    if (!cleaned) return null;
+    const num = Number(cleaned);
+    return Number.isFinite(num) && num > 0 ? num : null;
+  }
+
+  private async upsertTransferFromInlineData(
+    manager: EntityManager,
+    tData: Record<string, unknown>,
+    opts: {
+      existingTransferId: string | null;
+      senderCardId: string | null;
+      applicationId: string | null;
+      defaultCustomFieldType: TransferCustomFieldType;
+    },
+  ): Promise<string | null> {
+    const cardRepo = manager.getRepository(Card);
+    const transferRepo = manager.getRepository(Transfer);
+    const bankRepo = manager.getRepository(Bank);
+    const paymentProviderRepo = manager.getRepository(PaymentProvider);
+    const transferCustomFieldRepo = manager.getRepository(TransferCustomField);
+
+    const parsedAmount = this.parseTransferAmount(tData.amount);
+    const currency =
+      typeof tData.currency === 'string' && tData.currency.trim()
+        ? tData.currency.trim().toUpperCase()
+        : 'UZS';
+    const transferDate =
+      typeof tData.transfer_date === 'string' && tData.transfer_date.trim()
+        ? tData.transfer_date.trim()
+        : null;
+    const transferTime =
+      typeof tData.transfer_time === 'string' && tData.transfer_time.trim()
+        ? tData.transfer_time.trim()
+        : null;
+    const transactionId =
+      typeof tData.transaction_id === 'string' && tData.transaction_id.trim()
+        ? tData.transaction_id.trim()
+        : null;
+
+    let providerId =
+      typeof tData.payment_provider_id === 'string' && tData.payment_provider_id.trim()
+        ? tData.payment_provider_id.trim()
+        : null;
+    if (
+      !providerId &&
+      typeof tData.payment_provider_name === 'string' &&
+      tData.payment_provider_name.trim()
+    ) {
+      const provName = formatTitleCase(tData.payment_provider_name.trim());
+      let existingProv = await paymentProviderRepo.findOne({
+        where: { name: ILike(provName) },
+      });
+      if (!existingProv) {
+        existingProv = await paymentProviderRepo.save(
+          paymentProviderRepo.create({
+            name: provName,
+            code: provName.toLowerCase().replace(/\s+/g, '_'),
+          }),
+        );
+      }
+      providerId = existingProv.id;
+    }
+
+    let receiverCardId =
+      typeof tData.receiver_card_id === 'string' && tData.receiver_card_id.trim()
+        ? tData.receiver_card_id.trim()
+        : null;
+    const rawRecFullName =
+      typeof tData.receiver_card_full_name === 'string'
+        ? tData.receiver_card_full_name
+        : typeof tData.receiver_full_name === 'string'
+          ? tData.receiver_full_name
+          : null;
+    const recFullName = rawRecFullName?.trim() ? formatUzbekName(rawRecFullName) : null;
+
+    let receiverBankId =
+      typeof tData.receiver_bank_id === 'string' && tData.receiver_bank_id.trim()
+        ? tData.receiver_bank_id.trim()
+        : null;
+    if (
+      !receiverBankId &&
+      typeof tData.receiver_bank_name === 'string' &&
+      tData.receiver_bank_name.trim()
+    ) {
+      const bName = formatTitleCase(tData.receiver_bank_name.trim());
+      let b = await bankRepo.findOne({ where: { name: ILike(bName) } });
+      if (!b) {
+        b = await bankRepo.save(bankRepo.create({ name: bName }));
+      }
+      receiverBankId = b.id;
+    }
+
+    if (!receiverCardId && typeof tData.receiver_card_number === 'string') {
+      const cleanedReceiver = normalizeCardNumber(tData.receiver_card_number);
+      if (cleanedReceiver && cleanedReceiver.length >= 8) {
+        let existingReceiverCard = await cardRepo.findOne({
+          where: { card_number: cleanedReceiver },
+        });
+        if (!existingReceiverCard) {
+          existingReceiverCard = await cardRepo.save(
+            cardRepo.create({
+              card_number: cleanedReceiver,
+              expire_date:
+                typeof tData.receiver_card_expire === 'string' ? tData.receiver_card_expire : null,
+              full_name: recFullName,
+              bank_id: receiverBankId,
+            }),
+          );
+        } else {
+          let dirty = false;
+          if (recFullName && !existingReceiverCard.full_name) {
+            existingReceiverCard.full_name = recFullName;
+            dirty = true;
+          }
+          if (receiverBankId && !existingReceiverCard.bank_id) {
+            existingReceiverCard.bank_id = receiverBankId;
+            dirty = true;
+          }
+          if (dirty) {
+            await cardRepo.save(existingReceiverCard);
+          }
+        }
+        receiverCardId = existingReceiverCard.id;
+      }
+    } else if (receiverCardId && (recFullName || receiverBankId)) {
+      const existingReceiverCard = await cardRepo.findOne({ where: { id: receiverCardId } });
+      if (existingReceiverCard) {
+        let dirty = false;
+        if (recFullName && !existingReceiverCard.full_name) {
+          existingReceiverCard.full_name = recFullName;
+          dirty = true;
+        }
+        if (receiverBankId && !existingReceiverCard.bank_id) {
+          existingReceiverCard.bank_id = receiverBankId;
+          dirty = true;
+        }
+        if (dirty) {
+          await cardRepo.save(existingReceiverCard);
+        }
+      }
+    }
+
+    const effectiveSenderCardId =
+      opts.senderCardId ||
+      (typeof tData.sender_card_id === 'string' && tData.sender_card_id.trim()
+        ? tData.sender_card_id.trim()
+        : null);
+
+    // Mavjud transfer bo'lsa (tahrirlash rejimida) — barcha maydonlarni bazada yangilaymiz
+    if (opts.existingTransferId) {
+      const existingTransfer = await transferRepo.findOne({
+        where: { id: opts.existingTransferId },
+      });
+      if (existingTransfer) {
+        existingTransfer.amount = parsedAmount;
+        existingTransfer.currency = currency;
+        existingTransfer.payment_provider_id = providerId;
+        existingTransfer.receiver_card_id = receiverCardId;
+        existingTransfer.sender_card_id = effectiveSenderCardId;
+        existingTransfer.transfer_date = transferDate;
+        existingTransfer.transfer_time = transferTime;
+        if (tData.transaction_id !== undefined) {
+          existingTransfer.transaction_id = transactionId;
+        }
+        if (opts.applicationId && !existingTransfer.application_id) {
+          existingTransfer.application_id = opts.applicationId;
+        }
+        await transferRepo.save(existingTransfer);
+        return existingTransfer.id;
+      }
+    }
+
+    const hasMeaningfulTransferData = Boolean(
+      parsedAmount !== null ||
+      receiverCardId ||
+      transferDate ||
+      transferTime ||
+      providerId ||
+      transactionId ||
+      effectiveSenderCardId,
+    );
+    if (!hasMeaningfulTransferData) {
+      return null;
+    }
+
+    const createdTransfer = transferRepo.create({
+      transaction_id: transactionId,
+      amount: parsedAmount,
+      currency,
+      payment_provider_id: providerId,
+      receiver_card_id: receiverCardId,
+      sender_card_id: effectiveSenderCardId,
+      application_id: opts.applicationId,
+      transfer_date: transferDate,
+      transfer_time: transferTime,
+    });
+    const savedTransfer = await transferRepo.save(createdTransfer);
+
+    const rawTransferFields = Array.isArray(tData.custom_fields)
+      ? tData.custom_fields
+      : Array.isArray(tData.transfer_custom_fields)
+        ? tData.transfer_custom_fields
+        : null;
+    if (rawTransferFields && rawTransferFields.length > 0) {
+      const tFields = rawTransferFields.map((tf: Record<string, unknown>, idx: number) =>
+        transferCustomFieldRepo.create({
+          transfer_id: savedTransfer.id,
+          label: typeof tf.label === 'string' ? tf.label : 'Qo‘shimcha ma‘lumot',
+          key: typeof tf.key === 'string' ? tf.key : `field_${idx}`,
+          type: (typeof tf.type === 'string'
+            ? tf.type
+            : opts.defaultCustomFieldType) as TransferCustomFieldType,
+          value: tf.value ?? null,
+          card_id: typeof tf.card_id === 'string' ? tf.card_id : null,
+          citizen_id: typeof tf.citizen_id === 'string' ? tf.citizen_id : null,
+          bank_id: typeof tf.bank_id === 'string' ? tf.bank_id : null,
+          payment_provider_id:
+            typeof tf.payment_provider_id === 'string' ? tf.payment_provider_id : null,
+          order: idx,
+        }),
+      );
+      await transferCustomFieldRepo.save(tFields);
+    }
+
+    return savedTransfer.id;
+  }
+
   async processCustomFields(
     fields: NonNullable<CreateApplicationDto['custom_fields']>,
     applicationId: string,
@@ -63,10 +297,7 @@ export class ApplicationsResolverService {
     const districtRepo = manager.getRepository(District);
     const neighborhoodRepo = manager.getRepository(Neighborhood);
     const cardRepo = manager.getRepository(Card);
-    const transferRepo = manager.getRepository(Transfer);
     const bankRepo = manager.getRepository(Bank);
-    const paymentProviderRepo = manager.getRepository(PaymentProvider);
-    const transferCustomFieldRepo = manager.getRepository(TransferCustomField);
 
     const entities: ApplicationCustomField[] = [];
 
@@ -168,38 +399,63 @@ export class ApplicationsResolverService {
       }
 
       // 2. Yangi yoki mavjud Karta (inline_card)
-      if (f.inline_card && !cardId) {
+      if (f.inline_card) {
         const cdData = f.inline_card as Record<string, string>;
         const cleaned = normalizeCardNumber(cdData.card_number);
-        if (cleaned) {
+        let bankId = cdData.bank_id || null;
+        if (!bankId && cdData.bank_name) {
+          const bName = formatTitleCase(cdData.bank_name.trim());
+          let existingBank = await bankRepo.findOne({ where: { name: ILike(bName) } });
+          if (!existingBank) {
+            existingBank = await bankRepo.save(
+              bankRepo.create({
+                name: bName,
+                mfo: cdData.bank_mfo || null,
+              }),
+            );
+          }
+          bankId = existingBank.id;
+        }
+        const cardFullName = cdData.full_name ? formatUzbekName(cdData.full_name) : null;
+
+        if (!cardId && cleaned) {
           const existingCard = await cardRepo.findOne({ where: { card_number: cleaned } });
           if (existingCard) {
+            let dirty = false;
+            if (cardFullName && !existingCard.full_name) {
+              existingCard.full_name = cardFullName;
+              dirty = true;
+            }
+            if (bankId && !existingCard.bank_id) {
+              existingCard.bank_id = bankId;
+              dirty = true;
+            }
+            if (dirty) await cardRepo.save(existingCard);
             cardId = existingCard.id;
           } else {
-            let bankId = cdData.bank_id || null;
-            if (!bankId && cdData.bank_name) {
-              const bName = formatTitleCase(cdData.bank_name.trim());
-              let existingBank = await bankRepo.findOne({ where: { name: ILike(bName) } });
-              if (!existingBank) {
-                existingBank = await bankRepo.save(
-                  bankRepo.create({
-                    name: bName,
-                    mfo: cdData.bank_mfo || null,
-                  }),
-                );
-              }
-              bankId = existingBank.id;
-            }
-
             const createdCard = cardRepo.create({
               card_number: cleaned,
               expire_date: cdData.expire_date || null,
-              full_name: cdData.full_name ? formatUzbekName(cdData.full_name) : null,
+              full_name: cardFullName,
               bank_id: bankId,
               citizen_id: citizenId || cdData.citizen_id || null,
             });
             const savedCard = await cardRepo.save(createdCard);
             cardId = savedCard.id;
+          }
+        } else if (cardId && (cardFullName || bankId)) {
+          const existingCard = await cardRepo.findOne({ where: { id: cardId } });
+          if (existingCard) {
+            let dirty = false;
+            if (cardFullName && !existingCard.full_name) {
+              existingCard.full_name = cardFullName;
+              dirty = true;
+            }
+            if (bankId && !existingCard.bank_id) {
+              existingCard.bank_id = bankId;
+              dirty = true;
+            }
+            if (dirty) await cardRepo.save(existingCard);
           }
         }
       }
@@ -246,117 +502,14 @@ export class ApplicationsResolverService {
         }
       }
 
-      // 5. Yangi inline Transfer kiritilgan bo'lsa
-      if (f.inline_transfer && !transferId) {
-        const tData = f.inline_transfer;
-        let providerId =
-          typeof tData.payment_provider_id === 'string' ? tData.payment_provider_id : null;
-        if (
-          !providerId &&
-          typeof tData.payment_provider_name === 'string' &&
-          tData.payment_provider_name.trim()
-        ) {
-          const provName = formatTitleCase(tData.payment_provider_name.trim());
-          let existingProv = await paymentProviderRepo.findOne({
-            where: { name: ILike(provName) },
-          });
-          if (!existingProv) {
-            existingProv = await paymentProviderRepo.save(
-              paymentProviderRepo.create({
-                name: provName,
-                code: provName.toLowerCase().replace(/\s+/g, '_'),
-              }),
-            );
-          }
-          providerId = existingProv.id;
-        }
-
-        let receiverCardId =
-          typeof tData.receiver_card_id === 'string' ? tData.receiver_card_id : null;
-        if (!receiverCardId && typeof tData.receiver_card_number === 'string') {
-          const cleanedReceiver = normalizeCardNumber(tData.receiver_card_number);
-          if (cleanedReceiver && cleanedReceiver.length >= 8) {
-            let existingReceiverCard = await cardRepo.findOne({
-              where: { card_number: cleanedReceiver },
-            });
-            let receiverBankId =
-              typeof tData.receiver_bank_id === 'string' ? tData.receiver_bank_id : null;
-            if (
-              !receiverBankId &&
-              typeof tData.receiver_bank_name === 'string' &&
-              tData.receiver_bank_name.trim()
-            ) {
-              const bName = formatTitleCase(tData.receiver_bank_name.trim());
-              let b = await bankRepo.findOne({ where: { name: ILike(bName) } });
-              if (!b) {
-                b = await bankRepo.save(bankRepo.create({ name: bName }));
-              }
-              receiverBankId = b.id;
-            }
-
-            const rawRecFullName =
-              typeof tData.receiver_card_full_name === 'string'
-                ? tData.receiver_card_full_name
-                : typeof tData.receiver_full_name === 'string'
-                  ? tData.receiver_full_name
-                  : null;
-            const recFullName = rawRecFullName ? formatUzbekName(rawRecFullName) : null;
-
-            if (!existingReceiverCard) {
-              existingReceiverCard = await cardRepo.save(
-                cardRepo.create({
-                  card_number: cleanedReceiver,
-                  full_name: recFullName,
-                  bank_id: receiverBankId,
-                }),
-              );
-            } else if (recFullName && !existingReceiverCard.full_name) {
-              existingReceiverCard.full_name = recFullName;
-              await cardRepo.save(existingReceiverCard);
-            }
-            receiverCardId = existingReceiverCard.id;
-          }
-        }
-
-        const createdTransfer = transferRepo.create({
-          transaction_id: typeof tData.transaction_id === 'string' ? tData.transaction_id : null,
-          amount: tData.amount ? Number(tData.amount) : null,
-          currency: typeof tData.currency === 'string' ? tData.currency : 'UZS',
-          payment_provider_id: providerId,
-          receiver_card_id: receiverCardId,
-          sender_card_id: cardId || null,
-          application_id: applicationId,
-          transfer_date: typeof tData.transfer_date === 'string' ? tData.transfer_date : null,
-          transfer_time: typeof tData.transfer_time === 'string' ? tData.transfer_time : null,
+      // 5. Yangi yoki mavjud inline Transfer kiritilgan/tahrirlangan bo'lsa
+      if (f.inline_transfer) {
+        transferId = await this.upsertTransferFromInlineData(manager, f.inline_transfer, {
+          existingTransferId: transferId,
+          senderCardId: cardId,
+          applicationId,
+          defaultCustomFieldType: TransferCustomFieldType.TEXT,
         });
-        const savedTransfer = await transferRepo.save(createdTransfer);
-        transferId = savedTransfer.id;
-
-        const rawTransferFields = Array.isArray(tData.custom_fields)
-          ? tData.custom_fields
-          : Array.isArray(tData.transfer_custom_fields)
-            ? tData.transfer_custom_fields
-            : null;
-        if (rawTransferFields && rawTransferFields.length > 0) {
-          const tFields = rawTransferFields.map((tf: Record<string, unknown>, idx: number) =>
-            transferCustomFieldRepo.create({
-              transfer_id: savedTransfer.id,
-              label: typeof tf.label === 'string' ? tf.label : 'Qo‘shimcha ma‘lumot',
-              key: typeof tf.key === 'string' ? tf.key : `field_${idx}`,
-              type: (typeof tf.type === 'string'
-                ? tf.type
-                : TransferCustomFieldType.TEXT) as TransferCustomFieldType,
-              value: tf.value ?? null,
-              card_id: typeof tf.card_id === 'string' ? tf.card_id : null,
-              citizen_id: typeof tf.citizen_id === 'string' ? tf.citizen_id : null,
-              bank_id: typeof tf.bank_id === 'string' ? tf.bank_id : null,
-              payment_provider_id:
-                typeof tf.payment_provider_id === 'string' ? tf.payment_provider_id : null,
-              order: idx,
-            }),
-          );
-          await transferCustomFieldRepo.save(tFields);
-        }
       }
 
       entities.push(
@@ -390,10 +543,7 @@ export class ApplicationsResolverService {
     const districtRepo = manager.getRepository(District);
     const neighborhoodRepo = manager.getRepository(Neighborhood);
     const cardRepo = manager.getRepository(Card);
-    const transferRepo = manager.getRepository(Transfer);
     const bankRepo = manager.getRepository(Bank);
-    const paymentProviderRepo = manager.getRepository(PaymentProvider);
-    const transferCustomFieldRepo = manager.getRepository(TransferCustomField);
     const statusRepo = manager.getRepository(ApplicationStatusEntity);
 
     let citizenId = dto.citizen_id || null;
@@ -436,8 +586,17 @@ export class ApplicationsResolverService {
         ) {
           crimeMethodId = existingApp.crime_method_id;
         }
-        if (!cardId && existingApp.card_id) cardId = existingApp.card_id;
-        if (!transferId && existingApp.transfer_id) transferId = existingApp.transfer_id;
+        const hasNewCardNumber = Boolean(
+          dto.card_data &&
+          typeof dto.card_data.card_number === 'string' &&
+          normalizeCardNumber(dto.card_data.card_number),
+        );
+        if (!cardId && existingApp.card_id && dto.card_id === undefined && !hasNewCardNumber) {
+          cardId = existingApp.card_id;
+        }
+        if (!transferId && existingApp.transfer_id && dto.transfer_id === undefined) {
+          transferId = existingApp.transfer_id;
+        }
         if (!sourceId && existingApp.source_id && dto.source_id === undefined) {
           sourceId = existingApp.source_id;
         }
@@ -656,29 +815,38 @@ export class ApplicationsResolverService {
     }
 
     // 4. Plastik karta (Asosiy / Jabrlanuvchi kartasi)
-    if (!cardId && dto.card_data && Object.keys(dto.card_data).length > 0) {
+    if (dto.card_data && Object.keys(dto.card_data).length > 0) {
       const data = dto.card_data as Record<string, string>;
       const cleaned = normalizeCardNumber(data.card_number);
-      if (cleaned) {
-        const cardFullName = data.full_name ? formatUzbekName(data.full_name) : null;
+      const cardFullName = data.full_name ? formatUzbekName(data.full_name) : null;
+
+      let bankId = data.bank_id || null;
+      if (!bankId && data.bank_name) {
+        const bName = formatTitleCase(data.bank_name.trim());
+        let existingBank = await bankRepo.findOne({ where: { name: ILike(bName) } });
+        if (!existingBank) {
+          existingBank = await bankRepo.save(bankRepo.create({ name: bName }));
+        }
+        bankId = existingBank.id;
+      }
+
+      if (!cardId && cleaned) {
         const existingCard = await cardRepo.findOne({ where: { card_number: cleaned } });
         if (existingCard) {
+          let dirty = false;
           if (cardFullName && !existingCard.full_name) {
             existingCard.full_name = cardFullName;
+            dirty = true;
+          }
+          if (bankId && !existingCard.bank_id) {
+            existingCard.bank_id = bankId;
+            dirty = true;
+          }
+          if (dirty) {
             await cardRepo.save(existingCard);
           }
           cardId = existingCard.id;
         } else {
-          let bankId = data.bank_id || null;
-          if (!bankId && data.bank_name) {
-            const bName = formatTitleCase(data.bank_name.trim());
-            let existingBank = await bankRepo.findOne({ where: { name: ILike(bName) } });
-            if (!existingBank) {
-              existingBank = await bankRepo.save(bankRepo.create({ name: bName }));
-            }
-            bankId = existingBank.id;
-          }
-
           const newCard = cardRepo.create({
             card_number: cleaned,
             expire_date: data.expire_date || null,
@@ -689,126 +857,41 @@ export class ApplicationsResolverService {
           const saved = await cardRepo.save(newCard);
           cardId = saved.id;
         }
+      } else if (cardId && (cardFullName || bankId)) {
+        const existingCard = await cardRepo.findOne({ where: { id: cardId } });
+        if (existingCard) {
+          let dirty = false;
+          if (cardFullName && !existingCard.full_name) {
+            existingCard.full_name = cardFullName;
+            dirty = true;
+          }
+          if (bankId && !existingCard.bank_id) {
+            existingCard.bank_id = bankId;
+            dirty = true;
+          }
+          if (dirty) {
+            await cardRepo.save(existingCard);
+          }
+        }
       }
     }
 
-    // 5. To'lov o'tkazmasi (Transfer)
-    if (!transferId && dto.transfer_data && Object.keys(dto.transfer_data).length > 0) {
-      const data = dto.transfer_data;
-      if (data.amount || data.receiver_card_number || data.transfer_date) {
-        let providerId =
-          typeof data.payment_provider_id === 'string' ? data.payment_provider_id : null;
-        if (
-          !providerId &&
-          typeof data.payment_provider_name === 'string' &&
-          data.payment_provider_name.trim()
-        ) {
-          const provName = formatTitleCase(data.payment_provider_name.trim());
-          let existingProv = await paymentProviderRepo.findOne({
-            where: { name: ILike(provName) },
-          });
-          if (!existingProv) {
-            existingProv = await paymentProviderRepo.save(
-              paymentProviderRepo.create({
-                name: provName,
-                code: provName.toLowerCase().replace(/\s+/g, '_'),
-              }),
-            );
-          }
-          providerId = existingProv.id;
-        }
-
-        let receiverCardId =
-          typeof data.receiver_card_id === 'string' ? data.receiver_card_id : null;
-        if (!receiverCardId && typeof data.receiver_card_number === 'string') {
-          const cleanedReceiver = normalizeCardNumber(data.receiver_card_number);
-          if (cleanedReceiver && cleanedReceiver.length >= 8) {
-            let existingReceiverCard = await cardRepo.findOne({
-              where: { card_number: cleanedReceiver },
-            });
-            let receiverBankId =
-              typeof data.receiver_bank_id === 'string' ? data.receiver_bank_id : null;
-            if (
-              !receiverBankId &&
-              typeof data.receiver_bank_name === 'string' &&
-              data.receiver_bank_name.trim()
-            ) {
-              const bName = formatTitleCase(data.receiver_bank_name.trim());
-              let b = await bankRepo.findOne({ where: { name: ILike(bName) } });
-              if (!b) {
-                b = await bankRepo.save(bankRepo.create({ name: bName }));
-              }
-              receiverBankId = b.id;
-            }
-
-            const rawRecFullName =
-              typeof data.receiver_card_full_name === 'string'
-                ? data.receiver_card_full_name
-                : typeof data.receiver_full_name === 'string'
-                  ? data.receiver_full_name
-                  : null;
-            const recFullName = rawRecFullName ? formatUzbekName(rawRecFullName) : null;
-
-            if (!existingReceiverCard) {
-              existingReceiverCard = await cardRepo.save(
-                cardRepo.create({
-                  card_number: cleanedReceiver,
-                  expire_date:
-                    typeof data.receiver_card_expire === 'string'
-                      ? data.receiver_card_expire
-                      : null,
-                  full_name: recFullName,
-                  bank_id: receiverBankId,
-                }),
-              );
-            } else if (recFullName && !existingReceiverCard.full_name) {
-              existingReceiverCard.full_name = recFullName;
-              await cardRepo.save(existingReceiverCard);
-            }
-            receiverCardId = existingReceiverCard.id;
-          }
-        }
-
-        const newTransfer = transferRepo.create({
-          transaction_id: typeof data.transaction_id === 'string' ? data.transaction_id : null,
-          amount: data.amount ? Number(data.amount) : null,
-          currency: typeof data.currency === 'string' ? data.currency : 'UZS',
-          payment_provider_id: providerId,
-          receiver_card_id: receiverCardId,
-          sender_card_id:
-            cardId || (typeof data.sender_card_id === 'string' ? data.sender_card_id : null),
-          application_id: applicationId || null,
-          transfer_date: typeof data.transfer_date === 'string' ? data.transfer_date : null,
-          transfer_time: typeof data.transfer_time === 'string' ? data.transfer_time : null,
-        });
-        const savedTransfer = await transferRepo.save(newTransfer);
-        transferId = savedTransfer.id;
-
-        const rawTransferFields = Array.isArray(data.custom_fields)
-          ? data.custom_fields
-          : Array.isArray(data.transfer_custom_fields)
-            ? data.transfer_custom_fields
-            : null;
-        if (rawTransferFields && rawTransferFields.length > 0) {
-          const tFields = rawTransferFields.map((tf: Record<string, unknown>, idx: number) =>
-            transferCustomFieldRepo.create({
-              transfer_id: savedTransfer.id,
-              label: typeof tf.label === 'string' ? tf.label : 'Qo‘shimcha ma‘lumot',
-              key: typeof tf.key === 'string' ? tf.key : `field_${idx}`,
-              type: (typeof tf.type === 'string'
-                ? tf.type
-                : TransferCustomFieldType.STRING) as TransferCustomFieldType,
-              value: tf.value ?? null,
-              card_id: typeof tf.card_id === 'string' ? tf.card_id : null,
-              citizen_id: typeof tf.citizen_id === 'string' ? tf.citizen_id : null,
-              bank_id: typeof tf.bank_id === 'string' ? tf.bank_id : null,
-              payment_provider_id:
-                typeof tf.payment_provider_id === 'string' ? tf.payment_provider_id : null,
-              order: idx,
-            }),
-          );
-          await transferCustomFieldRepo.save(tFields);
-        }
+    // 5. To'lov o'tkazmasi (Transfer) — yaratish va tahrirlashda ham to'liq yangilanadi
+    if (dto.transfer_data && Object.keys(dto.transfer_data).length > 0) {
+      transferId = await this.upsertTransferFromInlineData(manager, dto.transfer_data, {
+        existingTransferId: transferId,
+        senderCardId: cardId,
+        applicationId: applicationId || null,
+        defaultCustomFieldType: TransferCustomFieldType.STRING,
+      });
+    } else if (transferId && cardId) {
+      const transferRepo = manager.getRepository(Transfer);
+      const existingTransfer = await transferRepo.findOne({
+        where: { id: transferId },
+        select: { id: true, sender_card_id: true },
+      });
+      if (existingTransfer && existingTransfer.sender_card_id !== cardId) {
+        await transferRepo.update(transferId, { sender_card_id: cardId });
       }
     }
 

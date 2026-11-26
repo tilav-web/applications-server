@@ -1271,6 +1271,10 @@ export class ApplicationsService {
       );
     }
 
+    if (application.custom_fields && application.custom_fields.length > 1) {
+      application.custom_fields.sort((a, b) => (a.order ?? 0) - (b.order ?? 0));
+    }
+
     await this.attachChainCounts([application]);
     return application;
   }
@@ -1613,7 +1617,12 @@ export class ApplicationsService {
         delete (application as unknown as Record<string, unknown>).parent_application;
         delete (application as unknown as Record<string, unknown>).root_application;
         delete (application as unknown as Record<string, unknown>).awareness_status;
+        delete (application as unknown as Record<string, unknown>).custom_fields;
+        delete (application as unknown as Record<string, unknown>).damages;
+        delete (application as unknown as Record<string, unknown>).external_systems;
+        delete (application as unknown as Record<string, unknown>).documents;
 
+        const oldPrimaryTransferId = application.transfer_id;
         const prevRepeatType = application.repeat_type;
         const prevParentId = application.parent_application_id;
 
@@ -1710,14 +1719,52 @@ export class ApplicationsService {
         }
 
         if (custom_fields !== undefined) {
+          const prevFields = await txCustomFieldRepo.find({
+            where: { application_id: id },
+            select: { id: true, transfer_id: true },
+          });
+          const prevTransferIds = new Set<string>(
+            prevFields.map((pf) => pf.transfer_id).filter((tid): tid is string => Boolean(tid)),
+          );
+          if (oldPrimaryTransferId && oldPrimaryTransferId !== application.transfer_id) {
+            prevTransferIds.add(oldPrimaryTransferId);
+          }
+
           await txCustomFieldRepo.delete({ application_id: id });
+          const keptTransferIds = new Set<string>();
+          if (application.transfer_id) {
+            keptTransferIds.add(application.transfer_id);
+          }
+
           if (custom_fields.length > 0) {
             const fieldEntities = await this.resolverService.processCustomFields(
               custom_fields,
               id,
               manager,
             );
+            for (const fe of fieldEntities) {
+              if (fe.transfer_id) keptTransferIds.add(fe.transfer_id);
+            }
             await txCustomFieldRepo.save(fieldEntities);
+          }
+
+          // O'chirilgan qo'shimcha o'tkazmalarning bazada yetim qolishini oldini olamiz
+          const removedTransferIds = Array.from(prevTransferIds).filter(
+            (tid) => !keptTransferIds.has(tid),
+          );
+          if (removedTransferIds.length > 0) {
+            const txTransferRepo = manager.getRepository(Transfer);
+            for (const orphanTid of removedTransferIds) {
+              const otherAppRef = await txAppRepo.count({
+                where: { transfer_id: orphanTid },
+              });
+              const otherFieldRef = await txCustomFieldRepo.count({
+                where: { transfer_id: orphanTid },
+              });
+              if (otherAppRef === 0 && otherFieldRef === 0) {
+                await txTransferRepo.delete({ id: orphanTid, application_id: id });
+              }
+            }
           }
         }
 
