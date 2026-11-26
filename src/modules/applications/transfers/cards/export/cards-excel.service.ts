@@ -56,11 +56,7 @@ export class CardsExcelService {
 
     cards.forEach((card, index) => {
       const citizen = card.citizen;
-      const ownerName =
-        card.full_name ||
-        (citizen
-          ? [citizen.last_name, citizen.first_name, citizen.middle_name].filter(Boolean).join(' ')
-          : '—');
+      const ownerName = card.full_name || citizen?.full_name?.trim() || '—';
 
       const ownerPhone = citizen?.phone_number || '—';
       const ownerDoc = citizen?.passport

@@ -111,10 +111,7 @@ export class CardsService {
     }
     if (filters?.ownerName?.trim()) {
       const ownerQ = `%${filters.ownerName.trim()}%`;
-      qb.andWhere(
-        "(card.full_name ILIKE :ownerQ OR CONCAT_WS(' ', citizen.last_name, citizen.first_name, citizen.middle_name) ILIKE :ownerQ)",
-        { ownerQ },
-      );
+      qb.andWhere('(card.full_name ILIKE :ownerQ OR citizen.full_name ILIKE :ownerQ)', { ownerQ });
     }
     if (filters?.phoneNumber?.trim()) {
       const cleanedPhone = filters.phoneNumber.replace(/\D/g, '') || filters.phoneNumber.trim();
@@ -138,12 +135,12 @@ export class CardsService {
       const digits = search.replace(/\D/g, '');
       if (digits.length >= 3) {
         qb.andWhere(
-          "(card.card_number ILIKE :q OR card.masked_number ILIKE :q OR card.full_name ILIKE :q OR card.card_number ILIKE :digitsQ OR CONCAT_WS(' ', citizen.last_name, citizen.first_name, citizen.middle_name) ILIKE :q)",
+          '(card.card_number ILIKE :q OR card.masked_number ILIKE :q OR card.full_name ILIKE :q OR card.card_number ILIKE :digitsQ OR citizen.full_name ILIKE :q)',
           { q, digitsQ: `%${digits}%` },
         );
       } else {
         qb.andWhere(
-          "(card.card_number ILIKE :q OR card.masked_number ILIKE :q OR card.full_name ILIKE :q OR CONCAT_WS(' ', citizen.last_name, citizen.first_name, citizen.middle_name) ILIKE :q)",
+          '(card.card_number ILIKE :q OR card.masked_number ILIKE :q OR card.full_name ILIKE :q OR citizen.full_name ILIKE :q)',
           { q },
         );
       }

@@ -4,6 +4,60 @@
  */
 
 /**
+ * Fuqaro F.I.SH. ni yagona toza formatga keltirish.
+ * `full_name` berilgan bo'lsa uni ishlatadi; aks holda eski formatdagi
+ * `last_name`, `first_name`, `middle_name` bo'laklarini birlashtirib beradi.
+ */
+export function normalizeCitizenFullName(
+  input?:
+    | string
+    | {
+        full_name?: string | null;
+        last_name?: string | null;
+        first_name?: string | null;
+        middle_name?: string | null;
+      }
+    | null,
+): string | null {
+  if (!input) return null;
+  const raw =
+    typeof input === 'string'
+      ? input
+      : input.full_name?.trim() ||
+        [input.last_name, input.first_name, input.middle_name]
+          .map((p) => (p || '').trim())
+          .filter(Boolean)
+          .join(' ');
+  const cleaned = raw.replace(/\s+/g, ' ').trim();
+  return cleaned.length > 0 ? cleaned.slice(0, 255) : null;
+}
+
+/**
+ * Yagona `full_name` satridan familiya, ism va otasining ismini ajratib olish
+ * (faqat Word shablonlar va orqaga moslik uchun).
+ */
+export function splitFullNameParts(fullName?: string | null): {
+  last_name: string;
+  first_name: string;
+  middle_name: string;
+} {
+  const cleaned = (fullName || '').replace(/\s+/g, ' ').trim();
+  if (!cleaned) return { last_name: '', first_name: '', middle_name: '' };
+  const parts = cleaned.split(' ');
+  if (parts.length === 1) {
+    return { last_name: parts[0], first_name: '', middle_name: '' };
+  }
+  if (parts.length === 2) {
+    return { last_name: parts[0], first_name: parts[1], middle_name: '' };
+  }
+  return {
+    last_name: parts[0],
+    first_name: parts[1],
+    middle_name: parts.slice(2).join(' '),
+  };
+}
+
+/**
  * Pasport seriya va raqami: bo'shliqlar va chiziqchalarsiz, KATTA harflarda (masalan: "AB1234567").
  */
 export function normalizePassport(value?: string | null): string | null {

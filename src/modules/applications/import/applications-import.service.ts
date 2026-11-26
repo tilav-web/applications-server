@@ -2876,19 +2876,17 @@ export class ApplicationsImportService {
       existing = await citizenRepo.findOne({ where: { phone_number: row.citizenPhone } });
     }
 
+    const rowFullName =
+      [row.citizenLastName, row.citizenFirstName, row.citizenMiddleName]
+        .filter((p): p is string => Boolean(p && p.trim()))
+        .join(' ')
+        .trim() || null;
+
     if (existing) {
       // Mavjud tasdiqlangan ma'lumotlarni buzmasdan faqat bo'sh maydonlarni to'ldiramiz
       let changed = false;
-      if (row.citizenFirstName && !existing.first_name) {
-        existing.first_name = row.citizenFirstName;
-        changed = true;
-      }
-      if (row.citizenLastName && !existing.last_name) {
-        existing.last_name = row.citizenLastName;
-        changed = true;
-      }
-      if (row.citizenMiddleName && !existing.middle_name) {
-        existing.middle_name = row.citizenMiddleName;
+      if (rowFullName && !existing.full_name) {
+        existing.full_name = rowFullName;
         changed = true;
       }
       if (row.citizenPassport && !existing.passport) {
@@ -2943,9 +2941,7 @@ export class ApplicationsImportService {
     }
 
     const created = citizenRepo.create({
-      first_name: row.citizenFirstName,
-      last_name: row.citizenLastName,
-      middle_name: row.citizenMiddleName,
+      full_name: rowFullName,
       passport: row.citizenPassport,
       pinfl: row.citizenPinfl,
       phone_number: row.citizenPhone,
@@ -3131,12 +3127,7 @@ export class ApplicationsImportService {
           // 2. Asosiy jabrlanuvchi kartasi (deduplikatsiya bilan)
           let primaryVictimCardId: string | null = null;
           if (row.victimCardNumber) {
-            const fullName =
-              row.victimCardFullName ||
-              [citizen.last_name, citizen.first_name, citizen.middle_name]
-                .filter(Boolean)
-                .join(' ') ||
-              null;
+            const fullName = row.victimCardFullName || citizen.full_name?.trim() || null;
             const victimCard = await this.upsertCardInTx(manager, {
               cardNumber: row.victimCardNumber,
               bankId: row.victimBankId,
@@ -3394,10 +3385,7 @@ export class ApplicationsImportService {
           return {
             id: savedApp.id,
             application_number: savedApp.application_number,
-            citizen_name:
-              [citizen.last_name, citizen.first_name, citizen.middle_name]
-                .filter(Boolean)
-                .join(' ') || null,
+            citizen_name: citizen.full_name?.trim() || null,
           };
         });
 

@@ -830,12 +830,12 @@ export class DocumentsService {
     const fraudCard = application.transfer?.receiver_card;
 
     // F.I.Sh.
-    const citizenFullNameRaw = citizen
-      ? [citizen.last_name, citizen.first_name, citizen.middle_name].filter(Boolean).join(' ')
-      : '';
-    const citizenShortNameRaw = citizen?.last_name
-      ? `${citizen.first_name ? citizen.first_name[0] + '.' : ''}${citizen.last_name}`
-      : citizenFullNameRaw;
+    const citizenFullNameRaw = citizen?.full_name?.trim() || '';
+    const citizenNameParts = citizenFullNameRaw ? citizenFullNameRaw.split(/\s+/) : [];
+    const citizenShortNameRaw =
+      citizenNameParts.length >= 2
+        ? `${citizenNameParts[1][0]}.${citizenNameParts[0]}`
+        : citizenFullNameRaw;
 
     // Manzil
     const addressParts: string[] = [];

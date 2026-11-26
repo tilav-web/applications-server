@@ -53,24 +53,11 @@ export class TransfersExcelService {
       const receiverCard = t.receiver_card;
 
       const senderCitizen = senderCard?.citizen || t.application?.citizen;
-      const senderName =
-        senderCard?.full_name ||
-        (senderCitizen
-          ? [senderCitizen.last_name, senderCitizen.first_name, senderCitizen.middle_name]
-              .filter(Boolean)
-              .join(' ')
-          : '—');
+      const senderName = senderCard?.full_name || senderCitizen?.full_name?.trim() || '—';
 
       const receiverCitizen = receiverCard?.citizen;
       const receiverName =
-        receiverCard?.full_name ||
-        (receiverCitizen
-          ? [receiverCitizen.last_name, receiverCitizen.first_name, receiverCitizen.middle_name]
-              .filter(Boolean)
-              .join(' ')
-          : '') ||
-        t.destination_label ||
-        '—';
+        receiverCard?.full_name || receiverCitizen?.full_name?.trim() || t.destination_label || '—';
 
       const receiverAccount =
         receiverCard?.card_number ||

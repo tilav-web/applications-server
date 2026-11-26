@@ -582,9 +582,7 @@ export class TemplatesManagementService implements OnApplicationBootstrap {
           'Namunaviy sinov arizasi matni. Telegram messenjeri orqali firibgarlik holati.',
         date: new Date(),
         citizen: {
-          first_name: 'Sanjar',
-          last_name: 'Ergashev',
-          middle_name: 'To‘g‘aymurodovich',
+          full_name: 'Ergashev Sanjar To‘g‘aymurodovich',
           passport: 'AA 1234567',
           pinfl: '30906781230012',
           phone_number: '+998901234567',

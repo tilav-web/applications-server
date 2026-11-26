@@ -11,6 +11,7 @@ import {
 
 import { BaseEntity } from '../../../common/database/base.entity';
 import {
+  normalizeCitizenFullName,
   normalizePassport,
   normalizePinfl,
   normalizeUzPhone,
@@ -34,33 +35,18 @@ import { Workplace } from '../workplaces/workplace.entity';
   unique: true,
   where: '"pinfl" IS NOT NULL AND "pinfl" <> \'\'',
 })
+@Index('IDX_citizens_full_name', ['full_name'])
 @Index('IDX_citizens_phone_number', ['phone_number'])
 @Index('IDX_citizens_district_id', ['district_id'])
 @Index('IDX_citizens_neighborhood_id', ['neighborhood_id'])
 export class Citizen extends BaseEntity {
   @Column({
-    name: 'first_name',
+    name: 'full_name',
     type: 'varchar',
-    length: 100,
+    length: 255,
     nullable: true,
   })
-  first_name: string | null;
-
-  @Column({
-    name: 'last_name',
-    type: 'varchar',
-    length: 100,
-    nullable: true,
-  })
-  last_name: string | null;
-
-  @Column({
-    name: 'middle_name',
-    type: 'varchar',
-    length: 100,
-    nullable: true,
-  })
-  middle_name: string | null;
+  full_name: string | null;
 
   @Column({
     name: 'passport',
@@ -193,6 +179,7 @@ export class Citizen extends BaseEntity {
   @BeforeInsert()
   @BeforeUpdate()
   normalizeFields(): void {
+    this.full_name = normalizeCitizenFullName(this.full_name);
     this.phone_number = normalizeUzPhone(this.phone_number);
     this.passport = normalizePassport(this.passport);
     this.pinfl = normalizePinfl(this.pinfl);

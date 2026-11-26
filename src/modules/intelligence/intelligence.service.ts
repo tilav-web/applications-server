@@ -161,10 +161,7 @@ export class IntelligenceService {
 
   private formatCitizenFullName(cit?: Citizen | null): string {
     if (!cit) return 'Nomaʼlum shaxs';
-    return (
-      [cit.last_name, cit.first_name, cit.middle_name].filter(Boolean).join(' ').trim() ||
-      'Ism kiritilmagan'
-    );
+    return cit.full_name?.trim() || 'Ism kiritilmagan';
   }
 
   // ===========================================================================
@@ -226,10 +223,7 @@ export class IntelligenceService {
       .leftJoinAndSelect('c.cards', 'cards')
       .where(
         `(
-          c.first_name ILIKE :ilikeQ
-          OR c.last_name ILIKE :ilikeQ
-          OR c.middle_name ILIKE :ilikeQ
-          OR CONCAT(COALESCE(c.last_name,''), ' ', COALESCE(c.first_name,''), ' ', COALESCE(c.middle_name,'')) ILIKE :ilikeQ
+          c.full_name ILIKE :ilikeQ
           OR c.passport ILIKE :ilikeQ
           OR c.pinfl ILIKE :ilikeQ
           OR c.address ILIKE :ilikeQ
@@ -1670,15 +1664,21 @@ export class IntelligenceService {
 
     // Tier 3: Ehtimoliy mosliklar (Karta full_name === Fuqaro F.I.O, lekin citizen_id biriktirilmagan!)
     const probableMatches: ProbableMatchItem[] = [];
-    if (citizen.first_name && citizen.last_name) {
-      const fNorm = this.normalizePersonName(citizen.first_name);
-      const lNorm = this.normalizePersonName(citizen.last_name);
+    const nameTokens = (citizen.full_name || '')
+      .trim()
+      .split(/\s+/)
+      .filter((w) => w.length >= 2);
+    if (nameTokens.length >= 2) {
+      const t0Raw = nameTokens[0];
+      const t1Raw = nameTokens[1];
+      const fNorm = this.normalizePersonName(t1Raw);
+      const lNorm = this.normalizePersonName(t0Raw);
 
       if (fNorm.length >= 2 && lNorm.length >= 2) {
         const unlinkedCards = await this.cardRepo.find({
           where: [
-            { citizen_id: IsNull(), full_name: ILike(`%${citizen.last_name.trim()}%`) },
-            { citizen_id: IsNull(), full_name: ILike(`%${citizen.first_name.trim()}%`) },
+            { citizen_id: IsNull(), full_name: ILike(`%${t0Raw}%`) },
+            { citizen_id: IsNull(), full_name: ILike(`%${t1Raw}%`) },
           ],
           relations: { bank: true },
           take: 30,
@@ -2132,14 +2132,15 @@ export class IntelligenceService {
         .split(/\s+/)
         .filter((w) => w.length >= 3);
       if (parts.length >= 2) {
-        const candidateCitizens = await this.citizenRepo.find({
-          where: [
-            { last_name: ILike(`%${parts[0]}%`), first_name: ILike(`%${parts[1]}%`) },
-            { first_name: ILike(`%${parts[0]}%`), last_name: ILike(`%${parts[1]}%`) },
-          ],
-          relations: { district: true },
-          take: 10,
-        });
+        const candidateCitizens = await this.citizenRepo
+          .createQueryBuilder('c')
+          .leftJoinAndSelect('c.district', 'district')
+          .where('c.full_name ILIKE :p0 AND c.full_name ILIKE :p1', {
+            p0: `%${parts[0]}%`,
+            p1: `%${parts[1]}%`,
+          })
+          .take(10)
+          .getMany();
 
         for (const cand of candidateCitizens) {
           probableMatches.push({

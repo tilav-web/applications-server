@@ -9,6 +9,7 @@ import {
   SubmissionForm,
 } from '../../../../common/enums/appeal-classification.enum';
 import { formatTitleCase, formatUzbekName } from '../../../../common/utils/name-formatter.util';
+import { splitFullNameParts } from '../../../../common/utils/normalization.util';
 import { Application } from '../../application.entity';
 import { Transfer } from '../../transfers/transfer.entity';
 import {
@@ -89,12 +90,12 @@ export function buildTemplateContext(
   };
 
   // 2. Citizen data
-  const cFirst = formatUzbekName(citizen?.first_name);
-  const cLast = formatUzbekName(citizen?.last_name);
-  const cMiddle = formatUzbekName(citizen?.middle_name);
-  const cFullName =
-    [cLast, cFirst, cMiddle].filter(Boolean).join(' ') ||
-    (citizen?.passport ? `Fuqaro (${citizen.passport})` : 'Fuqaro');
+  const cFullNameRaw = formatUzbekName(citizen?.full_name);
+  const cParts = splitFullNameParts(cFullNameRaw);
+  const cFirst = cParts.first_name;
+  const cLast = cParts.last_name;
+  const cMiddle = cParts.middle_name;
+  const cFullName = cFullNameRaw || (citizen?.passport ? `Fuqaro (${citizen.passport})` : 'Fuqaro');
   const cShortName = cLast ? `${cFirst ? cFirst[0] + '.' : ''}${cLast}` : cFullName;
 
   const citizenDistrictName = citizen?.district?.name || district?.name || '';
@@ -300,10 +301,13 @@ export function buildTemplateContext(
     for (const cf of application.custom_fields) {
       if (!cf.key) continue;
       if (cf.citizen) {
+        const cfFull = formatUzbekName(cf.citizen.full_name);
+        const cfParts = splitFullNameParts(cfFull);
         customFieldsContext[cf.key] = {
-          first_name: adapt(cf.citizen.first_name),
-          last_name: adapt(cf.citizen.last_name),
-          middle_name: adapt(cf.citizen.middle_name),
+          full_name: adapt(cfFull),
+          first_name: adapt(cfParts.first_name),
+          last_name: adapt(cfParts.last_name),
+          middle_name: adapt(cfParts.middle_name),
           phone_number: cf.citizen.phone_number || '',
           passport: cf.citizen.passport || '',
           pinfl: cf.citizen.pinfl || '',

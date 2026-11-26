@@ -49,9 +49,7 @@ interface TransferItem {
     full_name?: string | null;
     bank?: { name?: string | null } | null;
     citizen?: {
-      first_name?: string | null;
-      last_name?: string | null;
-      middle_name?: string | null;
+      full_name?: string | null;
     } | null;
   } | null;
   receiver_bank_name?: string | null;
@@ -194,9 +192,7 @@ export class ApplicationsExcelService {
     applications.forEach((app, index) => {
       const rowNum = index + 2;
       const citizen = app.citizen;
-      const citizenName = citizen
-        ? [citizen.last_name, citizen.first_name, citizen.middle_name].filter(Boolean).join(' ')
-        : '—';
+      const citizenName = citizen?.full_name?.trim() || '—';
 
       const dateStr = app.date
         ? new Date(app.date).toISOString().slice(0, 10)
@@ -400,11 +396,7 @@ export class ApplicationsExcelService {
 
     let transferIndex = 0;
     for (const app of applications) {
-      const citizenName = app.citizen
-        ? [app.citizen.last_name, app.citizen.first_name, app.citizen.middle_name]
-            .filter(Boolean)
-            .join(' ')
-        : '—';
+      const citizenName = app.citizen?.full_name?.trim() || '—';
 
       const transfers = this.extractAllTransfers(app, extraTransfersMap);
       const appNumber = app.application_number || `AR-${app.id.slice(0, 8)}`;
@@ -423,15 +415,7 @@ export class ApplicationsExcelService {
         const receiverBank = t.receiver_card?.bank?.name || t.receiver_bank_name || '—';
         const receiverName =
           t.receiver_card?.full_name ||
-          (t.receiver_card?.citizen
-            ? [
-                t.receiver_card.citizen.last_name,
-                t.receiver_card.citizen.first_name,
-                t.receiver_card.citizen.middle_name,
-              ]
-                .filter(Boolean)
-                .join(' ')
-            : '') ||
+          t.receiver_card?.citizen?.full_name?.trim() ||
           t.receiver_name ||
           t.destination_label ||
           '—';

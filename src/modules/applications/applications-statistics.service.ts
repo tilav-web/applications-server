@@ -129,9 +129,7 @@ export class ApplicationsStatisticsService {
       sla_days: a.sla_days,
       extended_until: a.extended_until,
       district_name: a.district?.name || null,
-      citizen_name: a.citizen
-        ? `${a.citizen.last_name || ''} ${a.citizen.first_name || ''}`.trim()
-        : null,
+      citizen_name: a.citizen?.full_name?.trim() || null,
       status_name: a.application_status?.name || a.status,
       status_color: a.application_status?.color || 'blue',
       hours_remaining: Math.round((new Date(a.deadline_at!).getTime() - nowMs) / (60 * 60 * 1000)),
@@ -846,9 +844,7 @@ export class ApplicationsStatisticsService {
         status: a.status,
         date: a.date ? a.date.toISOString() : null,
         created_at: a.created_at.toISOString(),
-        citizen_name: a.citizen
-          ? `${a.citizen.last_name || ''} ${a.citizen.first_name || ''}`.trim()
-          : null,
+        citizen_name: a.citizen?.full_name?.trim() || null,
         district_name: a.district?.name || null,
         crime_article: a.crime?.article || null,
         appeal_type: a.appeal_type || AppealType.APPEAL,

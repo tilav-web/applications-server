@@ -319,11 +319,7 @@ export class FinancialFlowService {
 
       if (!nodeMap.has(cleanNum)) {
         const bankName = cardObj?.bank?.name || this.identifyBank(cleanNum);
-        const ownerName =
-          cardObj?.full_name ||
-          (cardObj?.citizen
-            ? `${cardObj.citizen.last_name || ''} ${cardObj.citizen.first_name || ''}`.trim()
-            : undefined);
+        const ownerName = cardObj?.full_name || cardObj?.citizen?.full_name?.trim() || undefined;
 
         nodeMap.set(cleanNum, {
           id: cardObj?.id || cleanNum,
@@ -512,9 +508,7 @@ export class FinancialFlowService {
           ? rawDate
           : rawDate.toISOString()
         : null;
-      const citizenName = app.citizen
-        ? `${app.citizen.last_name || ''} ${app.citizen.first_name || ''}`.trim()
-        : 'Noma‘lum fuqaro';
+      const citizenName = app.citizen?.full_name?.trim() || 'Noma‘lum fuqaro';
       const citizenPhone = app.citizen?.phone_number || null;
       const statusLabel = app.application_status?.name || app.status || 'YANGI';
       const statusColor = app.application_status?.color || '#3b82f6';
@@ -592,9 +586,7 @@ export class FinancialFlowService {
           if (!nodeMap.has(citKey)) {
             nodeMap.set(citKey, {
               id: citKey,
-              cardNumber:
-                `${app.citizen.last_name || ''} ${app.citizen.first_name || ''}`.trim() ||
-                'Arizachi',
+              cardNumber: app.citizen.full_name?.trim() || 'Arizachi',
               maskedCard: citizenName,
               bankName: `Ariza № ${appNumber}`,
               totalIn: 0,
@@ -881,9 +873,7 @@ export class FinancialFlowService {
         status_label: app.application_status?.name || app.status || 'YANGI',
         status_color: app.application_status?.color || '#3b82f6',
         date: rawDate ? (typeof rawDate === 'string' ? rawDate : rawDate.toISOString()) : null,
-        citizen_name: app.citizen
-          ? `${app.citizen.last_name || ''} ${app.citizen.first_name || ''}`.trim()
-          : 'Noma‘lum fuqaro',
+        citizen_name: app.citizen?.full_name?.trim() || 'Noma‘lum fuqaro',
         citizen_phone: app.citizen?.phone_number || null,
         role_in_that_app: roleInApp,
         transfer_amount: app.transfer?.amount ? Number(app.transfer.amount) : null,
@@ -903,11 +893,7 @@ export class FinancialFlowService {
       riskScore = Math.min(85, 40 + (inDegree + outDegree) * 5);
     }
 
-    const ownerName =
-      card.full_name ||
-      (card.citizen
-        ? `${card.citizen.last_name || ''} ${card.citizen.first_name || ''}`.trim()
-        : undefined);
+    const ownerName = card.full_name || card.citizen?.full_name?.trim() || undefined;
 
     const node: IGraphNode = {
       id: card.id,

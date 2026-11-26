@@ -1124,11 +1124,7 @@ export class DetectedCrimesService {
     for (const item of items) {
       for (const s of item.suspects || []) {
         sIdx++;
-        const fullName = s.citizen
-          ? [s.citizen.last_name, s.citizen.first_name, s.citizen.middle_name]
-              .filter(Boolean)
-              .join(' ')
-          : '—';
+        const fullName = s.citizen?.full_name?.trim() || '—';
         const regionStr =
           [s.citizen?.district?.name, s.citizen?.neighborhood?.name].filter(Boolean).join(', ') ||
           '—';

@@ -629,7 +629,7 @@ export class ApplicationsService {
     if (search && search.trim()) {
       const q = `%${search.trim()}%`;
       qb.andWhere(
-        '(app.application_number ILIKE :q OR app.description ILIKE :q OR app.officer_notes ILIKE :q OR citizen.first_name ILIKE :q OR citizen.last_name ILIKE :q OR citizen.middle_name ILIKE :q OR citizen.phone_number ILIKE :q OR citizen.passport ILIKE :q)',
+        '(app.application_number ILIKE :q OR app.description ILIKE :q OR app.officer_notes ILIKE :q OR citizen.full_name ILIKE :q OR citizen.phone_number ILIKE :q OR citizen.passport ILIKE :q)',
         { q },
       );
     }
@@ -700,10 +700,7 @@ export class ApplicationsService {
 
     if (citizen_name && citizen_name.trim()) {
       const cName = `%${citizen_name.trim()}%`;
-      qb.andWhere(
-        "(citizen.first_name ILIKE :cName OR citizen.last_name ILIKE :cName OR citizen.middle_name ILIKE :cName OR CONCAT_WS(' ', citizen.last_name, citizen.first_name, citizen.middle_name) ILIKE :cName)",
-        { cName },
-      );
+      qb.andWhere('citizen.full_name ILIKE :cName', { cName });
     }
 
     if (card_number && card_number.trim()) {
@@ -1319,11 +1316,7 @@ export class ApplicationsService {
         source_name: a.source?.name || null,
         decision_type_name: a.decision_type?.name || null,
         decision_date: a.decision_date,
-        citizen_name: a.citizen
-          ? [a.citizen.last_name, a.citizen.first_name, a.citizen.middle_name]
-              .filter(Boolean)
-              .join(' ')
-          : null,
+        citizen_name: a.citizen?.full_name?.trim() || null,
         transfer_amount: a.transfer?.amount ? Number(a.transfer.amount) : 0,
         transfer_currency: a.transfer?.currency || 'UZS',
       })),

@@ -49,9 +49,7 @@ export class CitizensExcelService {
     applyExcelAutoFilter(ws, 1);
 
     citizens.forEach((citizen, index) => {
-      const fullName =
-        [citizen.last_name, citizen.first_name, citizen.middle_name].filter(Boolean).join(' ') ||
-        '—';
+      const fullName = citizen.full_name?.trim() || '—';
 
       const genderStr =
         citizen.gender === 'female' ? 'Ayol' : citizen.gender === 'male' ? 'Erkak' : '—';

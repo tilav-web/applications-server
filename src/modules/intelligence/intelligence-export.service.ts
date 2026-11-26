@@ -58,14 +58,12 @@ export class IntelligenceExportService {
   } {
     if (dossier.entityType === 'citizen' && dossier.citizen) {
       const c = dossier.citizen;
-      const name =
-        [this.asStr(c.last_name), this.asStr(c.first_name), this.asStr(c.middle_name)]
-          .filter(Boolean)
-          .join(' ') || 'Fuqaro';
+      const name = this.asStr(c.full_name, 'Fuqaro');
+      const firstWord = name.split(/\s+/)[0] || 'Profil';
       return {
         heading: `FUQARO BOʻYICHA 360° TAHLILIY MAʼLUMOTNOMA: ${name}`,
         subtitle: `Pasport: ${this.asStr(c.passport, '—')} | JSHSHIR: ${this.asStr(c.pinfl, '—')} | Tel: ${this.asStr(c.phone_number, '—')}`,
-        fileSlug: `Fuqaro_Dosye_${this.asStr(c.last_name, 'Profil')}`,
+        fileSlug: `Fuqaro_Dosye_${firstWord}`,
       };
     }
     if (dossier.entityType === 'card' && dossier.card) {

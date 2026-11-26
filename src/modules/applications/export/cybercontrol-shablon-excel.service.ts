@@ -159,12 +159,7 @@ export class CyberControlShablonExcelService {
     const mahallaVal = this.matchMahalla(citizen?.neighborhood?.name || '', refs.mahallalar);
 
     // 5. F.I.SH
-    const fullName = citizen
-      ? [citizen.last_name, citizen.first_name, citizen.middle_name]
-          .filter((p): p is string => Boolean(p && p.trim()))
-          .join(' ')
-          .trim()
-      : '';
+    const fullName = citizen?.full_name?.trim() || '';
 
     // 6. Jinsi (Erkak / Ayol)
     const genderVal = this.resolveGender(citizen);
@@ -285,9 +280,7 @@ export class CyberControlShablonExcelService {
       | {
           gender?: string | null;
           pinfl?: string | null;
-          last_name?: string | null;
-          first_name?: string | null;
-          middle_name?: string | null;
+          full_name?: string | null;
         }
       | null
       | undefined,
@@ -304,7 +297,7 @@ export class CyberControlShablonExcelService {
       if (firstDigit === '1' || firstDigit === '3' || firstDigit === '5') return 'Erkak';
     }
 
-    const full = this.toAscii(`${citizen.last_name || ''} ${citizen.middle_name || ''}`);
+    const full = this.toAscii(citizen.full_name || '');
     if (/\b\w+(ova|eva|ovna|evna|qizi)\b/.test(full)) return 'Ayol';
     if (/\b\w+(ov|ev|ovich|evich|ogli)\b/.test(full)) return 'Erkak';
 

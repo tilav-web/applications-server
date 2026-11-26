@@ -886,7 +886,7 @@ export class ApplicationsReportsService {
     if (dto.search) {
       const s = `%${dto.search.trim()}%`;
       qb.andWhere(
-        '(app.application_number ILIKE :s OR app.description ILIKE :s OR citizen.first_name ILIKE :s OR citizen.last_name ILIKE :s OR citizen.phone_number ILIKE :s)',
+        '(app.application_number ILIKE :s OR app.description ILIKE :s OR citizen.full_name ILIKE :s OR citizen.phone_number ILIKE :s)',
         { s },
       );
     }
@@ -898,10 +898,9 @@ export class ApplicationsReportsService {
     }
 
     if (dto.citizenName?.trim()) {
-      qb.andWhere(
-        "CONCAT_WS(' ', citizen.last_name, citizen.first_name, citizen.middle_name) ILIKE :regCitName",
-        { regCitName: `%${dto.citizenName.trim()}%` },
-      );
+      qb.andWhere('citizen.full_name ILIKE :regCitName', {
+        regCitName: `%${dto.citizenName.trim()}%`,
+      });
     }
 
     if (dto.cardNumber?.trim()) {
@@ -965,9 +964,7 @@ export class ApplicationsReportsService {
     const [applications, total] = await qb.skip(skip).take(limit).getManyAndCount();
 
     const items: RegistryReportItem[] = applications.map((app, idx) => {
-      const authorName = [app.citizen?.last_name, app.citizen?.first_name, app.citizen?.middle_name]
-        .filter(Boolean)
-        .join(' ');
+      const authorName = app.citizen?.full_name?.trim() || '';
 
       // Karta raqamlarini jamlash
       const cardList: string[] = [];

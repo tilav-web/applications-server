@@ -213,9 +213,7 @@ export class NotificationsService implements OnModuleInit, OnModuleDestroy {
 
       const appNum = app.application_number || 'Raqamsiz';
       const districtName = app.district?.name || 'Noma‘lum tuman';
-      const citizenName = app.citizen
-        ? `${app.citizen.last_name || ''} ${app.citizen.first_name || ''}`.trim()
-        : 'Noma‘lum fuqaro';
+      const citizenName = app.citizen?.full_name?.trim() || 'Noma‘lum fuqaro';
       const amount = Number(app.transfer?.amount || 0);
       const formattedAmount =
         amount > 0 ? `${new Intl.NumberFormat('uz-UZ').format(Math.round(amount))} UZS` : '0 UZS';

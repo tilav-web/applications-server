@@ -830,9 +830,7 @@ async function seedMockData(
     const p = buildCitizenProfile(isFemale);
     const savedCit = await citizenRepo.save(
       citizenRepo.create({
-        first_name: p.first_name,
-        last_name: p.last_name,
-        middle_name: p.middle_name,
+        full_name: `${p.last_name} ${p.first_name} ${p.middle_name}`.trim(),
         gender: p.gender,
         birth_date: p.birth_date,
         pinfl: p.pinfl,
@@ -856,7 +854,7 @@ async function seedMockData(
       cardRepo.create({
         card_number: cardNum,
         expire_date: `${expMonth}/${expYear}`,
-        full_name: `${savedCit.last_name} ${savedCit.first_name}`,
+        full_name: savedCit.full_name || `${p.last_name} ${p.first_name}`,
         bank_id: bankEntry.bank.id,
         citizen_id: savedCit.id,
       }),
@@ -878,9 +876,7 @@ async function seedMockData(
       const p = buildCitizenProfile(rng() < 0.2);
       const dropCit = await citizenRepo.save(
         citizenRepo.create({
-          first_name: p.first_name,
-          last_name: p.last_name,
-          middle_name: p.middle_name,
+          full_name: `${p.last_name} ${p.first_name} ${p.middle_name}`.trim(),
           gender: p.gender,
           birth_date: p.birth_date,
           pinfl: p.pinfl,
@@ -895,7 +891,7 @@ async function seedMockData(
       );
       createdCitizenIds.push(dropCit.id);
       dropperCitizenId = dropCit.id;
-      ownerFullName = `${dropCit.last_name} ${dropCit.first_name}`;
+      ownerFullName = dropCit.full_name || `${p.last_name} ${p.first_name}`;
     } else {
       const p = buildCitizenProfile(false);
       ownerFullName = `${p.last_name} ${p.first_name}`;
@@ -982,7 +978,7 @@ async function seedMockData(
     const suspectTelegram = pick(scenario.suspectTelegrams);
 
     const { description, officerNotes } = scenario.buildDescription({
-      victimName: `${victim.last_name || ''} ${victim.first_name || ''}`.trim(),
+      victimName: victim.full_name?.trim() || 'Fuqaro',
       districtName: appDistrict.name || 'Qashqadaryo viloyati',
       amountFormatted,
       cardLast4: (senderCard.card_number || '0000').slice(-4),

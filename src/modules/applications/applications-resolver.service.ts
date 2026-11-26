@@ -6,6 +6,7 @@ import { TransferCustomFieldType } from '../../common/enums/transfer-custom-fiel
 import { formatTitleCase, formatUzbekName } from '../../common/utils/name-formatter.util';
 import {
   normalizeCardNumber,
+  normalizeCitizenFullName,
   normalizePassport,
   normalizePinfl,
   normalizeUzPhone,
@@ -82,9 +83,8 @@ export class ApplicationsResolverService {
         const pNum = normalizeUzPhone(cData.phone_number);
         const pass = normalizePassport(cData.passport);
         const pinfl = normalizePinfl(cData.pinfl);
-        const fName = cData.first_name ? formatUzbekName(cData.first_name) : null;
-        const lName = cData.last_name ? formatUzbekName(cData.last_name) : null;
-        const mName = cData.middle_name ? formatUzbekName(cData.middle_name) : null;
+        const rawFullName = normalizeCitizenFullName(cData);
+        const fullName = rawFullName ? formatUzbekName(rawFullName) : null;
         const addr = cData.address ? cData.address.trim() : null;
 
         // Tuman va Mahallani aniqlash (Unique Models)
@@ -121,7 +121,7 @@ export class ApplicationsResolverService {
           citNeighborhoodId = m.id;
         }
 
-        if (fName || lName || pass || pinfl || pNum || citDistrictId || citNeighborhoodId) {
+        if (fullName || pass || pinfl || pNum || citDistrictId || citNeighborhoodId) {
           let existingCitizen: Citizen | null = null;
           if (pass) {
             existingCitizen = await citizenRepo.findOne({ where: { passport: pass } });
@@ -129,18 +129,16 @@ export class ApplicationsResolverService {
           if (!existingCitizen && pinfl) {
             existingCitizen = await citizenRepo.findOne({ where: { pinfl } });
           }
-          if (!existingCitizen && pNum && fName) {
+          if (!existingCitizen && pNum && fullName) {
             existingCitizen = await citizenRepo.findOne({
-              where: { phone_number: pNum, first_name: fName },
+              where: { phone_number: pNum, full_name: fullName },
             });
           }
 
           if (existingCitizen) {
             // Faqat bo'sh maydonlarni to'ldiramiz, mavjud identifikatorlarni qayta yozmaymiz
             if (addr && !existingCitizen.address) existingCitizen.address = addr;
-            if (fName && !existingCitizen.first_name) existingCitizen.first_name = fName;
-            if (lName && !existingCitizen.last_name) existingCitizen.last_name = lName;
-            if (mName && !existingCitizen.middle_name) existingCitizen.middle_name = mName;
+            if (fullName && !existingCitizen.full_name) existingCitizen.full_name = fullName;
             if (cData.birth_date && !existingCitizen.birth_date)
               existingCitizen.birth_date = cData.birth_date;
             if (cData.gender && !existingCitizen.gender)
@@ -153,9 +151,7 @@ export class ApplicationsResolverService {
             citizenId = existingCitizen.id;
           } else {
             const createdCitizen = citizenRepo.create({
-              first_name: fName,
-              last_name: lName,
-              middle_name: mName,
+              full_name: fullName,
               passport: pass,
               pinfl: pinfl,
               phone_number: pNum,
@@ -506,10 +502,15 @@ export class ApplicationsResolverService {
         if (data.address !== undefined) existing.address = data.address || null;
         if (data.birth_date !== undefined) existing.birth_date = data.birth_date || null;
         if (data.gender !== undefined) existing.gender = (data.gender as 'male' | 'female') || null;
-        if (data.first_name) existing.first_name = formatUzbekName(data.first_name);
-        if (data.last_name) existing.last_name = formatUzbekName(data.last_name);
-        if (data.middle_name !== undefined)
-          existing.middle_name = data.middle_name ? formatUzbekName(data.middle_name) : null;
+        if (
+          data.full_name !== undefined ||
+          data.first_name !== undefined ||
+          data.last_name !== undefined ||
+          data.middle_name !== undefined
+        ) {
+          const merged = normalizeCitizenFullName(data);
+          existing.full_name = merged ? formatUzbekName(merged) : null;
+        }
         if (data.passport !== undefined) existing.passport = normalizePassport(data.passport);
         if (data.pinfl !== undefined) existing.pinfl = normalizePinfl(data.pinfl);
         if (data.phone_number !== undefined)
@@ -524,8 +525,9 @@ export class ApplicationsResolverService {
       const cleanPassport = normalizePassport(data.passport);
       const cleanPinfl = normalizePinfl(data.pinfl);
       const cleanPhone = normalizeUzPhone(data.phone_number);
+      const rawFullName = normalizeCitizenFullName(data);
 
-      if (data.first_name || data.last_name || cleanPassport || cleanPhone || cleanPinfl) {
+      if (rawFullName || cleanPassport || cleanPhone || cleanPinfl) {
         // Faqat yagona identifikatorlar (pasport, JSHSHIR, telefon) bo'yicha qidiramiz — ism/familiya bilan birlashtirmaymiz!
         let existingCitizen: Citizen | null = null;
         if (cleanPassport) {
@@ -567,9 +569,7 @@ export class ApplicationsResolverService {
           citNeighborhoodId = m.id;
         }
 
-        const fName = data.first_name ? formatUzbekName(data.first_name) : null;
-        const lName = data.last_name ? formatUzbekName(data.last_name) : null;
-        const mName = data.middle_name ? formatUzbekName(data.middle_name) : null;
+        const fullName = rawFullName ? formatUzbekName(rawFullName) : null;
 
         if (existingCitizen) {
           // Avto-biriktirilganda mavjud ma'lumotlarni buzib yubormasdan faqat bo'sh maydonlarni to'ldiramiz
@@ -582,9 +582,7 @@ export class ApplicationsResolverService {
             existingCitizen.birth_date = data.birth_date;
           if (data.gender && !existingCitizen.gender)
             existingCitizen.gender = data.gender as 'male' | 'female';
-          if (fName && !existingCitizen.first_name) existingCitizen.first_name = fName;
-          if (lName && !existingCitizen.last_name) existingCitizen.last_name = lName;
-          if (mName && !existingCitizen.middle_name) existingCitizen.middle_name = mName;
+          if (fullName && !existingCitizen.full_name) existingCitizen.full_name = fullName;
           if (cleanPassport && !existingCitizen.passport) existingCitizen.passport = cleanPassport;
           if (cleanPinfl && !existingCitizen.pinfl) existingCitizen.pinfl = cleanPinfl;
           if (cleanPhone && !existingCitizen.phone_number)
@@ -598,9 +596,7 @@ export class ApplicationsResolverService {
         } else {
           // Whitelist: mass-assignment (`...data`) ishlatilmaydi
           const newCitizen = citizenRepo.create({
-            first_name: fName,
-            last_name: lName,
-            middle_name: mName,
+            full_name: fullName,
             passport: cleanPassport,
             pinfl: cleanPinfl,
             phone_number: cleanPhone,

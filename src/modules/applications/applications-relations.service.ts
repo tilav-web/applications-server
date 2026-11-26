@@ -37,9 +37,7 @@ export interface CardRelationSummary {
 
 export interface CitizenRelationSummary {
   id: string;
-  first_name: string | null;
-  last_name: string | null;
-  middle_name: string | null;
+  full_name: string | null;
   phone_number: string | null;
   passport: string | null;
   pinfl: string | null;
@@ -635,9 +633,7 @@ export class ApplicationsRelationsService {
               date: other.date,
               citizen_name: restricted
                 ? 'Boshqa tuman fuqarosi'
-                : other.citizen
-                  ? `${other.citizen.last_name || ''} ${other.citizen.first_name || ''} ${other.citizen.middle_name || ''}`.trim()
-                  : 'Arizachi kiritilmagan',
+                : other.citizen?.full_name?.trim() || 'Arizachi kiritilmagan',
               citizen_phone: restricted ? null : other.citizen?.phone_number || null,
               role_in_that_app: otherRole,
               transfer_amount: other.transfer?.amount ? Number(other.transfer.amount) : null,
@@ -690,9 +686,7 @@ export class ApplicationsRelationsService {
             citizenRelationsMap.set(citizenId, {
               citizen: {
                 id: currentCitizen.id,
-                first_name: currentCitizen.first_name,
-                last_name: currentCitizen.last_name,
-                middle_name: currentCitizen.middle_name,
+                full_name: currentCitizen.full_name,
                 phone_number: currentCitizen.phone_number,
                 passport: currentCitizen.passport,
                 pinfl: currentCitizen.pinfl,
@@ -718,9 +712,7 @@ export class ApplicationsRelationsService {
               date: other.date,
               citizen_name: restricted
                 ? 'Boshqa tuman fuqarosi'
-                : other.citizen
-                  ? `${other.citizen.last_name || ''} ${other.citizen.first_name || ''} ${other.citizen.middle_name || ''}`.trim()
-                  : 'Arizachi kiritilmagan',
+                : other.citizen?.full_name?.trim() || 'Arizachi kiritilmagan',
               transfer_amount: other.transfer?.amount ? Number(other.transfer.amount) : null,
               currency: other.transfer?.currency || 'UZS',
               description: restricted
@@ -767,9 +759,7 @@ export class ApplicationsRelationsService {
                 date: other.date,
                 citizen_name: restricted
                   ? 'Boshqa tuman fuqarosi'
-                  : other.citizen
-                    ? `${other.citizen.last_name || ''} ${other.citizen.first_name || ''} ${other.citizen.middle_name || ''}`.trim()
-                    : 'Arizachi kiritilmagan',
+                  : other.citizen?.full_name?.trim() || 'Arizachi kiritilmagan',
                 transfer_amount: other.transfer?.amount ? Number(other.transfer.amount) : null,
                 currency: other.transfer?.currency || 'UZS',
                 description: restricted
@@ -833,9 +823,8 @@ export class ApplicationsRelationsService {
             : card.masked_number || card.card_number || 'Noma‘lum';
 
         const bankName = card.bank?.name || this.identifyBank(card.card_number);
-        const owner = card.citizen
-          ? `${card.citizen.last_name || ''} ${card.citizen.first_name || ''}`.trim()
-          : card.full_name || 'Karta egasi ko‘rsatilmagan';
+        const owner =
+          card.citizen?.full_name?.trim() || card.full_name || 'Karta egasi ko‘rsatilmagan';
 
         graphNodesMap.set(card.id, {
           id: card.id,
@@ -885,9 +874,7 @@ export class ApplicationsRelationsService {
           date: appContext.date,
           citizen_name: restricted
             ? 'Boshqa tuman fuqarosi'
-            : appContext.citizen
-              ? `${appContext.citizen.last_name || ''} ${appContext.citizen.first_name || ''}`.trim()
-              : 'Arizachi kiritilmagan',
+            : appContext.citizen?.full_name?.trim() || 'Arizachi kiritilmagan',
           citizen_phone: restricted ? null : appContext.citizen?.phone_number || null,
           role_in_that_app: defaultRole,
           transfer_amount: appContext.transfer?.amount ? Number(appContext.transfer.amount) : null,
@@ -929,8 +916,7 @@ export class ApplicationsRelationsService {
         const citNodeId = `cit__${appItem.citizen.id}`;
         const citLabel = restricted
           ? 'Boshqa tuman fuqarosi'
-          : `${appItem.citizen.last_name || ''} ${appItem.citizen.first_name || ''}`.trim() ||
-            'Arizachi';
+          : appItem.citizen.full_name?.trim() || 'Arizachi';
         if (!graphNodesMap.has(citNodeId)) {
           graphNodesMap.set(citNodeId, {
             id: citNodeId,
@@ -1019,9 +1005,7 @@ export class ApplicationsRelationsService {
                 date: appItem.date,
                 citizen_name: restricted
                   ? 'Boshqa tuman fuqarosi'
-                  : appItem.citizen
-                    ? `${appItem.citizen.last_name || ''} ${appItem.citizen.first_name || ''}`.trim()
-                    : 'Arizachi',
+                  : appItem.citizen?.full_name?.trim() || 'Arizachi',
                 citizen_phone: restricted ? null : appItem.citizen?.phone_number || null,
                 role_in_that_app: 'MULE_DROPPER',
                 transfer_amount: amt,

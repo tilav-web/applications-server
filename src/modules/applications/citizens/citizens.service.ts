@@ -10,6 +10,7 @@ import { getAllowedDistrictIds } from '../../../common/utils/district-scope.util
 import { formatUzbekName } from '../../../common/utils/name-formatter.util';
 import {
   isPgUniqueViolation,
+  normalizeCitizenFullName,
   normalizePassport,
   normalizePinfl,
   normalizeUzPhone,
@@ -36,6 +37,8 @@ export class CitizensService {
     const cleanPassport = normalizePassport(dto.passport);
     const cleanPinfl = normalizePinfl(dto.pinfl);
     const cleanPhone = normalizeUzPhone(dto.phone_number);
+    const rawFullName = normalizeCitizenFullName(dto);
+    const formattedFullName = rawFullName ? formatUzbekName(rawFullName) : null;
 
     const findExisting = async (): Promise<Citizen | null> => {
       if (cleanPassport) {
@@ -46,12 +49,11 @@ export class CitizensService {
         const existing = await this.citizenRepo.findOne({ where: { pinfl: cleanPinfl } });
         if (existing) return existing;
       }
-      if (cleanPhone && cleanPhone.length >= 7 && dto.first_name && dto.last_name) {
+      if (cleanPhone && cleanPhone.length >= 7 && formattedFullName) {
         const existing = await this.citizenRepo.findOne({
           where: {
             phone_number: cleanPhone,
-            first_name: formatUzbekName(dto.first_name),
-            last_name: formatUzbekName(dto.last_name),
+            full_name: formattedFullName,
           },
         });
         if (existing) return existing;
@@ -62,11 +64,16 @@ export class CitizensService {
     const existingBefore = await findExisting();
     if (existingBefore) return existingBefore;
 
+    const {
+      first_name: _firstName,
+      last_name: _lastName,
+      middle_name: _middleName,
+      ...restDto
+    } = dto;
+
     const citizen = this.citizenRepo.create({
-      ...dto,
-      first_name: dto.first_name ? formatUzbekName(dto.first_name) : null,
-      last_name: dto.last_name ? formatUzbekName(dto.last_name) : null,
-      middle_name: dto.middle_name ? formatUzbekName(dto.middle_name) : null,
+      ...restDto,
+      full_name: formattedFullName,
       passport: cleanPassport,
       pinfl: cleanPinfl,
       phone_number: cleanPhone,
@@ -106,29 +113,28 @@ export class CitizensService {
     if (search?.trim()) {
       const q = `%${search.trim()}%`;
       qb.andWhere(
-        "(CONCAT_WS(' ', citizen.last_name, citizen.first_name, citizen.middle_name) ILIKE :q OR citizen.passport ILIKE :q OR citizen.pinfl ILIKE :q OR citizen.phone_number ILIKE :q)",
+        '(citizen.full_name ILIKE :q OR citizen.passport ILIKE :q OR citizen.pinfl ILIKE :q OR citizen.phone_number ILIKE :q)',
         { q },
       );
     }
 
     if (filters?.fullName?.trim()) {
-      qb.andWhere(
-        "CONCAT_WS(' ', citizen.last_name, citizen.first_name, citizen.middle_name) ILIKE :fullName",
-        { fullName: `%${filters.fullName.trim()}%` },
-      );
+      qb.andWhere('citizen.full_name ILIKE :fullName', {
+        fullName: `%${filters.fullName.trim()}%`,
+      });
     }
     if (filters?.firstName?.trim()) {
-      qb.andWhere('citizen.first_name ILIKE :firstName', {
+      qb.andWhere('citizen.full_name ILIKE :firstName', {
         firstName: `%${filters.firstName.trim()}%`,
       });
     }
     if (filters?.lastName?.trim()) {
-      qb.andWhere('citizen.last_name ILIKE :lastName', {
+      qb.andWhere('citizen.full_name ILIKE :lastName', {
         lastName: `%${filters.lastName.trim()}%`,
       });
     }
     if (filters?.middleName?.trim()) {
-      qb.andWhere('citizen.middle_name ILIKE :middleName', {
+      qb.andWhere('citizen.full_name ILIKE :middleName', {
         middleName: `%${filters.middleName.trim()}%`,
       });
     }
@@ -318,15 +324,26 @@ export class CitizensService {
     currentUser?: JwtAccessPayload,
   ): Promise<Citizen> {
     const citizen = await this.findOne(id, currentUser);
-    const updatedData: Partial<Citizen> = { ...dto };
-    if (dto.first_name !== undefined) {
-      updatedData.first_name = dto.first_name ? formatUzbekName(dto.first_name) : null;
-    }
-    if (dto.last_name !== undefined) {
-      updatedData.last_name = dto.last_name ? formatUzbekName(dto.last_name) : null;
-    }
-    if (dto.middle_name !== undefined) {
-      updatedData.middle_name = dto.middle_name ? formatUzbekName(dto.middle_name) : null;
+    const {
+      first_name: legacyFirstName,
+      last_name: legacyLastName,
+      middle_name: legacyMiddleName,
+      ...restDto
+    } = dto;
+    const updatedData: Partial<Citizen> = { ...restDto };
+    if (
+      dto.full_name !== undefined ||
+      legacyFirstName !== undefined ||
+      legacyLastName !== undefined ||
+      legacyMiddleName !== undefined
+    ) {
+      const mergedName = normalizeCitizenFullName({
+        full_name: dto.full_name,
+        last_name: legacyLastName,
+        first_name: legacyFirstName,
+        middle_name: legacyMiddleName,
+      });
+      updatedData.full_name = mergedName ? formatUzbekName(mergedName) : null;
     }
     if (dto.passport !== undefined) {
       updatedData.passport = normalizePassport(dto.passport);
@@ -361,7 +378,7 @@ export class CitizensService {
 
   async remove(id: string): Promise<{ success: boolean; message: string }> {
     const citizen = await this.findOne(id);
-    const fullName = `${citizen.last_name || ''} ${citizen.first_name || ''}`.trim() || 'Fuqaro';
+    const fullName = citizen.full_name?.trim() || 'Fuqaro';
     await assertNoDependencies(this.citizenRepo.manager, `«${fullName}»`, citizen.id, [
       {
         table: 'applications',

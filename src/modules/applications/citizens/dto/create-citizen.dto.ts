@@ -4,6 +4,11 @@ import { IsIn, IsOptional, IsString, Length, Matches, ValidateIf } from 'class-v
 export class CreateCitizenDto {
   @IsOptional()
   @IsString()
+  full_name?: string;
+
+  /** Orqaga moslik (legacy): agar full_name berilmasa avtomatik birlashtiriladi */
+  @IsOptional()
+  @IsString()
   first_name?: string;
 
   @IsOptional()

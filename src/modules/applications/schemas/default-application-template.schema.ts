@@ -281,25 +281,11 @@ export const CITIZEN_SUB_TEMPLATE: TemplateSchema = {
   version: '1.0.0',
   fields: [
     {
-      key: 'first_name',
-      label: 'Ism',
+      key: 'full_name',
+      label: 'F.I.SH.',
       type: 'text',
       required: false,
-      placeholder: 'Valijon',
-    },
-    {
-      key: 'last_name',
-      label: 'Familiya',
-      type: 'text',
-      required: false,
-      placeholder: 'Aliyev',
-    },
-    {
-      key: 'middle_name',
-      label: 'Otasining ismi (Sharif)',
-      type: 'text',
-      required: false,
-      placeholder: 'Karimovich',
+      placeholder: 'Aliyev Valijon Karimovich',
     },
     {
       key: 'passport',
