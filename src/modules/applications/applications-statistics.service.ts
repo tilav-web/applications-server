@@ -237,7 +237,8 @@ export class ApplicationsStatisticsService {
     }
 
     const applications = await appsQb
-      .orderBy('COALESCE(app.date, app.created_at)', 'ASC')
+      .orderBy('app.date', 'ASC', 'NULLS LAST')
+      .addOrderBy('app.created_at', 'ASC')
       .getMany();
 
     const appIds = applications.map((a) => a.id);

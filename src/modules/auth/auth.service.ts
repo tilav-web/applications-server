@@ -575,46 +575,47 @@ export class AuthService implements OnApplicationBootstrap {
     let pending = this.refreshInFlight.get(tokenDigest);
     if (!pending) {
       pending = (async () => {
-        let payload: JwtRefreshPayload;
         try {
-          payload = await this.jwtService.verifyAsync<JwtRefreshPayload>(refreshToken, {
-            secret: this.refreshSecret,
+          let payload: JwtRefreshPayload;
+          try {
+            payload = await this.jwtService.verifyAsync<JwtRefreshPayload>(refreshToken, {
+              secret: this.refreshSecret,
+            });
+          } catch {
+            throw new UnauthorizedException('Sessiya muddati tugagan, iltimos qaytadan kiring');
+          }
+
+          const auth = await this.authRepository.findOne({
+            where: { id: payload.sub },
+            relations: { user: true },
           });
-        } catch {
-          throw new UnauthorizedException('Sessiya muddati tugagan, iltimos qaytadan kiring');
+
+          if (!auth || !auth.hashed_refresh_token) {
+            throw new UnauthorizedException('Sessiya muddati tugagan, iltimos qaytadan kiring');
+          }
+
+          const isMatch = await bcrypt.compare(tokenDigest, auth.hashed_refresh_token);
+          if (!isMatch) {
+            throw new UnauthorizedException('Sessiya muddati tugagan, iltimos qaytadan kiring');
+          }
+
+          const { accessToken: newAccessToken, refreshToken: newRefreshToken } =
+            await this.generateTokens(auth);
+
+          this.recentRefreshes.set(tokenDigest, {
+            accessToken: newAccessToken,
+            refreshToken: newRefreshToken,
+            auth,
+            expiresAt: Date.now() + 5000,
+          });
+
+          return { accessToken: newAccessToken, refreshToken: newRefreshToken, auth };
+        } finally {
+          this.refreshInFlight.delete(tokenDigest);
         }
-
-        const auth = await this.authRepository.findOne({
-          where: { id: payload.sub },
-          relations: { user: true },
-        });
-
-        if (!auth || !auth.hashed_refresh_token) {
-          throw new UnauthorizedException('Sessiya muddati tugagan, iltimos qaytadan kiring');
-        }
-
-        const isMatch = await bcrypt.compare(tokenDigest, auth.hashed_refresh_token);
-        if (!isMatch) {
-          throw new UnauthorizedException('Sessiya muddati tugagan, iltimos qaytadan kiring');
-        }
-
-        const { accessToken: newAccessToken, refreshToken: newRefreshToken } =
-          await this.generateTokens(auth);
-
-        this.recentRefreshes.set(tokenDigest, {
-          accessToken: newAccessToken,
-          refreshToken: newRefreshToken,
-          auth,
-          expiresAt: Date.now() + 5000,
-        });
-
-        return { accessToken: newAccessToken, refreshToken: newRefreshToken, auth };
       })();
 
       this.refreshInFlight.set(tokenDigest, pending);
-      void pending.finally(() => {
-        this.refreshInFlight.delete(tokenDigest);
-      });
     }
 
     const result = await pending;

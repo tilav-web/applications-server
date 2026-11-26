@@ -112,4 +112,23 @@ describe('AuthService', () => {
 
     await expect(service.onApplicationBootstrap()).rejects.toThrow(/JWT_ACCESS_SECRET/);
   });
+
+  it('does not leak an unhandledRejection when refreshTokens fails with an expired token', async () => {
+    const unhandled: unknown[] = [];
+    const onUnhandled = (reason: unknown) => {
+      unhandled.push(reason);
+    };
+    process.on('unhandledRejection', onUnhandled);
+
+    try {
+      jwtService.verifyAsync.mockRejectedValueOnce(new Error('jwt expired'));
+      await expect(service.refreshTokens('expired-refresh-token')).rejects.toThrow(
+        /Sessiya muddati tugagan/,
+      );
+      await new Promise((resolve) => setImmediate(resolve));
+      expect(unhandled).toHaveLength(0);
+    } finally {
+      process.off('unhandledRejection', onUnhandled);
+    }
+  });
 });

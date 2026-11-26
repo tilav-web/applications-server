@@ -730,8 +730,8 @@ export class ApplicationsService {
           )
           OR EXISTS (
             SELECT 1 FROM entity_application_links eal
-            INNER JOIN cards ec ON ec.id = eal.entity_id AND eal.entity_type = 'CARD'
-            WHERE eal.application_id = app.id AND (ec.card_number ILIKE :cardQ OR ec.masked_number ILIKE :cardQ)
+            INNER JOIN cards ec ON ec.id = eal.card_id
+            WHERE eal.application_id = app.id AND eal.card_id IS NOT NULL AND (ec.card_number ILIKE :cardQ OR ec.masked_number ILIKE :cardQ)
           )
           OR CAST(app.suspect_tree AS text) ILIKE :cardQ
         )`,
@@ -747,8 +747,8 @@ export class ApplicationsService {
           citizen.phone_number ILIKE :phoneQ
           OR EXISTS (
             SELECT 1 FROM entity_application_links eal
-            INNER JOIN phones ph ON ph.id = eal.entity_id AND eal.entity_type = 'PHONE'
-            WHERE eal.application_id = app.id AND ph.phone_number ILIKE :phoneQ
+            INNER JOIN phones ph ON ph.id = eal.phone_id
+            WHERE eal.application_id = app.id AND eal.phone_id IS NOT NULL AND ph.phone_number ILIKE :phoneQ
           )
           OR CAST(app.suspect_tree AS text) ILIKE :phoneQ
         )`,
@@ -1298,7 +1298,7 @@ export class ApplicationsService {
       .where('app.is_deleted = false')
       .andWhere('(app.id = :rootId OR app.root_application_id = :rootId)', { rootId })
       .orderBy('app.repeat_sequence', 'ASC')
-      .addOrderBy('COALESCE(app.date, app.created_at)', 'ASC')
+      .addOrderBy('app.date', 'ASC', 'NULLS LAST')
       .addOrderBy('app.created_at', 'ASC');
 
     if (assignedDistrictIds !== null) {
@@ -1364,7 +1364,8 @@ export class ApplicationsService {
       .leftJoinAndSelect('app.source', 'source')
       .where('app.is_deleted = false')
       .andWhere('app.citizen_id = :citizenId', { citizenId })
-      .orderBy('COALESCE(app.date, app.created_at)', 'DESC')
+      .orderBy('app.date', 'DESC', 'NULLS LAST')
+      .addOrderBy('app.created_at', 'DESC')
       .take(20);
 
     if (excludeId && isUUID(excludeId)) {
