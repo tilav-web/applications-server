@@ -21,6 +21,7 @@ interface MockStore {
   cards: Map<string, Partial<Card>>;
   banks: Map<string, Partial<Bank>>;
   providers: Map<string, Partial<PaymentProvider>>;
+  citizens: Map<string, Partial<Citizen>>;
   applications: Map<string, Partial<Application>>;
 }
 
@@ -95,6 +96,30 @@ function createMockManager(store: MockStore): EntityManager {
     ),
   });
 
+  repos.set(Citizen, {
+    findOne: jest.fn(({ where }: { where: Partial<Citizen> }) => {
+      if (where?.id) return Promise.resolve(store.citizens.get(where.id) ?? null);
+      for (const c of store.citizens.values()) {
+        if (where?.passport && c.passport === where.passport) return Promise.resolve(c);
+        if (where?.pinfl && c.pinfl === where.pinfl) return Promise.resolve(c);
+        if (where?.phone_number && c.phone_number === where.phone_number) return Promise.resolve(c);
+      }
+      return Promise.resolve(null);
+    }),
+    create: jest.fn((data: Partial<Citizen>) => ({ ...data })),
+    save: jest.fn((entity: Partial<Citizen>) => {
+      const id = entity.id || nextId('cit');
+      const saved = { ...entity, id };
+      store.citizens.set(id, saved);
+      return Promise.resolve(saved);
+    }),
+    update: jest.fn((id: string, patch: Partial<Citizen>) => {
+      const existing = store.citizens.get(id);
+      if (existing) store.citizens.set(id, { ...existing, ...patch });
+      return Promise.resolve({ affected: existing ? 1 : 0 });
+    }),
+  });
+
   const noopRepo = () => ({
     findOne: jest.fn(() => Promise.resolve(null)),
     create: jest.fn((data: Record<string, unknown>) => ({ ...data })),
@@ -104,7 +129,6 @@ function createMockManager(store: MockStore): EntityManager {
 
   for (const cls of [
     ApplicationCustomField,
-    Citizen,
     Crime,
     District,
     Neighborhood,
@@ -130,6 +154,7 @@ describe('ApplicationsResolverService (multi-transfer create & edit)', () => {
       cards: new Map(),
       banks: new Map(),
       providers: new Map(),
+      citizens: new Map(),
       applications: new Map(),
     };
     manager = createMockManager(store);
@@ -265,5 +290,83 @@ describe('ApplicationsResolverService (multi-transfer create & edit)', () => {
     expect(updatedPrimary?.transfer_date).toBe('2026-11-25');
     expect(updatedPrimary?.transfer_time).toBe('18:05');
     expect(updatedPrimary?.receiver_card_id).toBeTruthy();
+  });
+
+  it('updates existing extra citizen fields on edit when citizen_id is already linked', async () => {
+    store.citizens.set('cit-extra-1', {
+      id: 'cit-extra-1',
+      full_name: 'Eski Ism',
+      phone_number: null,
+      passport: null,
+      address: null,
+      district_id: 'dist-old',
+      neighborhood_id: 'mah-old',
+    });
+
+    const fields = await service.processCustomFields(
+      [
+        {
+          type: CustomFieldType.CITIZEN,
+          label: 'GUMONLANUVCHI',
+          key: 'citizen_1',
+          citizen_id: 'cit-extra-1',
+          inline_citizen: {
+            full_name: 'KARIMOV SARDOR',
+            phone_number: '+998901234567',
+            passport: 'AB1234567',
+            address: 'Qarshi sh., 5-uy',
+            district_id: 'dist-new',
+            neighborhood_id: null,
+          },
+          order: 0,
+        },
+      ],
+      'app-1',
+      manager,
+    );
+
+    expect(fields[0].citizen_id).toBe('cit-extra-1');
+    const updated = store.citizens.get('cit-extra-1');
+    expect(updated?.full_name).toBe('Karimov Sardor');
+    expect(updated?.phone_number).toBe('998901234567');
+    expect(updated?.passport).toBe('AB1234567');
+    expect(updated?.address).toBe('Qarshi sh., 5-uy');
+    expect(updated?.district_id).toBe('dist-new');
+    expect(updated?.neighborhood_id).toBeNull();
+  });
+
+  it('creates a new citizen instead of overwriting old citizen when unlinked on edit', async () => {
+    store.citizens.set('cit-old', {
+      id: 'cit-old',
+      full_name: 'Aliyev Vali',
+      phone_number: '+998901111111',
+    });
+    store.applications.set('app-1', {
+      id: 'app-1',
+      citizen_id: 'cit-old',
+      district_id: 'dist-1',
+      crime_id: 'crime-1',
+    });
+
+    const resolved = await service.resolvePrimaryModels(
+      {
+        citizen_id: null,
+        citizen_data: {
+          full_name: 'TOSHEV BEKZOD',
+          phone_number: '+998909999999',
+        },
+        district_id: null,
+        crime_id: null,
+      },
+      'app-1',
+      manager,
+    );
+
+    expect(resolved.citizen_id).toBeTruthy();
+    expect(resolved.citizen_id).not.toBe('cit-old');
+    expect(store.citizens.get('cit-old')?.full_name).toBe('Aliyev Vali');
+    expect(store.citizens.get(resolved.citizen_id!)?.full_name).toBe('Toshev Bekzod');
+    expect(resolved.district_id).toBeNull();
+    expect(resolved.crime_id).toBeNull();
   });
 });

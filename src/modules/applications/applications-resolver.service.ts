@@ -308,15 +308,16 @@ export class ApplicationsResolverService {
       let districtId = f.district_id || null;
       let transferId = f.transfer_id || null;
 
-      // 1. Yangi yoki mavjud Fuqaro (inline_citizen)
-      if (f.inline_citizen && !citizenId) {
-        const cData = f.inline_citizen as Record<string, string>;
+      // 1. Yangi yoki mavjud Fuqaro (inline_citizen — yaratish va tahrirlashda ham saqlanadi)
+      if (f.inline_citizen) {
+        const cData = f.inline_citizen as Record<string, string | null | undefined>;
         const pNum = normalizeUzPhone(cData.phone_number);
         const pass = normalizePassport(cData.passport);
         const pinfl = normalizePinfl(cData.pinfl);
         const rawFullName = normalizeCitizenFullName(cData);
         const fullName = rawFullName ? formatUzbekName(rawFullName) : null;
-        const addr = cData.address ? cData.address.trim() : null;
+        const addr =
+          typeof cData.address === 'string' && cData.address.trim() ? cData.address.trim() : null;
 
         // Tuman va Mahallani aniqlash (Unique Models)
         let citDistrictId = cData.district_id || null;
@@ -352,7 +353,36 @@ export class ApplicationsResolverService {
           citNeighborhoodId = m.id;
         }
 
-        if (fullName || pass || pinfl || pNum || citDistrictId || citNeighborhoodId) {
+        if (citizenId) {
+          // Mavjud qo'shimcha fuqaro tahrirlanayotgan bo'lsa — barcha o'zgartirilgan maydonlarni yangilaymiz
+          const existingLinked = await citizenRepo.findOne({ where: { id: citizenId } });
+          if (existingLinked) {
+            if (
+              cData.full_name !== undefined ||
+              cData.first_name !== undefined ||
+              cData.last_name !== undefined ||
+              cData.middle_name !== undefined
+            ) {
+              existingLinked.full_name = fullName;
+            }
+            if (cData.passport !== undefined) existingLinked.passport = pass;
+            if (cData.pinfl !== undefined) existingLinked.pinfl = pinfl;
+            if (cData.phone_number !== undefined) existingLinked.phone_number = pNum;
+            if (cData.address !== undefined) existingLinked.address = addr;
+            if (cData.birth_date !== undefined)
+              existingLinked.birth_date = cData.birth_date || null;
+            if (cData.gender !== undefined) {
+              existingLinked.gender = (cData.gender as 'male' | 'female') || null;
+            }
+            if (citDistrictId !== null || cData.district_id !== undefined) {
+              existingLinked.district_id = citDistrictId;
+            }
+            if (citNeighborhoodId !== null || cData.neighborhood_id !== undefined) {
+              existingLinked.neighborhood_id = citNeighborhoodId;
+            }
+            await citizenRepo.save(existingLinked);
+          }
+        } else if (fullName || pass || pinfl || pNum || citDistrictId || citNeighborhoodId) {
           let existingCitizen: Citizen | null = null;
           if (pass) {
             existingCitizen = await citizenRepo.findOne({ where: { passport: pass } });
@@ -576,9 +606,30 @@ export class ApplicationsResolverService {
         },
       });
       if (existingApp) {
-        if (!citizenId && existingApp.citizen_id) citizenId = existingApp.citizen_id;
-        if (!districtId && existingApp.district_id) districtId = existingApp.district_id;
-        if (!crimeId && existingApp.crime_id) crimeId = existingApp.crime_id;
+        if (
+          !citizenId &&
+          existingApp.citizen_id &&
+          dto.citizen_id === undefined &&
+          dto.citizen_data === undefined
+        ) {
+          citizenId = existingApp.citizen_id;
+        }
+        if (
+          !districtId &&
+          existingApp.district_id &&
+          dto.district_id === undefined &&
+          dto.district_data === undefined
+        ) {
+          districtId = existingApp.district_id;
+        }
+        if (
+          !crimeId &&
+          existingApp.crime_id &&
+          dto.crime_id === undefined &&
+          dto.crime_data === undefined
+        ) {
+          crimeId = existingApp.crime_id;
+        }
         if (
           crimeMethodId === null &&
           existingApp.crime_method_id &&

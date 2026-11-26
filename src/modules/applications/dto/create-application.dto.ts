@@ -81,15 +81,15 @@ export class CreateApplicationCustomFieldDto {
   // Sub-model Foreign Keys
   @IsOptional()
   @IsUUID('4')
-  citizen_id?: string;
+  citizen_id?: string | null;
 
   @IsOptional()
   @IsUUID('4')
-  card_id?: string;
+  card_id?: string | null;
 
   @IsOptional()
   @IsUUID('4')
-  crime_id?: string;
+  crime_id?: string | null;
 
   @IsOptional()
   @IsUUID('4')
@@ -97,11 +97,11 @@ export class CreateApplicationCustomFieldDto {
 
   @IsOptional()
   @IsUUID('4')
-  district_id?: string;
+  district_id?: string | null;
 
   @IsOptional()
   @IsUUID('4')
-  transfer_id?: string;
+  transfer_id?: string | null;
 
   // Inline yangi yaratish uchun ma'lumotlar
   @IsOptional()
@@ -136,11 +136,11 @@ export class CreateApplicationDto {
 
   @IsOptional()
   @IsString()
-  description?: string;
+  description?: string | null;
 
   @IsOptional()
   @IsString()
-  officer_notes?: string;
+  officer_notes?: string | null;
 
   @IsOptional()
   @IsArray()
@@ -230,7 +230,7 @@ export class CreateApplicationDto {
   // Birlamchi Asosiy Modellar (Har biridan bittadan ManyToOne)
   @IsOptional()
   @IsUUID('4')
-  citizen_id?: string;
+  citizen_id?: string | null;
 
   @IsOptional()
   @IsObject()
@@ -238,7 +238,7 @@ export class CreateApplicationDto {
 
   @IsOptional()
   @IsUUID('4')
-  crime_id?: string;
+  crime_id?: string | null;
 
   @IsOptional()
   @IsUUID('4')
@@ -250,7 +250,7 @@ export class CreateApplicationDto {
 
   @IsOptional()
   @IsUUID('4')
-  district_id?: string;
+  district_id?: string | null;
 
   @IsOptional()
   @IsObject()
@@ -258,7 +258,7 @@ export class CreateApplicationDto {
 
   @IsOptional()
   @IsUUID('4')
-  card_id?: string;
+  card_id?: string | null;
 
   @IsOptional()
   @IsObject()
@@ -266,7 +266,7 @@ export class CreateApplicationDto {
 
   @IsOptional()
   @IsUUID('4')
-  transfer_id?: string;
+  transfer_id?: string | null;
 
   @IsOptional()
   @IsObject()
