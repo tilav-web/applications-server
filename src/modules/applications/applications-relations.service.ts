@@ -33,6 +33,8 @@ export interface CardRelationSummary {
   masked_number: string | null;
   full_name: string | null;
   bank_name: string | null;
+  citizen_id?: string | null;
+  citizen_name?: string | null;
 }
 
 export interface CitizenRelationSummary {
@@ -432,6 +434,16 @@ export class ApplicationsRelationsService {
     const curPhones = Array.from(citizenData.citizenMap.values())
       .map((c) => (c.phone_number || '').replace(/\D/g, ''))
       .filter((v) => v.length >= 7);
+    const currentSuspectTokens = this.extractSuspectTokens(currentApp);
+    const curSuspectLikePatterns = Array.from(
+      new Set(
+        currentSuspectTokens
+          .map((t) => t.normalized.trim().toLowerCase())
+          .filter((v) => v.length >= 4)
+          .slice(0, 20)
+          .map((v) => `%${v.replace(/[%_\\]/g, '\\$&')}%`),
+      ),
+    );
 
     const candidateRows: Array<{ app_id: string }> = await this.applicationRepo.manager.query(
       `SELECT DISTINCT a2.id AS app_id
@@ -463,9 +475,10 @@ export class ApplicationsRelationsService {
            OR (cardinality($4::text[]) > 0 AND c2.pinfl = ANY($4::text[]))
            OR (cardinality($5::text[]) > 0 AND UPPER(c2.passport) = ANY($5::text[]))
            OR (cardinality($6::text[]) > 0 AND REGEXP_REPLACE(COALESCE(c2.phone_number, ''), '[^0-9]', '', 'g') = ANY($6::text[]))
+           OR (cardinality($7::text[]) > 0 AND a2.suspect_tree IS NOT NULL AND LOWER(a2.suspect_tree::text) LIKE ANY($7::text[]))
          )
        LIMIT 200`,
-      [id, curCardIds, curCitizenIds, curPinfls, curPassports, curPhones],
+      [id, curCardIds, curCitizenIds, curPinfls, curPassports, curPhones, curSuspectLikePatterns],
     );
 
     const candidateIds = candidateRows.map((r) => r.app_id);
@@ -565,7 +578,6 @@ export class ApplicationsRelationsService {
 
     const linkedApplicationIds = new Set<string>();
     let hasFraudCardLink = false;
-    const currentSuspectTokens = this.extractSuspectTokens(currentApp);
 
     // Har bir boshqa arizani tekshirish
     for (const other of otherApps) {
@@ -613,6 +625,8 @@ export class ApplicationsRelationsService {
                 masked_number: currentCard.masked_number,
                 full_name: currentCard.full_name,
                 bank_name: currentCard.bank?.name || null,
+                citizen_id: currentCard.citizen?.id || currentCard.citizen_id || null,
+                citizen_name: currentCard.citizen?.full_name?.trim() || null,
               },
               role_in_current_app: currentCardEntry.role,
               linked_applications: [],
@@ -1067,6 +1081,18 @@ export class ApplicationsRelationsService {
       currentUser,
     );
 
+    const currentTransfersMap = new Map<string, Transfer>();
+    if (currentApp.transfer?.id) {
+      currentTransfersMap.set(currentApp.transfer.id, currentApp.transfer);
+    }
+    if (currentApp.custom_fields) {
+      for (const cf of currentApp.custom_fields) {
+        if (cf.transfer?.id && !currentTransfersMap.has(cf.transfer.id)) {
+          currentTransfersMap.set(cf.transfer.id, cf.transfer);
+        }
+      }
+    }
+
     return {
       application: {
         id: currentApp.id,
@@ -1077,6 +1103,8 @@ export class ApplicationsRelationsService {
         date: currentApp.date,
         citizen: currentApp.citizen,
         transfer: currentApp.transfer,
+        transfers: Array.from(currentTransfersMap.values()),
+        suspect_tree: currentApp.suspect_tree || [],
       },
       stats: {
         total_linked_applications: linkedApplicationIds.size + enhanced.multi_hop_chains.length,
