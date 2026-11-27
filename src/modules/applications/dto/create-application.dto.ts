@@ -58,6 +58,10 @@ export class CreateApplicationDamageDto {
   description?: string | null;
 
   @IsOptional()
+  @IsString()
+  recipient_info?: string | null;
+
+  @IsOptional()
   @IsNumber()
   order?: number;
 }
@@ -70,6 +74,10 @@ export class CreateApplicationCustomFieldDto {
   @IsOptional()
   @IsString()
   key?: string;
+
+  @IsOptional()
+  @IsString()
+  entity_role?: string | null;
 
   @IsOptional()
   @IsEnum(CustomFieldType)

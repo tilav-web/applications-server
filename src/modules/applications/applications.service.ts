@@ -236,6 +236,7 @@ export class ApplicationsService {
           contract_number: d.contract_number?.trim() || null,
           damage_date: d.damage_date?.trim() || null,
           description: d.description?.trim() || null,
+          recipient_info: d.recipient_info?.trim() || null,
           order: d.order ?? idx,
         }),
       );
@@ -906,7 +907,12 @@ export class ApplicationsService {
       },
     };
 
-    if (relations_filter === 'with_relations' || relations_filter === 'fraud_card') {
+    if (
+      relations_filter === 'with_relations' ||
+      relations_filter === 'fraud_card' ||
+      relations_filter === 'fraud_clue' ||
+      relations_filter === 'cross_role'
+    ) {
       const matchedApps = await qb.select('app.id').getMany();
       const allIds = matchedApps.map((a) => a.id);
       if (allIds.length === 0) {
@@ -932,11 +938,19 @@ export class ApplicationsService {
       await this.attachChainCounts(allItems);
 
       const filtered = allItems.filter((item) => {
+        const rs = item.relations_summary;
+        if (!rs) return false;
         if (relations_filter === 'with_relations') {
-          return item.relations_summary && item.relations_summary.total > 0;
+          return rs.total > 0 || (rs.detected_crimes_count || 0) > 0;
         }
         if (relations_filter === 'fraud_card') {
-          return item.relations_summary && item.relations_summary.has_fraud_card_link;
+          return rs.cards > 0 || rs.has_fraud_card_link;
+        }
+        if (relations_filter === 'fraud_clue') {
+          return (rs.suspects || 0) > 0;
+        }
+        if (relations_filter === 'cross_role') {
+          return Boolean(rs.has_cross_role_collision);
         }
         return true;
       });

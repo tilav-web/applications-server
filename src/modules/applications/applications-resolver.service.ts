@@ -3,6 +3,7 @@ import { InjectRepository } from '@nestjs/typeorm';
 import { type EntityManager, ILike, Repository } from 'typeorm';
 
 import { TransferCustomFieldType } from '../../common/enums/transfer-custom-field-type.enum';
+import { TransferDestinationType } from '../../common/enums/transfer-destination-type.enum';
 import { formatTitleCase, formatUzbekName } from '../../common/utils/name-formatter.util';
 import {
   normalizeCardNumber,
@@ -11,6 +12,11 @@ import {
   normalizePinfl,
   normalizeUzPhone,
 } from '../../common/utils/normalization.util';
+import { DigitalIdentifierEntity } from '../intelligence/entities/digital-identifier.entity';
+import {
+  getIdentifierTypeLabel,
+  normalizeIdentifierValue,
+} from '../intelligence/utils/identifier-normalizer.util';
 import { Application } from './application.entity';
 import { Citizen } from './citizens/citizen.entity';
 import { Crime } from './crimes/crime.entity';
@@ -207,6 +213,93 @@ export class ApplicationsResolverService {
         ? tData.sender_card_id.trim()
         : null);
 
+    // Chiqish kanali (CARD, CRYPTO, PLATFORM, BANK_ACCOUNT, CASH) va raqamli qabul qiluvchi manzil
+    const rawDestType =
+      typeof tData.destination_type === 'string' && tData.destination_type.trim()
+        ? (tData.destination_type.trim().toUpperCase() as TransferDestinationType)
+        : TransferDestinationType.CARD;
+    const destinationType: TransferDestinationType = Object.values(
+      TransferDestinationType,
+    ).includes(rawDestType)
+      ? rawDestType
+      : TransferDestinationType.CARD;
+    const destPlatform =
+      typeof tData.destination_platform === 'string' ? tData.destination_platform.trim() : '';
+    const destValue =
+      typeof tData.destination_value === 'string' ? tData.destination_value.trim() : '';
+    const rawDestDetails =
+      tData.destination_details && typeof tData.destination_details === 'object'
+        ? (tData.destination_details as Record<string, unknown>)
+        : {};
+    const destinationDetails: Record<string, unknown> | null =
+      destPlatform || destValue || Object.keys(rawDestDetails).length > 0
+        ? {
+            ...rawDestDetails,
+            ...(destPlatform ? { platform: destPlatform } : {}),
+            ...(destValue ? { value: destValue } : {}),
+          }
+        : null;
+    let destinationLabel =
+      typeof tData.destination_label === 'string' && tData.destination_label.trim()
+        ? tData.destination_label.trim()
+        : null;
+    let receiverIdentifierId =
+      typeof tData.receiver_identifier_id === 'string' && tData.receiver_identifier_id.trim()
+        ? tData.receiver_identifier_id.trim()
+        : null;
+
+    if (destinationType !== TransferDestinationType.CARD) {
+      receiverCardId = null;
+      if (!destinationLabel) {
+        if (destPlatform && destValue) destinationLabel = `${destPlatform}: ${destValue}`;
+        else if (destValue) destinationLabel = destValue;
+        else if (destPlatform) destinationLabel = destPlatform;
+      }
+      if (
+        !receiverIdentifierId &&
+        destValue.length >= 2 &&
+        destinationType !== TransferDestinationType.CASH
+      ) {
+        const identRepo = manager.getRepository(DigitalIdentifierEntity);
+        const identType =
+          destinationType === TransferDestinationType.CRYPTO
+            ? 'crypto_wallet'
+            : destinationType === TransferDestinationType.BANK_ACCOUNT
+              ? 'bank_account'
+              : destinationType === TransferDestinationType.PLATFORM
+                ? destPlatform
+                  ? `platform_${destPlatform.toLowerCase().replace(/[^a-z0-9]+/g, '_')}`
+                  : 'online_platform'
+                : 'cashout_destination';
+        const normalized = normalizeIdentifierValue(identType, destValue);
+        if (normalized && normalized.length >= 2) {
+          let ident = await identRepo.findOne({
+            where: { type: identType, normalized_value: normalized },
+          });
+          if (!ident) {
+            ident = await identRepo.save(
+              identRepo.create({
+                type: identType,
+                type_label:
+                  destPlatform ||
+                  getIdentifierTypeLabel(
+                    identType,
+                    destinationType === TransferDestinationType.CRYPTO
+                      ? 'Kripto-hamyon / Birja'
+                      : destinationType === TransferDestinationType.BANK_ACCOUNT
+                        ? 'Bank hisob raqami'
+                        : 'Onlayn tizim / Profil',
+                  ),
+                raw_value: destValue,
+                normalized_value: normalized,
+              }),
+            );
+          }
+          receiverIdentifierId = ident.id;
+        }
+      }
+    }
+
     // Mavjud transfer bo'lsa (tahrirlash rejimida) — barcha maydonlarni bazada yangilaymiz
     if (opts.existingTransferId) {
       const existingTransfer = await transferRepo.findOne({
@@ -220,6 +313,13 @@ export class ApplicationsResolverService {
         existingTransfer.sender_card_id = effectiveSenderCardId;
         existingTransfer.transfer_date = transferDate;
         existingTransfer.transfer_time = transferTime;
+        existingTransfer.destination_type = destinationType;
+        existingTransfer.receiver_identifier_id =
+          destinationType === TransferDestinationType.CARD ? null : receiverIdentifierId;
+        existingTransfer.destination_label =
+          destinationType === TransferDestinationType.CARD ? null : destinationLabel;
+        existingTransfer.destination_details =
+          destinationType === TransferDestinationType.CARD ? null : destinationDetails;
         if (tData.transaction_id !== undefined) {
           existingTransfer.transaction_id = transactionId;
         }
@@ -234,6 +334,8 @@ export class ApplicationsResolverService {
     const hasMeaningfulTransferData = Boolean(
       parsedAmount !== null ||
       receiverCardId ||
+      receiverIdentifierId ||
+      destinationLabel ||
       transferDate ||
       transferTime ||
       providerId ||
@@ -254,6 +356,12 @@ export class ApplicationsResolverService {
       application_id: opts.applicationId,
       transfer_date: transferDate,
       transfer_time: transferTime,
+      destination_type: destinationType,
+      receiver_identifier_id:
+        destinationType === TransferDestinationType.CARD ? null : receiverIdentifierId,
+      destination_label: destinationType === TransferDestinationType.CARD ? null : destinationLabel,
+      destination_details:
+        destinationType === TransferDestinationType.CARD ? null : destinationDetails,
     });
     const savedTransfer = await transferRepo.save(createdTransfer);
 
@@ -547,6 +655,7 @@ export class ApplicationsResolverService {
           application_id: applicationId,
           label: f.label || null,
           key: f.key || null,
+          entity_role: f.entity_role || null,
           type: f.type || null,
           value: f.value ?? null,
           citizen_id: citizenId,

@@ -373,6 +373,9 @@ export class CitizensService {
     Object.assign(citizen, updatedData);
     const saved = await this.citizenRepo.save(citizen);
     await this.intelligenceSync.syncCitizenEntity(saved);
+    if (dto.phone_number !== undefined) {
+      await this.intelligenceSync.syncApplicationsByCitizenId(saved.id);
+    }
     return this.findOne(id);
   }
 

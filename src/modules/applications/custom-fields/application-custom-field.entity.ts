@@ -34,6 +34,10 @@ export class ApplicationCustomField extends BaseEntity {
   @Column({ name: 'key', type: 'varchar', length: 100, nullable: true })
   key: string | null;
 
+  // Qo'shimcha fuqaro/kartaning aniq protsessual roli: SUSPECT | DROPPER | TRANSIT | WITNESS | VICTIM | RELATED
+  @Column({ name: 'entity_role', type: 'varchar', length: 30, nullable: true })
+  entity_role: string | null;
+
   // Maydon turi: STRING, IMAGES, FILES, NUMBER, BOOLEAN, CITIZEN, CARD, TRANSFER, CRIME, DISTRICT
   @Column({
     name: 'type',

@@ -1,4 +1,4 @@
-import { ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
+import { ForbiddenException, Injectable, NotFoundException, Optional } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import type { Response } from 'express';
 import { In, Repository } from 'typeorm';
@@ -12,6 +12,7 @@ import {
   isPgUniqueViolation,
   normalizeCardNumber,
 } from '../../../../common/utils/normalization.util';
+import { IntelligenceSyncService } from '../../../intelligence/intelligence-sync.service';
 import { User } from '../../../users/user.entity';
 import { Card } from './card.entity';
 import type { CreateCardDto } from './dto/create-card.dto';
@@ -26,6 +27,8 @@ export class CardsService {
     @InjectRepository(User)
     private readonly userRepo: Repository<User>,
     private readonly excelService: CardsExcelService,
+    @Optional()
+    private readonly intelligenceSync?: IntelligenceSyncService,
   ) {}
 
   async create(dto: CreateCardDto): Promise<Card> {
@@ -281,6 +284,9 @@ export class CardsService {
 
     Object.assign(card, updatedData);
     await this.cardRepo.save(card);
+    if (dto.citizen_id !== undefined || dto.card_number !== undefined) {
+      await this.intelligenceSync?.syncApplicationsByCardId(id);
+    }
     return this.findOne(id);
   }
 

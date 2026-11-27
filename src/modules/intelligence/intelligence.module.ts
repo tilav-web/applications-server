@@ -3,11 +3,15 @@ import { TypeOrmModule } from '@nestjs/typeorm';
 
 import { Application } from '../applications/application.entity';
 import { Citizen } from '../applications/citizens/citizen.entity';
+import { SuspectFieldConfig } from '../applications/suspect-fields/suspect-field-config.entity';
 import { Bank } from '../applications/transfers/banks/bank.entity';
 import { Card } from '../applications/transfers/cards/card.entity';
 import { PaymentProvider } from '../applications/transfers/payment_providers/payment_provider.entity';
 import { Transfer } from '../applications/transfers/transfer.entity';
 import { AuthModule } from '../auth/auth.module';
+import { DetectedCrime } from '../detected-crimes/entities/detected-crime.entity';
+import { DetectedCrimeEvidence } from '../detected-crimes/entities/detected-crime-evidence.entity';
+import { DetectedCrimeSuspect } from '../detected-crimes/entities/detected-crime-suspect.entity';
 import { FinancialFlowModule } from '../financial-flow/financial-flow.module';
 import { User } from '../users/user.entity';
 import { DigitalIdentifierEntity } from './entities/digital-identifier.entity';
@@ -31,6 +35,10 @@ import { IntelligenceSyncService } from './intelligence-sync.service';
       PaymentProvider,
       Transfer,
       Application,
+      SuspectFieldConfig,
+      DetectedCrime,
+      DetectedCrimeSuspect,
+      DetectedCrimeEvidence,
       User,
     ]),
     AuthModule,

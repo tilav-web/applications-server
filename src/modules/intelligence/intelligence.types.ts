@@ -162,6 +162,18 @@ export interface GlobalSearchResponse {
   countsByCategory: Record<string, number>;
 }
 
+export interface DetectedCrimeLinkItem {
+  id: string;
+  case_number: string | null;
+  title: string;
+  detected_at: string | null;
+  district_name: string | null;
+  crime_article: string | null;
+  status_label: string | null;
+  matched_by: string[];
+  target_route: string;
+}
+
 export interface LiveRadarResponse {
   found: boolean;
   entityType?: 'card' | 'phone' | 'identifier' | 'citizen';
@@ -177,6 +189,13 @@ export interface LiveRadarResponse {
   appsCount: number;
   suspectCount: number;
   victimCount: number;
+  detectedCrimesCount?: number;
+  detectedCrimes?: Array<{
+    id: string;
+    case_number: string | null;
+    title: string;
+    matched_by: string;
+  }>;
   totalLoss: number;
   riskLevel: 'NONE' | 'LOW' | 'MEDIUM' | 'HIGH' | 'CRITICAL';
   recentApplications: {

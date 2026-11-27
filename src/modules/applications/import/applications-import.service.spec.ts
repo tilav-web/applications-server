@@ -478,7 +478,9 @@ describe('ApplicationsImportService & ApplicationsImportTemplateService', () => 
     expect(savedAppPayload.officer_notes).toBe("Qo'shimcha izoh matni");
     expect(savedAppPayload.application_number).toBe('M0110224/2026-70001');
     expect(txDamageRepo.save).toHaveBeenCalledTimes(1);
-    const savedDamages = txDamageRepo.save.mock.calls[0][0] as Array<Record<string, unknown>>;
+    const savedDamages = txDamageRepo.save.mock.calls[0][0] as unknown as Array<
+      Record<string, unknown>
+    >;
     expect(savedDamages).toHaveLength(2);
     expect(savedDamages[0].organization_name).toBe('Uzum Nasiya');
     expect(savedDamages[0].description).toBe('Ayfon 15 Pro');

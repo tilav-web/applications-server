@@ -418,7 +418,7 @@ export class Application extends BaseEntity {
   row_color_updated_at: Date | null;
 
   /**
-   * Tahliliy bog'liqliklar hisoboti (Virtual/Hisoblangan maydon)
+   * Tahliliy bog'liqliklar hisoboti (Faqat firibgar / dropper / rol-to'qnashuvi bo'yicha)
    */
   relations_summary?: {
     total: number;
@@ -426,6 +426,8 @@ export class Application extends BaseEntity {
     citizens: number;
     suspects?: number;
     has_fraud_card_link: boolean;
+    has_cross_role_collision?: boolean;
+    detected_crimes_count?: number;
   };
 
   @BeforeInsert()

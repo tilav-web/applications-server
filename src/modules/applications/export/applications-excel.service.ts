@@ -236,9 +236,16 @@ export class ApplicationsExcelService {
       }
 
       const relSummary = app.relations_summary;
+      const relTags: string[] = [];
+      if (relSummary?.has_fraud_card_link) relTags.push('Firibgar kartasi/izi');
+      if (relSummary?.has_cross_role_collision) relTags.push("Rol to'qnashuvi");
+      if (relSummary?.detected_crimes_count && relSummary.detected_crimes_count > 0) {
+        relTags.push(`Aniqlangan jinoyat: ${relSummary.detected_crimes_count}`);
+      }
+      const totalRelCount = (relSummary?.total || 0) + (relSummary?.detected_crimes_count || 0);
       const relationsStr =
-        relSummary && relSummary.total > 0
-          ? `${relSummary.total} ta${relSummary.has_fraud_card_link ? ' (Firibgar kartasi)' : ''}`
+        totalRelCount > 0
+          ? `${totalRelCount} ta${relTags.length > 0 ? ` (${relTags.join(', ')})` : ''}`
           : '—';
 
       const officerStr = app.created_by

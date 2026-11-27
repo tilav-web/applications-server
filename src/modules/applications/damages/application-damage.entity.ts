@@ -78,6 +78,10 @@ export class ApplicationDamage extends BaseEntity {
   @Column({ name: 'description', type: 'text', nullable: true })
   description: string | null;
 
+  /** Zarar oluvchi do'kon / merchant / telefon / rekvizit (ixtiyoriy, firibgarni aniqlash uchun) */
+  @Column({ name: 'recipient_info', type: 'varchar', length: 255, nullable: true })
+  recipient_info: string | null;
+
   @Column({ name: 'order', type: 'int', default: 0 })
   order: number;
 }

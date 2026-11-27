@@ -4,10 +4,12 @@ import {
   ForbiddenException,
   Injectable,
   NotFoundException,
+  Optional,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { ILike, In, IsNull, Not, Repository } from 'typeorm';
 
+import { ApplicationRepeatType } from '../../common/enums/appeal-classification.enum';
 import { Role } from '../../common/enums/role.enum';
 import { TransferDestinationType } from '../../common/enums/transfer-destination-type.enum';
 import { TransferStatus } from '../../common/enums/transfer-status.enum';
@@ -19,6 +21,9 @@ import { Bank } from '../applications/transfers/banks/bank.entity';
 import { Card } from '../applications/transfers/cards/card.entity';
 import { PaymentProvider } from '../applications/transfers/payment_providers/payment_provider.entity';
 import { Transfer } from '../applications/transfers/transfer.entity';
+import { DetectedCrime } from '../detected-crimes/entities/detected-crime.entity';
+import { DetectedCrimeEvidence } from '../detected-crimes/entities/detected-crime-evidence.entity';
+import { DetectedCrimeSuspect } from '../detected-crimes/entities/detected-crime-suspect.entity';
 import {
   FinancialFlowService,
   IGraphEdge,
@@ -30,6 +35,7 @@ import { EntityApplicationLink, EntityLinkRole } from './entities/entity-applica
 import { PhoneEntity } from './entities/phone.entity';
 import type {
   CoOccurringClueItem,
+  DetectedCrimeLinkItem,
   DossierApplicationItem,
   DossierMicroStats,
   DossierTransferItem,
@@ -47,9 +53,18 @@ import { IntelligenceSyncService } from './intelligence-sync.service';
 import {
   formatPhoneDisplay,
   getIdentifierTypeLabel,
+  isCardLikeFieldKey,
+  isLinkableIdentifierType,
+  isPhoneLikeFieldKey,
   normalizeIdentifierValue,
   normalizePhoneDigits,
 } from './utils/identifier-normalizer.util';
+
+const FRAUD_LINK_ROLES: ReadonlySet<EntityLinkRole> = new Set(['SUSPECT', 'DROPPER', 'TRANSIT']);
+
+function isFraudLinkRole(role?: string | null): boolean {
+  return Boolean(role && FRAUD_LINK_ROLES.has(role as EntityLinkRole));
+}
 
 @Injectable()
 export class IntelligenceService {
@@ -76,6 +91,15 @@ export class IntelligenceService {
     private readonly userRepo: Repository<User>,
     private readonly syncService: IntelligenceSyncService,
     private readonly financialFlowService: FinancialFlowService,
+    @Optional()
+    @InjectRepository(DetectedCrime)
+    private readonly detectedCrimeRepo?: Repository<DetectedCrime>,
+    @Optional()
+    @InjectRepository(DetectedCrimeSuspect)
+    private readonly detectedCrimeSuspectRepo?: Repository<DetectedCrimeSuspect>,
+    @Optional()
+    @InjectRepository(DetectedCrimeEvidence)
+    private readonly detectedCrimeEvidenceRepo?: Repository<DetectedCrimeEvidence>,
   ) {}
 
   // ===========================================================================
@@ -610,6 +634,16 @@ export class IntelligenceService {
     if (!rawValue || rawValue.trim().length < 3) return empty;
 
     const cleanType = (type || 'other_info').toLowerCase();
+    if (
+      !isPhoneLikeFieldKey(cleanType) &&
+      !isCardLikeFieldKey(cleanType) &&
+      cleanType !== 'pinfl' &&
+      cleanType !== 'passport' &&
+      !isLinkableIdentifierType(cleanType)
+    ) {
+      return empty;
+    }
+
     let entityType: 'card' | 'phone' | 'identifier' | 'citizen' | undefined;
     let entityId: string | undefined;
     let title: string | undefined;
@@ -617,57 +651,63 @@ export class IntelligenceService {
     let targetRoute: string | undefined;
     let ownerCitizen: LiveRadarResponse['ownerCitizen'] = null;
     let links: EntityApplicationLink[] = [];
+    const dcTokens: string[] = [];
+    const dcCitizenIds: string[] = [];
 
-    if (cleanType.includes('card') || cleanType.includes('karta')) {
+    if (isCardLikeFieldKey(cleanType)) {
       const digits = rawValue.replace(/\D/g, '');
       if (digits.length < 8) return empty;
+      dcTokens.push(digits);
       const card = await this.cardRepo.findOne({
         where: { card_number: digits },
         relations: { citizen: true, bank: true },
       });
-      if (!card) return empty;
-
-      entityType = 'card';
-      entityId = card.id;
-      title = this.formatCardDisplay(card.card_number, card.masked_number);
-      subtitle = card.bank?.name || this.financialFlowService.identifyBank(digits);
-      targetRoute = `/cards/${card.id}`;
-      if (card.citizen) {
-        ownerCitizen = {
-          id: card.citizen.id,
-          fullName: this.formatCitizenFullName(card.citizen),
-          phone: card.citizen.phone_number,
-        };
+      if (card) {
+        entityType = 'card';
+        entityId = card.id;
+        title = this.formatCardDisplay(card.card_number, card.masked_number);
+        subtitle = card.bank?.name || this.financialFlowService.identifyBank(digits);
+        targetRoute = `/cards/${card.id}`;
+        if (card.citizen) {
+          dcCitizenIds.push(card.citizen.id);
+          ownerCitizen = {
+            id: card.citizen.id,
+            fullName: this.formatCitizenFullName(card.citizen),
+            phone: card.citizen.phone_number,
+          };
+        }
+        links = await this.linkRepo.find({
+          where: { card_id: card.id },
+          relations: { application: { transfer: true } },
+        });
       }
-      links = await this.linkRepo.find({
-        where: { card_id: card.id },
-        relations: { application: { transfer: true } },
-      });
-    } else if (cleanType.includes('phone') || cleanType.includes('telefon')) {
+    } else if (isPhoneLikeFieldKey(cleanType)) {
       const digits = normalizePhoneDigits(rawValue);
       if (digits.length < 7) return empty;
+      dcTokens.push(digits);
       const phone = await this.phoneRepo.findOne({
         where: { phone_number: digits },
         relations: { citizen: true },
       });
-      if (!phone) return empty;
-
-      entityType = 'phone';
-      entityId = phone.id;
-      title = phone.formatted_number || formatPhoneDisplay(phone.phone_number);
-      subtitle = phone.operator || 'Aloqa tarmogʻi';
-      targetRoute = `/dossier/phone/${phone.id}`;
-      if (phone.citizen) {
-        ownerCitizen = {
-          id: phone.citizen.id,
-          fullName: this.formatCitizenFullName(phone.citizen),
-          phone: phone.citizen.phone_number,
-        };
+      if (phone) {
+        entityType = 'phone';
+        entityId = phone.id;
+        title = phone.formatted_number || formatPhoneDisplay(phone.phone_number);
+        subtitle = phone.operator || 'Aloqa tarmogʻi';
+        targetRoute = `/dossier/phone/${phone.id}`;
+        if (phone.citizen) {
+          dcCitizenIds.push(phone.citizen.id);
+          ownerCitizen = {
+            id: phone.citizen.id,
+            fullName: this.formatCitizenFullName(phone.citizen),
+            phone: phone.citizen.phone_number,
+          };
+        }
+        links = await this.linkRepo.find({
+          where: { phone_id: phone.id },
+          relations: { application: { transfer: true } },
+        });
       }
-      links = await this.linkRepo.find({
-        where: { phone_id: phone.id },
-        relations: { application: { transfer: true } },
-      });
     } else if (cleanType === 'pinfl' || cleanType === 'passport') {
       const cleanVal =
         cleanType === 'pinfl'
@@ -678,25 +718,27 @@ export class IntelligenceService {
       const citizen = await this.citizenRepo.findOne({
         where: cleanType === 'pinfl' ? { pinfl: cleanVal } : { passport: cleanVal },
       });
-      if (!citizen) return empty;
-
-      entityType = 'citizen';
-      entityId = citizen.id;
-      title = this.formatCitizenFullName(citizen);
-      subtitle = `${cleanType.toUpperCase()}: ${cleanVal}`;
-      targetRoute = `/citizens/${citizen.id}`;
-      ownerCitizen = {
-        id: citizen.id,
-        fullName: title,
-        phone: citizen.phone_number,
-      };
-      links = await this.linkRepo.find({
-        where: { citizen_id: citizen.id },
-        relations: { application: { transfer: true } },
-      });
+      if (citizen) {
+        dcCitizenIds.push(citizen.id);
+        entityType = 'citizen';
+        entityId = citizen.id;
+        title = this.formatCitizenFullName(citizen);
+        subtitle = `${cleanType.toUpperCase()}: ${cleanVal}`;
+        targetRoute = `/citizens/${citizen.id}`;
+        ownerCitizen = {
+          id: citizen.id,
+          fullName: title,
+          phone: citizen.phone_number,
+        };
+        links = await this.linkRepo.find({
+          where: { citizen_id: citizen.id },
+          relations: { application: { transfer: true } },
+        });
+      }
     } else {
       const normalized = normalizeIdentifierValue(cleanType, rawValue);
       if (normalized.length < 3) return empty;
+      dcTokens.push(normalized);
 
       const exactIdent = await this.identifierRepo.findOne({
         where: { type: cleanType, normalized_value: normalized },
@@ -708,31 +750,50 @@ export class IntelligenceService {
           where: { normalized_value: normalized },
           relations: { citizen: true },
         }));
-      if (!ident) return empty;
-
-      entityType = 'identifier';
-      entityId = ident.id;
-      title = ident.raw_value;
-      subtitle = ident.type_label || getIdentifierTypeLabel(ident.type);
-      targetRoute = `/dossier/identifier/${ident.id}`;
-      if (ident.citizen) {
-        ownerCitizen = {
-          id: ident.citizen.id,
-          fullName: this.formatCitizenFullName(ident.citizen),
-          phone: ident.citizen.phone_number,
-        };
+      if (ident) {
+        entityType = 'identifier';
+        entityId = ident.id;
+        title = ident.raw_value;
+        subtitle = ident.type_label || getIdentifierTypeLabel(ident.type);
+        targetRoute = `/dossier/identifier/${ident.id}`;
+        if (ident.citizen) {
+          dcCitizenIds.push(ident.citizen.id);
+          ownerCitizen = {
+            id: ident.citizen.id,
+            fullName: this.formatCitizenFullName(ident.citizen),
+            phone: ident.citizen.phone_number,
+          };
+        }
+        links = await this.linkRepo.find({
+          where: { identifier_id: ident.id },
+          relations: { application: { transfer: true } },
+        });
       }
-      links = await this.linkRepo.find({
-        where: { identifier_id: ident.id },
-        relations: { application: { transfer: true } },
-      });
     }
+
+    const detectedCrimesFound = await this.findDetectedCrimesForEntities(
+      {
+        citizenIds: dcCitizenIds,
+        cardNumbers: isCardLikeFieldKey(cleanType) ? dcTokens : [],
+        phoneDigits: isPhoneLikeFieldKey(cleanType) ? dcTokens : [],
+        identifierValues:
+          !isCardLikeFieldKey(cleanType) &&
+          !isPhoneLikeFieldKey(cleanType) &&
+          cleanType !== 'pinfl' &&
+          cleanType !== 'passport'
+            ? dcTokens
+            : [],
+      },
+      currentUser,
+    );
+
+    if (!entityId && detectedCrimesFound.length === 0) return empty;
 
     const filteredLinks = links.filter(
       (l) => l.application && !l.application.is_deleted && l.application_id !== excludeAppId,
     );
 
-    if (filteredLinks.length === 0 && !ownerCitizen) {
+    if (filteredLinks.length === 0 && !ownerCitizen && detectedCrimesFound.length === 0) {
       return {
         found: true,
         entityType,
@@ -744,6 +805,8 @@ export class IntelligenceService {
         appsCount: 0,
         suspectCount: 0,
         victimCount: 0,
+        detectedCrimesCount: 0,
+        detectedCrimes: [],
         totalLoss: 0,
         riskLevel: 'LOW',
         recentApplications: [],
@@ -800,12 +863,13 @@ export class IntelligenceService {
       if (!hasUzsLoss || item.currency === 'UZS') {
         totalLoss += item.amount || 0;
       }
-      if (item.role === 'SUSPECT' || item.role === 'DROPPER') suspectCount++;
+      if (item.role === 'SUSPECT' || item.role === 'DROPPER' || item.role === 'TRANSIT')
+        suspectCount++;
       else if (item.role === 'VICTIM') victimCount++;
     }
 
     const riskLevel: LiveRadarResponse['riskLevel'] =
-      suspectCount >= 2
+      suspectCount >= 2 || detectedCrimesFound.length > 0
         ? 'CRITICAL'
         : suspectCount === 1
           ? 'HIGH'
@@ -836,13 +900,20 @@ export class IntelligenceService {
       found: true,
       entityType,
       entityId,
-      title,
-      subtitle,
-      targetRoute,
+      title: title || rawValue.trim(),
+      subtitle: subtitle || getIdentifierTypeLabel(cleanType),
+      targetRoute: targetRoute || detectedCrimesFound[0]?.target_route,
       ownerCitizen,
       appsCount: byApp.size,
       suspectCount,
       victimCount,
+      detectedCrimesCount: detectedCrimesFound.length,
+      detectedCrimes: detectedCrimesFound.slice(0, 5).map((dc) => ({
+        id: dc.id,
+        case_number: dc.case_number,
+        title: dc.title,
+        matched_by: dc.matched_by.join(', '),
+      })),
       totalLoss,
       riskLevel,
       recentApplications,
@@ -2957,6 +3028,7 @@ export class IntelligenceService {
         { card_id: card.id, citizen_id: IsNull() },
         { citizen_id: citizen.id, source: 'CONFIRMED_MATCH' },
       );
+      await this.syncService.syncApplicationsByCardId(card.id);
       return { success: true, message: 'Karta fuqaroga muvaffaqiyatli biriktirildi' };
     }
 
@@ -2975,6 +3047,7 @@ export class IntelligenceService {
         { phone_id: phone.id, citizen_id: IsNull() },
         { citizen_id: citizen.id, source: 'CONFIRMED_MATCH' },
       );
+      await this.syncService.syncApplicationsByPhoneId(phone.id);
       return { success: true, message: 'Telefon raqam fuqaroga muvaffaqiyatli biriktirildi' };
     }
 
@@ -2988,6 +3061,7 @@ export class IntelligenceService {
       { identifier_id: ident.id, citizen_id: IsNull() },
       { citizen_id: citizen.id, source: 'CONFIRMED_MATCH' },
     );
+    await this.syncService.syncApplicationsByIdentifierId(ident.id);
     return { success: true, message: 'Raqamli iz fuqaroga muvaffaqiyatli biriktirildi' };
   }
 
@@ -3344,13 +3418,199 @@ export class IntelligenceService {
   }
 
   // ===========================================================================
-  // 9. ARIZA BOG'LIQLIKLARINI BOYITISH (NETWORK GRAPH + CROSS-ROLE + MULTI-HOP)
+  // 9. ANIQLANGAN JINOYATLAR (DETECTED CRIMES) BILAN FIRIBGAR KESISHMALARI
+  // ===========================================================================
+
+  async findDetectedCrimesForEntities(
+    entities: {
+      citizenIds: string[];
+      cardNumbers: string[];
+      phoneDigits: string[];
+      identifierValues: string[];
+    },
+    currentUser?: JwtAccessPayload,
+  ): Promise<DetectedCrimeLinkItem[]> {
+    if (!this.detectedCrimeRepo) return [];
+
+    const citizenIds = Array.from(new Set(entities.citizenIds.filter(Boolean)));
+    const cardNumbers = Array.from(
+      new Set(entities.cardNumbers.map((c) => c.replace(/\D/g, '')).filter((c) => c.length >= 8)),
+    );
+    const phoneDigits = Array.from(
+      new Set(
+        entities.phoneDigits.map((p) => normalizePhoneDigits(p)).filter((p) => p.length >= 7),
+      ),
+    );
+    const identVals = Array.from(
+      new Set(
+        entities.identifierValues.map((v) => v.trim().toLowerCase()).filter((v) => v.length >= 3),
+      ),
+    );
+
+    if (
+      citizenIds.length === 0 &&
+      cardNumbers.length === 0 &&
+      phoneDigits.length === 0 &&
+      identVals.length === 0
+    ) {
+      return [];
+    }
+
+    const matchReasonsByDcId = new Map<string, Set<string>>();
+    const addReason = (dcId: string, reason: string) => {
+      if (!matchReasonsByDcId.has(dcId)) {
+        matchReasonsByDcId.set(dcId, new Set());
+      }
+      matchReasonsByDcId.get(dcId)!.add(reason);
+    };
+
+    // 1. Gumonlanuvchi fuqaro bo'yicha (detected_crime_suspects)
+    if (citizenIds.length > 0 && this.detectedCrimeSuspectRepo) {
+      const suspects = await this.detectedCrimeSuspectRepo.find({
+        where: { citizen_id: In(citizenIds) },
+        relations: { citizen: true },
+      });
+      for (const s of suspects) {
+        addReason(
+          s.detected_crime_id,
+          `Gumonlanuvchi: ${this.formatCitizenFullName(s.citizen)} (${s.role_in_crime})`,
+        );
+      }
+    }
+
+    // 2. Ashyoviy dalillar va suspect_tree / channel_or_source_url bo'yicha
+    const tokenEntries: Array<{ raw: string; pattern: string; label: string }> = [
+      ...cardNumbers.map((c) => ({
+        raw: c,
+        pattern: `%${c.replace(/[%_\\]/g, '\\$&')}%`,
+        label: `Karta: ${this.formatCardDisplay(c)}`,
+      })),
+      ...phoneDigits.map((p) => ({
+        raw: p,
+        pattern: `%${(p.length >= 9 ? p.slice(-9) : p).replace(/[%_\\]/g, '\\$&')}%`,
+        label: `Telefon: ${formatPhoneDisplay(p)}`,
+      })),
+      ...identVals.slice(0, 20).map((v) => ({
+        raw: v,
+        pattern: `%${v.replace(/[%_\\]/g, '\\$&')}%`,
+        label: `Raqamli iz: ${v}`,
+      })),
+    ];
+
+    if (tokenEntries.length > 0) {
+      const patterns = tokenEntries.map((t) => t.pattern);
+      if (this.detectedCrimeEvidenceRepo) {
+        const evidences: Array<{
+          detected_crime_id: string;
+          identifier_value: string | null;
+          title: string | null;
+        }> = await this.detectedCrimeRepo.manager.query(
+          `SELECT e.detected_crime_id, e.identifier_value, e.title
+           FROM detected_crime_evidences e
+           INNER JOIN detected_crimes dc ON dc.id = e.detected_crime_id AND dc.is_deleted = false
+           WHERE e.identifier_value IS NOT NULL
+             AND (
+               LOWER(e.identifier_value) LIKE ANY($1::text[])
+               OR REGEXP_REPLACE(e.identifier_value, '[^0-9]', '', 'g') LIKE ANY($1::text[])
+             )
+           LIMIT 50`,
+          [patterns],
+        );
+
+        for (const ev of evidences) {
+          const evLow = (ev.identifier_value || '').toLowerCase();
+          const evDigits = (ev.identifier_value || '').replace(/\D/g, '');
+          for (const tok of tokenEntries) {
+            const matchDigits = tok.raw.length >= 9 ? tok.raw.slice(-9) : tok.raw;
+            if (
+              evLow.includes(tok.raw) ||
+              (evDigits.length >= 7 && evDigits.includes(matchDigits))
+            ) {
+              addReason(ev.detected_crime_id, `Ashyoviy dalil (${tok.label})`);
+            }
+          }
+        }
+      }
+
+      const matchedDcs: Array<{
+        id: string;
+        channel_or_source_url: string | null;
+        suspect_tree: unknown;
+      }> = await this.detectedCrimeRepo.manager.query(
+        `SELECT dc.id, dc.channel_or_source_url, dc.suspect_tree
+         FROM detected_crimes dc
+         WHERE dc.is_deleted = false
+           AND (
+             (dc.channel_or_source_url IS NOT NULL AND LOWER(dc.channel_or_source_url) LIKE ANY($1::text[]))
+             OR (dc.suspect_tree IS NOT NULL AND LOWER(dc.suspect_tree::text) LIKE ANY($1::text[]))
+           )
+         LIMIT 50`,
+        [patterns],
+      );
+
+      for (const row of matchedDcs) {
+        const hay =
+          `${row.channel_or_source_url || ''} ${JSON.stringify(row.suspect_tree || '')}`.toLowerCase();
+        const hayDigits = hay.replace(/\D/g, '');
+        for (const tok of tokenEntries) {
+          const matchDigits = tok.raw.length >= 9 ? tok.raw.slice(-9) : tok.raw;
+          if (
+            hay.includes(tok.raw) ||
+            (matchDigits.length >= 8 && hayDigits.includes(matchDigits))
+          ) {
+            addReason(row.id, tok.label);
+          }
+        }
+      }
+    }
+
+    const dcIds = Array.from(matchReasonsByDcId.keys());
+    if (dcIds.length === 0) return [];
+
+    const permCtx = await this.getUserPermissionsContext(currentUser);
+    const crimes = await this.detectedCrimeRepo.find({
+      where: { id: In(dcIds), is_deleted: false },
+      relations: { district: true, crime: true, crime_status: true, application_status: true },
+      order: { detected_at: 'DESC' },
+    });
+
+    return crimes.map((dc) => {
+      const restricted =
+        permCtx.isDistrictOfficer &&
+        (!dc.district_id || !permCtx.assignedDistrictIds.includes(dc.district_id));
+      return {
+        id: dc.id,
+        case_number: restricted ? 'Boshqa tuman ishi' : dc.case_number || dc.kusp_number || null,
+        title: restricted ? 'Boshqa tuman aniqlangan jinoyati' : dc.title,
+        detected_at: dc.detected_at ? new Date(dc.detected_at).toISOString() : null,
+        district_name: dc.district?.name || null,
+        status_label:
+          dc.crime_status?.name ||
+          dc.application_status?.name ||
+          dc.qualification_type ||
+          'Tekshiruvda',
+        crime_article: dc.crime?.article || dc.mjtk_article || null,
+        matched_by: Array.from(matchReasonsByDcId.get(dc.id) || []),
+        target_route: `/detected-crimes/${dc.id}`,
+      };
+    });
+  }
+
+  // ===========================================================================
+  // 10. ARIZA BOG'LIQLIKLARINI BOYITISH (FIRIBGAR-MARKAZLI NETWORK + MULTI-HOP + DETECTED CRIMES)
   // ===========================================================================
 
   async getEnhancedApplicationIntelligence(applicationId: string, currentUser?: JwtAccessPayload) {
     const permCtx = await this.getUserPermissionsContext(currentUser);
 
-    const currentLinks = await this.linkRepo.find({
+    const currentAppMeta = await this.appRepo.findOne({
+      where: { id: applicationId },
+      select: { id: true, repeat_type: true, root_application_id: true },
+    });
+    const currentRootId = currentAppMeta?.root_application_id || applicationId;
+    const isCurrentDuplicate = currentAppMeta?.repeat_type === ApplicationRepeatType.DUPLICATE;
+
+    const currentLinksRaw = await this.linkRepo.find({
       where: { application_id: applicationId },
       relations: {
         card: { bank: true, citizen: true },
@@ -3360,15 +3620,44 @@ export class IntelligenceService {
       },
     });
 
-    const cardIds = currentLinks.map((l) => l.card_id).filter((id): id is string => Boolean(id));
-    const phoneIds = currentLinks.map((l) => l.phone_id).filter((id): id is string => Boolean(id));
-    const identIds = currentLinks
-      .map((l) => l.identifier_id)
-      .filter((id): id is string => Boolean(id));
-    const citIds = currentLinks.map((l) => l.citizen_id).filter((id): id is string => Boolean(id));
+    // Erkin tavsiflar (telegram_bio, other_info) avtomatik bog'liqlikka kirmaydi
+    const currentLinks = currentLinksRaw.filter(
+      (l) => !l.identifier || isLinkableIdentifierType(l.identifier.type),
+    );
 
-    // Cross-role va boshqa arizalardagi mosliklar
-    const otherLinks =
+    const cardIds = Array.from(
+      new Set(currentLinks.map((l) => l.card_id).filter((id): id is string => Boolean(id))),
+    );
+    const phoneIds = Array.from(
+      new Set(currentLinks.map((l) => l.phone_id).filter((id): id is string => Boolean(id))),
+    );
+    const identIds = Array.from(
+      new Set(currentLinks.map((l) => l.identifier_id).filter((id): id is string => Boolean(id))),
+    );
+    const citIds = Array.from(
+      new Set(currentLinks.map((l) => l.citizen_id).filter((id): id is string => Boolean(id))),
+    );
+
+    const curCardRoleMap = new Map<string, Set<EntityLinkRole>>();
+    const curPhoneRoleMap = new Map<string, Set<EntityLinkRole>>();
+    const curIdentRoleMap = new Map<string, Set<EntityLinkRole>>();
+    const curCitRoleMap = new Map<string, Set<EntityLinkRole>>();
+    const addRole = (map: Map<string, Set<EntityLinkRole>>, k: string, r: EntityLinkRole) => {
+      if (!map.has(k)) map.set(k, new Set());
+      map.get(k)!.add(r);
+    };
+    for (const cl of currentLinks) {
+      if (cl.card_id) addRole(curCardRoleMap, cl.card_id, cl.role);
+      if (cl.phone_id) addRole(curPhoneRoleMap, cl.phone_id, cl.role);
+      if (cl.identifier_id) addRole(curIdentRoleMap, cl.identifier_id, cl.role);
+      if (cl.citizen_id) addRole(curCitRoleMap, cl.citizen_id, cl.role);
+    }
+
+    const hasFraudRoleInSet = (roles?: Set<EntityLinkRole>): boolean =>
+      Boolean(roles && Array.from(roles).some((r) => isFraudLinkRole(r)));
+
+    // Boshqa arizalardagi mosliklar (faqat firibgar/dropper/tranzit yoki rol to'qnashuvi!)
+    const rawOtherLinks =
       cardIds.length || phoneIds.length || identIds.length || citIds.length
         ? await this.linkRepo.find({
             where: [
@@ -3394,26 +3683,77 @@ export class IntelligenceService {
           })
         : [];
 
-    // Multi-hop: Ushbu arizadagi karta/telefon egalarining (citizen_id) BOSHQA kartalari yoki telefonlari qatnashgan arizalar!
-    const discoveredOwnerCitizenIds = new Set<string>(citIds);
-    for (const cl of currentLinks) {
-      if (cl.card?.citizen_id) discoveredOwnerCitizenIds.add(cl.card.citizen_id);
-      if (cl.phone?.citizen_id) discoveredOwnerCitizenIds.add(cl.phone.citizen_id);
-      if (cl.identifier?.citizen_id) discoveredOwnerCitizenIds.add(cl.identifier.citizen_id);
+    // Qoida: VICTIM ↔ VICTIM shovqinini chiqarib tashlash!
+    const candidateOtherLinks = rawOtherLinks.filter((ol) => {
+      if (ol.identifier && !isLinkableIdentifierType(ol.identifier.type)) return false;
+      const otherIsFraud = isFraudLinkRole(ol.role);
+      const curIsFraud =
+        (ol.card_id ? hasFraudRoleInSet(curCardRoleMap.get(ol.card_id)) : false) ||
+        (ol.phone_id ? hasFraudRoleInSet(curPhoneRoleMap.get(ol.phone_id)) : false) ||
+        (ol.identifier_id ? hasFraudRoleInSet(curIdentRoleMap.get(ol.identifier_id)) : false) ||
+        (ol.citizen_id ? hasFraudRoleInSet(curCitRoleMap.get(ol.citizen_id)) : false);
+      return otherIsFraud || curIsFraud;
+    });
+
+    const otherAppIdsAll = Array.from(new Set(candidateOtherLinks.map((ol) => ol.application_id)));
+    const otherAppsLoaded = await this.loadDetailedApplications(otherAppIdsAll);
+
+    // Bir xil hodisaning DUPLICATE arizasini chiqarib tashlash
+    const isSameChainDuplicate = (app: Application): boolean => {
+      const otherRootId = app.root_application_id || app.id;
+      const otherIsDup = app.repeat_type === ApplicationRepeatType.DUPLICATE;
+      return (isCurrentDuplicate || otherIsDup) && otherRootId === currentRootId;
+    };
+
+    const otherAppMap = new Map<string, Application>();
+    for (const oa of otherAppsLoaded) {
+      if (!isSameChainDuplicate(oa)) {
+        otherAppMap.set(oa.id, oa);
+      }
+    }
+
+    const otherLinks = candidateOtherLinks.filter((ol) => otherAppMap.has(ol.application_id));
+
+    // Multi-Hop: FAQAT firibgar/dropper/tranzit obyektlaridan boshlab 2-qadam zanjir topamiz
+    // (Jabrlanuvchining o'zining 2-kartasi hech qachon multi-hop sifatida chiqmaydi!)
+    const fraudLinks = currentLinks.filter((cl) => isFraudLinkRole(cl.role));
+    const discoveredFraudOwnerCitizenIds = new Set<string>();
+    const fraudCardIds = new Set<string>();
+    const fraudPhoneDigits: string[] = [];
+    const fraudCardNumbers: string[] = [];
+    const fraudIdentifierValues: string[] = [];
+
+    for (const fl of fraudLinks) {
+      if (fl.citizen_id) discoveredFraudOwnerCitizenIds.add(fl.citizen_id);
+      if (fl.card?.citizen_id) discoveredFraudOwnerCitizenIds.add(fl.card.citizen_id);
+      if (fl.phone?.citizen_id) discoveredFraudOwnerCitizenIds.add(fl.phone.citizen_id);
+      if (fl.identifier?.citizen_id) discoveredFraudOwnerCitizenIds.add(fl.identifier.citizen_id);
+
+      if (fl.card_id) fraudCardIds.add(fl.card_id);
+      if (fl.card?.card_number) fraudCardNumbers.push(fl.card.card_number);
+      if (fl.phone?.phone_number) fraudPhoneDigits.push(fl.phone.phone_number);
+      if (fl.identifier?.normalized_value) {
+        fraudIdentifierValues.push(fl.identifier.normalized_value);
+      }
     }
 
     const multiHopChains: MultiHopChainItem[] = [];
     const directMatchedAppIds = new Set(otherLinks.map((ol) => ol.application_id));
     directMatchedAppIds.add(applicationId);
 
-    if (discoveredOwnerCitizenIds.size > 0) {
-      const ownerIdsArr = Array.from(discoveredOwnerCitizenIds);
-      const [ownerExtraCards, ownerExtraPhones] = await Promise.all([
+    // Multi-Hop A: Firibgar/Dropper shaxsning BOSHQA kartalari, telefonlari va raqamli izlari
+    if (discoveredFraudOwnerCitizenIds.size > 0) {
+      const ownerIdsArr = Array.from(discoveredFraudOwnerCitizenIds);
+      const [ownerExtraCards, ownerExtraPhones, ownerExtraIdents] = await Promise.all([
         this.cardRepo.find({
           where: { citizen_id: In(ownerIdsArr) },
           relations: { citizen: true },
         }),
         this.phoneRepo.find({
+          where: { citizen_id: In(ownerIdsArr) },
+          relations: { citizen: true },
+        }),
+        this.identifierRepo.find({
           where: { citizen_id: In(ownerIdsArr) },
           relations: { citizen: true },
         }),
@@ -3423,14 +3763,23 @@ export class IntelligenceService {
       const extraPhoneIds = ownerExtraPhones
         .map((p) => p.id)
         .filter((id) => !phoneIds.includes(id));
+      const extraIdentIds = ownerExtraIdents
+        .filter((i) => isLinkableIdentifierType(i.type))
+        .map((i) => i.id)
+        .filter((id) => !identIds.includes(id));
 
-      if (extraCardIds.length || extraPhoneIds.length) {
+      if (extraCardIds.length || extraPhoneIds.length || extraIdentIds.length) {
         const hopLinks = await this.linkRepo.find({
           where: [
             ...(extraCardIds.length ? [{ card_id: In(extraCardIds) }] : []),
             ...(extraPhoneIds.length ? [{ phone_id: In(extraPhoneIds) }] : []),
+            ...(extraIdentIds.length ? [{ identifier_id: In(extraIdentIds) }] : []),
           ],
-          relations: { card: { citizen: true }, phone: { citizen: true } },
+          relations: {
+            card: { citizen: true },
+            phone: { citizen: true },
+            identifier: { citizen: true },
+          },
         });
 
         const hopAppIds = Array.from(
@@ -3439,30 +3788,44 @@ export class IntelligenceService {
           ),
         );
         const hopApps = await this.loadDetailedApplications(hopAppIds);
-        const hopAppMap = new Map(hopApps.map((a) => [a.id, a]));
+        const hopAppMap = new Map(
+          hopApps.filter((a) => !isSameChainDuplicate(a)).map((a) => [a.id, a]),
+        );
 
         for (const hl of hopLinks) {
           const tApp = hopAppMap.get(hl.application_id);
           if (!tApp) continue;
           if (multiHopChains.some((m) => m.target_application.id === tApp.id)) continue;
 
-          const ownerCit = hl.card?.citizen || hl.phone?.citizen;
+          const ownerCit = hl.card?.citizen || hl.phone?.citizen || hl.identifier?.citizen;
           const viaLabel = hl.card
             ? `Karta: ${this.formatCardDisplay(hl.card.card_number, hl.card.masked_number)}`
-            : `Tel: ${hl.phone?.formatted_number || hl.phone?.phone_number}`;
+            : hl.phone
+              ? `Tel: ${hl.phone.formatted_number || hl.phone.phone_number}`
+              : `${hl.identifier?.type_label || 'Raqamli iz'}: ${hl.identifier?.raw_value}`;
+
+          const viaEntity = hl.card
+            ? { type: 'card', label: viaLabel, route: `/cards/${hl.card.id}` }
+            : hl.phone
+              ? { type: 'phone', label: viaLabel, route: `/dossier/phone/${hl.phone.id}` }
+              : {
+                  type: 'identifier',
+                  label: viaLabel,
+                  route: `/dossier/identifier/${hl.identifier!.id}`,
+                };
 
           multiHopChains.push({
             target_application: this.toDossierAppItem(
               tApp,
               hl.role,
               'MULTI_HOP',
-              [`Shaxsning boshqa rekviziti (${viaLabel}) orqali zanjir`],
+              [`Firibgar/dropper egasining boshqa rekviziti (${viaLabel}) orqali zanjir`],
               permCtx,
             ),
             hops_count: 2,
             chain_steps: [
               'Joriy ariza',
-              ownerCit ? this.formatCitizenFullName(ownerCit) : 'Umumiy shaxs',
+              ownerCit ? this.formatCitizenFullName(ownerCit) : 'Dropper / Gumonlanuvchi',
               viaLabel,
               `Ariza № ${tApp.application_number || 'Raqamsiz'}`,
             ],
@@ -3476,18 +3839,193 @@ export class IntelligenceService {
                     },
                   ]
                 : []),
-              {
-                type: hl.card ? 'card' : 'phone',
-                label: viaLabel,
-                route: hl.card ? `/cards/${hl.card.id}` : `/dossier/phone/${hl.phone!.id}`,
-              },
+              viaEntity,
             ],
           });
         }
       }
     }
 
-    // Network Graph for Application
+    // Multi-Hop B: Tranzit pul o'tkazmalari (Dropper Karta 1 -> Tranzit Karta 2 / Kripto -> Boshqa ariza)
+    if (fraudCardIds.size > 0) {
+      const fCardArr = Array.from(fraudCardIds);
+      const transitTransfers = await this.transferRepo.find({
+        where: [{ sender_card_id: In(fCardArr) }, { receiver_card_id: In(fCardArr) }],
+        relations: {
+          sender_card: true,
+          receiver_card: true,
+          receiver_identifier: true,
+        },
+        take: 100,
+      });
+
+      const transitCardIds = new Set<string>();
+      const transitIdentIds = new Set<string>();
+      const transitViaMap = new Map<
+        string,
+        { fromLabel: string; toLabel: string; toRoute: string; toType: string }
+      >();
+
+      for (const tr of transitTransfers) {
+        if (tr.sender_card_id && fraudCardIds.has(tr.sender_card_id)) {
+          const fromLabel = this.formatCardDisplay(
+            tr.sender_card?.card_number,
+            tr.sender_card?.masked_number,
+          );
+          if (
+            tr.receiver_card_id &&
+            !fraudCardIds.has(tr.receiver_card_id) &&
+            !cardIds.includes(tr.receiver_card_id)
+          ) {
+            transitCardIds.add(tr.receiver_card_id);
+            transitViaMap.set(`card:${tr.receiver_card_id}`, {
+              fromLabel,
+              toLabel: this.formatCardDisplay(
+                tr.receiver_card?.card_number,
+                tr.receiver_card?.masked_number,
+              ),
+              toRoute: `/cards/${tr.receiver_card_id}`,
+              toType: 'card',
+            });
+          }
+          if (
+            tr.receiver_identifier_id &&
+            !identIds.includes(tr.receiver_identifier_id) &&
+            tr.receiver_identifier &&
+            isLinkableIdentifierType(tr.receiver_identifier.type)
+          ) {
+            transitIdentIds.add(tr.receiver_identifier_id);
+            transitViaMap.set(`ident:${tr.receiver_identifier_id}`, {
+              fromLabel,
+              toLabel: `${tr.receiver_identifier.type_label || tr.receiver_identifier.type}: ${tr.receiver_identifier.raw_value}`,
+              toRoute: `/dossier/identifier/${tr.receiver_identifier_id}`,
+              toType: 'identifier',
+            });
+          }
+        }
+      }
+
+      if (transitCardIds.size > 0 || transitIdentIds.size > 0) {
+        const transitLinks = await this.linkRepo.find({
+          where: [
+            ...(transitCardIds.size > 0 ? [{ card_id: In(Array.from(transitCardIds)) }] : []),
+            ...(transitIdentIds.size > 0
+              ? [{ identifier_id: In(Array.from(transitIdentIds)) }]
+              : []),
+          ],
+        });
+        const transitAppIds = Array.from(
+          new Set(
+            transitLinks
+              .filter((tl) => isFraudLinkRole(tl.role))
+              .map((tl) => tl.application_id)
+              .filter(
+                (aid) =>
+                  !directMatchedAppIds.has(aid) &&
+                  !multiHopChains.some((m) => m.target_application.id === aid),
+              ),
+          ),
+        );
+        if (transitAppIds.length > 0) {
+          const transitApps = await this.loadDetailedApplications(transitAppIds);
+          const transitAppMap = new Map(
+            transitApps.filter((a) => !isSameChainDuplicate(a)).map((a) => [a.id, a]),
+          );
+          for (const tl of transitLinks) {
+            if (!isFraudLinkRole(tl.role)) continue;
+            const tApp = transitAppMap.get(tl.application_id);
+            if (!tApp) continue;
+            if (multiHopChains.some((m) => m.target_application.id === tApp.id)) continue;
+
+            const viaKey = tl.card_id ? `card:${tl.card_id}` : `ident:${tl.identifier_id}`;
+            const via = transitViaMap.get(viaKey);
+            if (!via) continue;
+
+            multiHopChains.push({
+              target_application: this.toDossierAppItem(
+                tApp,
+                tl.role,
+                'MULTI_HOP',
+                [`Tranzit pul oqimi: ${via.fromLabel} ➔ ${via.toLabel}`],
+                permCtx,
+              ),
+              hops_count: 2,
+              chain_steps: [
+                'Joriy ariza',
+                via.fromLabel,
+                via.toLabel,
+                `Ariza № ${tApp.application_number || 'Raqamsiz'}`,
+              ],
+              intermediate_entities: [
+                {
+                  type: via.toType,
+                  label: via.toLabel,
+                  route: via.toRoute,
+                },
+              ],
+            });
+          }
+        }
+      }
+    }
+
+    // Probable matches: biriktirilmagan dropper kartaning full_name bo'yicha ehtimoliy egasi
+    const probableMatches: ProbableMatchItem[] = [];
+    const seenProbCardIds = new Set<string>();
+    for (const fl of fraudLinks) {
+      const card = fl.card;
+      if (!card || card.citizen_id || !card.full_name || seenProbCardIds.has(card.id)) continue;
+      seenProbCardIds.add(card.id);
+      const parts = card.full_name
+        .trim()
+        .split(/\s+/)
+        .filter((w) => w.length >= 3);
+      if (parts.length < 2) continue;
+
+      const candidateCitizens = await this.citizenRepo
+        .createQueryBuilder('c')
+        .leftJoinAndSelect('c.district', 'district')
+        .where('c.full_name ILIKE :p0 AND c.full_name ILIKE :p1', {
+          p0: `%${parts[0]}%`,
+          p1: `%${parts[1]}%`,
+        })
+        .take(5)
+        .getMany();
+
+      for (const cand of candidateCitizens) {
+        probableMatches.push({
+          id: `prob_app_card_${card.id}_${cand.id}`,
+          match_type: 'CARD_OWNER_NAME',
+          confidence: 88,
+          title: `${this.formatCardDisplay(card.card_number, card.masked_number)} ↔ ${this.formatCitizenFullName(cand)}`,
+          subtitle: `Kartadagi F.I.Sh.: "${card.full_name}" · ${cand.passport ? `Pasport: ${cand.passport}` : cand.phone_number ? formatPhoneDisplay(cand.phone_number) : cand.district?.name || 'Fuqaro'}`,
+          reason: `Dropper kartadagi "${card.full_name}" yozuvi bazadagi fuqaro profiliga mos keldi (hali rasman biriktirilmagan).`,
+          target_entity_type: 'citizen',
+          target_entity_id: cand.id,
+          target_route: `/citizens/${cand.id}`,
+          linked_apps_count: 0,
+          total_amount: 0,
+          confirm_action: {
+            action_type: 'LINK_CITIZEN_TO_CARD',
+            citizen_id: cand.id,
+            card_id: card.id,
+          },
+        });
+      }
+    }
+
+    // Aniqlangan jinoyatlar bilan kesishma
+    const detectedCrimeRelations = await this.findDetectedCrimesForEntities(
+      {
+        citizenIds: Array.from(discoveredFraudOwnerCitizenIds),
+        cardNumbers: fraudCardNumbers,
+        phoneDigits: fraudPhoneDigits,
+        identifierValues: fraudIdentifierValues,
+      },
+      currentUser,
+    );
+
+    // Network Graph for Application (faqat firibgar / rol-to'qnashuvi kesishmalarini ulaymiz)
     const baseExpand = await this.expandGraphNode('APPLICATION', applicationId, currentUser);
     const nodes = new Map<string, INetworkNode>(baseExpand.nodes.map((n) => [n.id, n]));
     const edges: INetworkEdge[] = [...baseExpand.edges];
@@ -3495,21 +4033,20 @@ export class IntelligenceService {
     const centerNode = nodes.get(`application:${applicationId}`);
     if (centerNode) centerNode.isCenter = true;
 
-    const otherAppIds = Array.from(new Set(otherLinks.map((ol) => ol.application_id)));
-    const otherApps = await this.loadDetailedApplications(otherAppIds);
-    const otherAppMap = new Map(otherApps.map((a) => [a.id, a]));
-
     for (const ol of otherLinks) {
       const oa = otherAppMap.get(ol.application_id);
       if (!oa) continue;
+      const restricted =
+        permCtx.isDistrictOfficer &&
+        (!oa.district_id || !permCtx.assignedDistrictIds.includes(oa.district_id));
       const oaNodeId = `application:${oa.id}`;
       if (!nodes.has(oaNodeId)) {
         nodes.set(oaNodeId, {
           id: oaNodeId,
           entityId: oa.id,
           nodeType: 'APPLICATION',
-          label: `№ ${oa.application_number || 'Raqamsiz'}`,
-          sublabel: oa.district?.name || oa.status || 'Ariza',
+          label: restricted ? 'Boshqa tuman' : `№ ${oa.application_number || 'Raqamsiz'}`,
+          sublabel: restricted ? 'Boshqa tuman arizasi' : oa.district?.name || oa.status || 'Ariza',
           role: 'APPLICATION',
           riskScore: 0,
           appsCount: 1,
@@ -3536,28 +4073,42 @@ export class IntelligenceService {
             from: bridgeId,
             to: oaNodeId,
             relationType:
-              ol.role === 'SUSPECT' || ol.role === 'DROPPER' ? 'SUSPECT_CLUE' : 'VICTIM_LINK',
+              ol.role === 'SUSPECT' || ol.role === 'DROPPER' || ol.role === 'TRANSIT'
+                ? 'SUSPECT_CLUE'
+                : 'VICTIM_LINK',
             label:
               ol.role === 'DROPPER'
                 ? 'Dropper'
                 : ol.role === 'SUSPECT'
                   ? 'Gumonlanuvchi'
-                  : 'Aloqador',
+                  : ol.role === 'TRANSIT'
+                    ? 'Tranzit'
+                    : 'Rol toʻqnashuvi',
           });
         }
       }
     }
 
-    // Telefon va Raqamli izlar ro'yxati (UI da ko'rsatish uchun, egasi bilan birga!)
+    // Telefon va Raqamli izlar ro'yxati — FAQAT gumonlanuvchi/dropper/tranzit yoki rol to'qnashuvi!
+    // (Jabrlanuvchining oddiy telefoni boshqa jabrlanuvchi sifatida chiqarilmaydi!)
+    const seenClueKeys = new Set<string>();
     const clueRelations = [
       ...currentLinks
-        .filter((l) => l.phone)
-        .map((l) => {
+        .filter((l) => {
+          if (!l.phone) return false;
           const matchingOther = otherLinks.filter((ol) => ol.phone_id === l.phone_id);
+          return isFraudLinkRole(l.role) || matchingOther.some((ol) => isFraudLinkRole(ol.role));
+        })
+        .map((l) => {
+          const dedupKey = `phone:${l.phone!.id}`;
+          if (seenClueKeys.has(dedupKey)) return null;
+          seenClueKeys.add(dedupKey);
+          const matchingOther = otherLinks.filter((ol) => ol.phone_id === l.phone_id);
+          const seenOtherAppIds = new Set<string>();
           return {
             id: l.phone!.id,
             entity_type: 'phone' as const,
-            label: 'Telefon raqami',
+            label: l.role === 'VICTIM' ? 'Telefon (Rol toʻqnashuvi)' : 'Gumonlanuvchi telefoni',
             value: l.phone!.formatted_number || formatPhoneDisplay(l.phone!.phone_number),
             operator: l.phone!.operator,
             role_in_current_app: l.role,
@@ -3570,24 +4121,31 @@ export class IntelligenceService {
             target_route: `/dossier/phone/${l.phone!.id}`,
             linked_applications: matchingOther
               .map((mo) => {
+                if (seenOtherAppIds.has(mo.application_id)) return null;
+                seenOtherAppIds.add(mo.application_id);
                 const oa = otherAppMap.get(mo.application_id);
-                return oa
-                  ? this.toDossierAppItem(
-                      oa,
-                      mo.role,
-                      mo.source,
-                      ['Bir xil telefon raqami'],
-                      permCtx,
-                    )
-                  : null;
+                if (!oa) return null;
+                const isCrossRole = isFraudLinkRole(l.role) !== isFraudLinkRole(mo.role);
+                return this.toDossierAppItem(
+                  oa,
+                  mo.role,
+                  mo.source,
+                  [isCrossRole ? 'Rol toʻqnashuvi (Telefon)' : 'Bir xil gumonlanuvchi telefoni'],
+                  permCtx,
+                );
               })
               .filter((x): x is DossierApplicationItem => Boolean(x)),
           };
-        }),
+        })
+        .filter((x): x is NonNullable<typeof x> => Boolean(x)),
       ...currentLinks
-        .filter((l) => l.identifier)
+        .filter((l) => l.identifier && isLinkableIdentifierType(l.identifier.type))
         .map((l) => {
+          const dedupKey = `ident:${l.identifier!.id}`;
+          if (seenClueKeys.has(dedupKey)) return null;
+          seenClueKeys.add(dedupKey);
           const matchingOther = otherLinks.filter((ol) => ol.identifier_id === l.identifier_id);
+          const seenOtherAppIds = new Set<string>();
           return {
             id: l.identifier!.id,
             entity_type: 'identifier' as const,
@@ -3604,6 +4162,8 @@ export class IntelligenceService {
             target_route: `/dossier/identifier/${l.identifier!.id}`,
             linked_applications: matchingOther
               .map((mo) => {
+                if (seenOtherAppIds.has(mo.application_id)) return null;
+                seenOtherAppIds.add(mo.application_id);
                 const oa = otherAppMap.get(mo.application_id);
                 return oa
                   ? this.toDossierAppItem(
@@ -3617,12 +4177,15 @@ export class IntelligenceService {
               })
               .filter((x): x is DossierApplicationItem => Boolean(x)),
           };
-        }),
+        })
+        .filter((x): x is NonNullable<typeof x> => Boolean(x)),
     ];
 
     return {
       clue_relations: clueRelations,
       multi_hop_chains: multiHopChains,
+      probable_matches: probableMatches,
+      detected_crime_relations: detectedCrimeRelations,
       network_graph: {
         nodes: Array.from(nodes.values()),
         edges,

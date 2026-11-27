@@ -65,4 +65,11 @@ export class SuspectFieldConfig extends BaseEntity {
     default: true,
   })
   is_active: boolean;
+
+  @Column({
+    name: 'is_linkable',
+    type: 'boolean',
+    default: true,
+  })
+  is_linkable: boolean;
 }

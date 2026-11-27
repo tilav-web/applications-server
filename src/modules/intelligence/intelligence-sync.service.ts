@@ -1,10 +1,11 @@
-import { Injectable, Logger } from '@nestjs/common';
+import { Injectable, Logger, Optional } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 
 import { isPgUniqueViolation } from '../../common/utils/normalization.util';
 import { Application } from '../applications/application.entity';
 import { Citizen } from '../applications/citizens/citizen.entity';
+import { SuspectFieldConfig } from '../applications/suspect-fields/suspect-field-config.entity';
 import { Bank } from '../applications/transfers/banks/bank.entity';
 import { Card } from '../applications/transfers/cards/card.entity';
 import { Transfer } from '../applications/transfers/transfer.entity';
@@ -15,9 +16,21 @@ import {
   detectMobileOperator,
   formatPhoneDisplay,
   getIdentifierTypeLabel,
+  isCardLikeFieldKey,
+  isLinkableIdentifierType,
+  isPhoneLikeFieldKey,
   normalizeIdentifierValue,
   normalizePhoneDigits,
 } from './utils/identifier-normalizer.util';
+
+const VALID_ENTITY_ROLES: ReadonlySet<string> = new Set([
+  'VICTIM',
+  'SUSPECT',
+  'DROPPER',
+  'TRANSIT',
+  'WITNESS',
+  'RELATED',
+]);
 
 interface NormalizedSuspectRow {
   field_key: string;
@@ -52,6 +65,9 @@ export class IntelligenceSyncService {
     private readonly appRepo: Repository<Application>,
     @InjectRepository(Transfer)
     private readonly transferRepo: Repository<Transfer>,
+    @Optional()
+    @InjectRepository(SuspectFieldConfig)
+    private readonly suspectFieldRepo?: Repository<SuspectFieldConfig>,
   ) {}
 
   /**
@@ -363,14 +379,178 @@ export class IntelligenceSyncService {
     return rows;
   }
 
-  private inferCustomFieldRole(label?: string | null): EntityLinkRole {
+  private inferCustomFieldRole(
+    label?: string | null,
+    explicitRole?: string | null,
+  ): EntityLinkRole {
+    const cleanExplicit = (explicitRole || '').trim().toUpperCase();
+    if (cleanExplicit && VALID_ENTITY_ROLES.has(cleanExplicit)) {
+      return cleanExplicit as EntityLinkRole;
+    }
     const l = (label || '').toLowerCase();
-    if (l.includes('gumon') || l.includes('firibgar') || l.includes('aybdor')) return 'SUSPECT';
-    if (l.includes('dropper') || l.includes('qabul qiluvchi')) return 'DROPPER';
-    if (l.includes('tranzit') || l.includes('vositachi')) return 'TRANSIT';
-    if (l.includes('guvoh')) return 'WITNESS';
-    if (l.includes('jabrlanuvchi') || l.includes('arizachi')) return 'VICTIM';
+    if (
+      l.includes('gumon') ||
+      l.includes('firibgar') ||
+      l.includes('aybdor') ||
+      l.includes('sherik') ||
+      l.includes('shubha') ||
+      l.includes('гумон') ||
+      l.includes('фирибгар') ||
+      l.includes('айбдор') ||
+      l.includes('шерик') ||
+      l.includes('шубҳа') ||
+      l.includes('suspect')
+    ) {
+      return 'SUSPECT';
+    }
+    if (
+      l.includes('dropper') ||
+      l.includes('qabul qiluvchi') ||
+      l.includes('karta egasi') ||
+      l.includes('дроппер') ||
+      l.includes('қабул қилувчи') ||
+      l.includes('карта эгаси')
+    ) {
+      return 'DROPPER';
+    }
+    if (
+      l.includes('tranzit') ||
+      l.includes('vositachi') ||
+      l.includes('транзит') ||
+      l.includes('воситачи')
+    ) {
+      return 'TRANSIT';
+    }
+    if (
+      l.includes('guvoh') ||
+      l.includes('гувоҳ') ||
+      l.includes('гувох') ||
+      l.includes('witness')
+    ) {
+      return 'WITNESS';
+    }
+    if (
+      l.includes('jabrlanuvchi') ||
+      l.includes('arizachi') ||
+      l.includes('жабрланувчи') ||
+      l.includes('аризачи') ||
+      l.includes('victim')
+    ) {
+      return 'VICTIM';
+    }
     return 'RELATED';
+  }
+
+  private async getNonLinkableFieldKeys(): Promise<Set<string>> {
+    const blocked = new Set<string>(['telegram_bio', 'other_info']);
+    if (!this.suspectFieldRepo || typeof this.suspectFieldRepo.find !== 'function') {
+      return blocked;
+    }
+    try {
+      const nonLinkable = await this.suspectFieldRepo.find({
+        where: { is_linkable: false },
+        select: { key: true },
+      });
+      for (const cfg of nonLinkable) {
+        if (cfg.key) blocked.add(cfg.key.toLowerCase().trim());
+      }
+    } catch {
+      // Fallback: built-in NON_LINKABLE_IDENTIFIER_TYPES yetarli
+    }
+    return blocked;
+  }
+
+  async syncApplicationsByCardId(cardId: string): Promise<void> {
+    if (!cardId || !this.linkRepo?.manager?.query) return;
+    try {
+      const rows: Array<{ app_id: string }> = await this.linkRepo.manager.query(
+        `SELECT DISTINCT app_id FROM (
+           SELECT id AS app_id FROM applications WHERE card_id = $1::uuid AND is_deleted = false
+           UNION
+           SELECT application_id AS app_id FROM transfers
+             WHERE (sender_card_id = $1::uuid OR receiver_card_id = $1::uuid OR card_id = $1::uuid)
+               AND application_id IS NOT NULL
+           UNION
+           SELECT a.id AS app_id FROM applications a
+             INNER JOIN transfers t ON t.id = a.transfer_id
+             WHERE (t.sender_card_id = $1::uuid OR t.receiver_card_id = $1::uuid OR t.card_id = $1::uuid)
+               AND a.is_deleted = false
+           UNION
+           SELECT application_id AS app_id FROM application_custom_fields
+             WHERE card_id = $1::uuid AND application_id IS NOT NULL
+           UNION
+           SELECT application_id AS app_id FROM entity_application_links
+             WHERE card_id = $1::uuid
+         ) sub WHERE app_id IS NOT NULL`,
+        [cardId],
+      );
+      for (const r of rows) {
+        await this.syncApplicationById(r.app_id);
+      }
+    } catch (err) {
+      this.logger.warn(
+        `syncApplicationsByCardId(${cardId}) xatolik: ${err instanceof Error ? err.message : String(err)}`,
+      );
+    }
+  }
+
+  async syncApplicationsByCitizenId(citizenId: string): Promise<void> {
+    if (!citizenId || !this.linkRepo?.manager?.query) return;
+    try {
+      const rows: Array<{ app_id: string }> = await this.linkRepo.manager.query(
+        `SELECT DISTINCT app_id FROM (
+           SELECT id AS app_id FROM applications WHERE citizen_id = $1::uuid AND is_deleted = false
+           UNION
+           SELECT application_id AS app_id FROM application_custom_fields
+             WHERE citizen_id = $1::uuid AND application_id IS NOT NULL
+           UNION
+           SELECT application_id AS app_id FROM entity_application_links
+             WHERE citizen_id = $1::uuid
+         ) sub WHERE app_id IS NOT NULL`,
+        [citizenId],
+      );
+      for (const r of rows) {
+        await this.syncApplicationById(r.app_id);
+      }
+    } catch (err) {
+      this.logger.warn(
+        `syncApplicationsByCitizenId(${citizenId}) xatolik: ${err instanceof Error ? err.message : String(err)}`,
+      );
+    }
+  }
+
+  async syncApplicationsByPhoneId(phoneId: string): Promise<void> {
+    if (!phoneId || !this.linkRepo?.manager?.query) return;
+    try {
+      const rows: Array<{ app_id: string }> = await this.linkRepo.manager.query(
+        `SELECT DISTINCT application_id AS app_id FROM entity_application_links WHERE phone_id = $1::uuid`,
+        [phoneId],
+      );
+      for (const r of rows) {
+        await this.syncApplicationById(r.app_id);
+      }
+    } catch (err) {
+      this.logger.warn(
+        `syncApplicationsByPhoneId(${phoneId}) xatolik: ${err instanceof Error ? err.message : String(err)}`,
+      );
+    }
+  }
+
+  async syncApplicationsByIdentifierId(identifierId: string): Promise<void> {
+    if (!identifierId || !this.linkRepo?.manager?.query) return;
+    try {
+      const rows: Array<{ app_id: string }> = await this.linkRepo.manager.query(
+        `SELECT DISTINCT application_id AS app_id FROM entity_application_links WHERE identifier_id = $1::uuid`,
+        [identifierId],
+      );
+      for (const r of rows) {
+        await this.syncApplicationById(r.app_id);
+      }
+    } catch (err) {
+      this.logger.warn(
+        `syncApplicationsByIdentifierId(${identifierId}) xatolik: ${err instanceof Error ? err.message : String(err)}`,
+      );
+    }
   }
 
   /**
@@ -546,7 +726,7 @@ export class IntelligenceSyncService {
     // 4. Custom Fields
     if (Array.isArray(app.custom_fields)) {
       for (const cf of app.custom_fields) {
-        const cfRole = this.inferCustomFieldRole(cf.label);
+        const cfRole = this.inferCustomFieldRole(cf.label, cf.entity_role);
         if (cf.citizen) {
           await this.syncCitizenEntity(cf.citizen);
           pushLink({
@@ -613,13 +793,21 @@ export class IntelligenceSyncService {
       }
     }
 
-    // 5. Suspect Tree (Gumonlanuvchi belgilari: Tel, Karta, Telegram, IP, Kripto, IMEI va h.k.)
+    // 5. Suspect Tree (Gumonlanuvchi belgilari: Tel, WhatsApp, Karta, Telegram, Phishing URL, APK, IP, Kripto, IMEI va h.k.)
+    const nonLinkableKeys = await this.getNonLinkableFieldKeys();
     const suspectRows = this.extractSuspectRows(app.suspect_tree);
     for (const row of suspectRows) {
-      const key = row.field_key.toLowerCase();
-      if (key.includes('phone') || key.includes('telefon')) {
+      const key = row.field_key.toLowerCase().trim();
+      if (nonLinkableKeys.has(key) || !isLinkableIdentifierType(key)) {
+        // Erkin izoh/tavsif maydonlari (telegram_bio, other_info) yolg'on bog'liqlik bermasligi uchun indekslanmaydi
+        continue;
+      }
+
+      if (isPhoneLikeFieldKey(key)) {
         const ph = await this.upsertPhone(row.value, {
-          label: 'Gumonlanuvchi raqami',
+          label: key.includes('whatsapp')
+            ? 'Gumonlanuvchi WhatsApp raqami'
+            : 'Gumonlanuvchi raqami',
           notes: row.note || null,
         });
         if (ph) {
@@ -638,7 +826,7 @@ export class IntelligenceSyncService {
             });
           }
         }
-      } else if (key.includes('card') || key.includes('karta')) {
+      } else if (isCardLikeFieldKey(key)) {
         const crd = await this.upsertCard(row.value);
         if (crd) {
           pushLink({
@@ -657,7 +845,7 @@ export class IntelligenceSyncService {
           }
         }
       } else {
-        const ident = await this.upsertDigitalIdentifier(row.field_key, row.value, {
+        const ident = await this.upsertDigitalIdentifier(key, row.value, {
           typeLabel: row.field_label,
           notes: row.note || null,
         });

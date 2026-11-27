@@ -1,4 +1,4 @@
-import { ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
+import { ForbiddenException, Injectable, NotFoundException, Optional } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import type { Response } from 'express';
 import { In, Repository } from 'typeorm';
@@ -10,6 +10,7 @@ import type { PaginatedResult } from '../../../common/interfaces/pagination.inte
 import type { JwtAccessPayload } from '../../../common/types/jwt-payload.interface';
 import { getAllowedDistrictIds } from '../../../common/utils/district-scope.util';
 import { DigitalIdentifierEntity } from '../../intelligence/entities/digital-identifier.entity';
+import { IntelligenceSyncService } from '../../intelligence/intelligence-sync.service';
 import {
   getIdentifierTypeLabel,
   normalizeIdentifierValue,
@@ -33,6 +34,8 @@ export class TransfersService {
     @InjectRepository(User)
     private readonly userRepo: Repository<User>,
     private readonly excelService: TransfersExcelService,
+    @Optional()
+    private readonly intelligenceSync?: IntelligenceSyncService,
   ) {}
 
   private async resolveDestinationFields(dto: {
@@ -160,6 +163,10 @@ export class TransfersService {
         }),
       );
       await this.customFieldRepo.save(fieldEntities);
+    }
+
+    if (saved.application_id) {
+      await this.intelligenceSync?.syncApplicationById(saved.application_id);
     }
 
     return this.findOne(saved.id);
@@ -359,6 +366,7 @@ export class TransfersService {
     currentUser?: JwtAccessPayload,
   ): Promise<Transfer> {
     const transfer = await this.findOne(id, currentUser);
+    const previousAppId = transfer.application_id;
     const {
       custom_fields,
       destination_platform,
@@ -427,11 +435,19 @@ export class TransfersService {
       }
     });
 
+    const affectedAppIds = new Set<string>();
+    if (previousAppId) affectedAppIds.add(previousAppId);
+    if (transfer.application_id) affectedAppIds.add(transfer.application_id);
+    for (const appId of affectedAppIds) {
+      await this.intelligenceSync?.syncApplicationById(appId);
+    }
+
     return this.findOne(id);
   }
 
   async remove(id: string): Promise<{ success: boolean; message: string }> {
     const transfer = await this.findOne(id);
+    const affectedAppId = transfer.application_id;
     await assertNoDependencies(
       this.transferRepo.manager,
       `«${transfer.transaction_id || transfer.id.slice(0, 8)}» pul o'tkazmasi`,
@@ -451,6 +467,9 @@ export class TransfersService {
       ],
     );
     await this.transferRepo.remove(transfer);
+    if (affectedAppId) {
+      await this.intelligenceSync?.syncApplicationById(affectedAppId);
+    }
     return {
       success: true,
       message: "Pul o'tkazmasi muvaffaqiyatli o'chirildi",

@@ -65,20 +65,58 @@ export function detectMobileOperator(digits?: string | null): string {
   return 'Xorijiy aloqa operatori';
 }
 
+/**
+ * Erkin tavsif maydonlari — saqlanadi va ko'rsatiladi, lekin avtomatik bog'liqlik
+ * (yolg'on moslik) yaratmaydi.
+ */
+export const NON_LINKABLE_IDENTIFIER_TYPES: ReadonlySet<string> = new Set([
+  'telegram_bio',
+  'other_info',
+]);
+
+export function isLinkableIdentifierType(type?: string | null): boolean {
+  const clean = (type || '').trim().toLowerCase();
+  if (!clean) return false;
+  return !NON_LINKABLE_IDENTIFIER_TYPES.has(clean);
+}
+
+export function isPhoneLikeFieldKey(type?: string | null): boolean {
+  const t = (type || '').trim().toLowerCase();
+  return t.includes('phone') || t.includes('telefon') || t.includes('whatsapp');
+}
+
+export function isCardLikeFieldKey(type?: string | null): boolean {
+  const t = (type || '').trim().toLowerCase();
+  return (t.includes('card') || t.includes('karta')) && !t.includes('account');
+}
+
 export function normalizeIdentifierValue(type: string, raw?: string | null): string {
   if (!raw) return '';
   const trimmed = String(raw).trim();
   const t = (type || '').toLowerCase();
 
-  if (t.includes('phone') || t.includes('telefon')) {
+  if (isPhoneLikeFieldKey(t)) {
     return normalizePhoneDigits(trimmed);
   }
-  if (t.includes('card') || t.includes('karta')) {
+  if (isCardLikeFieldKey(t)) {
     return trimmed.replace(/\D/g, '');
   }
-  if (t.includes('telegram_username') || t.includes('instagram') || t.includes('username')) {
+  if (t.includes('bank_account')) {
+    return trimmed.replace(/\D/g, '').slice(0, 64);
+  }
+  if (
+    t.includes('telegram_username') ||
+    t.includes('telegram_bot') ||
+    t.includes('telegram_channel') ||
+    t.includes('instagram') ||
+    t.includes('tiktok') ||
+    t.includes('username')
+  ) {
     return trimmed
-      .replace(/^https?:\/\/(www\.)?(t\.me|telegram\.me|telegram\.dog|instagram\.com)\//i, '')
+      .replace(
+        /^https?:\/\/(www\.)?(t\.me|telegram\.me|telegram\.dog|instagram\.com|tiktok\.com)\//i,
+        '',
+      )
       .replace(/[?#].*$/, '')
       .replace(/^@+/, '')
       .replace(/\/+$/, '')
@@ -86,7 +124,23 @@ export function normalizeIdentifierValue(type: string, raw?: string | null): str
       .toLowerCase()
       .slice(0, 255);
   }
-  if (t.includes('telegram_id') || t.includes('imei')) {
+  if (t.includes('website') || t.includes('domain') || t.includes('url') || t.includes('olx')) {
+    return trimmed
+      .replace(/^https?:\/\//i, '')
+      .replace(/^www\./i, '')
+      .replace(/[?#].*$/, '')
+      .replace(/\/+$/, '')
+      .trim()
+      .toLowerCase()
+      .slice(0, 255);
+  }
+  if (t.includes('apk') || t.includes('malware')) {
+    return trimmed.toLowerCase().replace(/\s+/g, ' ').slice(0, 255);
+  }
+  if (t.includes('email')) {
+    return trimmed.toLowerCase().replace(/\s+/g, '').slice(0, 255);
+  }
+  if (t.includes('exchange_uid') || t.includes('telegram_id') || t.includes('imei')) {
     const onlyDigits = trimmed.replace(/\D/g, '');
     return (onlyDigits || trimmed.toLowerCase()).slice(0, 255);
   }
@@ -109,15 +163,24 @@ export function getIdentifierTypeLabel(type: string, customLabel?: string | null
   const map: Record<string, string> = {
     telegram_username: 'Telegram Username',
     telegram_id: 'Telegram ID',
+    telegram_bot: 'Telegram Bot',
+    telegram_channel: 'Telegram Kanal / Guruh',
     telegram_bio: 'Telegram Bio / Izoh',
     instagram_username: 'Instagram Username',
+    tiktok_username: 'TikTok Username',
+    olx_account: 'OLX / Savdo akkaunti',
     phone_number: 'Telefon raqami',
+    whatsapp_number: 'WhatsApp raqami',
     card_number: 'Bank plastik karta',
+    bank_account: 'Bank hisob raqami',
     crypto_wallet: 'Kripto-hamyon',
+    exchange_uid: 'Kripto-birja UID',
+    website_domain: 'Phishing sayt / Havola',
+    apk_file: 'Zararli APK / Ilova',
     ip_address: 'IP Manzil',
     imei: 'IMEI Kod',
+    email: 'Email manzil',
     car_plate: 'Avtoraqam',
-    website_domain: 'Veb-sayt / Domen',
     other_info: 'Boshqa maʼlumot',
   };
   return map[type] || type || 'Boshqa belgi';

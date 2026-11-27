@@ -32,4 +32,8 @@ export class UpdateSuspectFieldConfigDto {
   @IsOptional()
   @IsBoolean()
   is_active?: boolean;
+
+  @IsOptional()
+  @IsBoolean()
+  is_linkable?: boolean;
 }
