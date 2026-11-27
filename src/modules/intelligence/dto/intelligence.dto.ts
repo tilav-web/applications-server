@@ -110,6 +110,11 @@ export class CreateTransitTransferDto {
   sender_owner_name?: string;
 
   @IsOptional()
+  @IsString()
+  @MaxLength(150)
+  sender_bank_name?: string;
+
+  @IsOptional()
   @IsUUID()
   receiver_card_id?: string;
 
@@ -122,6 +127,36 @@ export class CreateTransitTransferDto {
   @IsString()
   @MaxLength(255)
   receiver_owner_name?: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(150)
+  receiver_bank_name?: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(30)
+  source_type?: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(150)
+  source_platform?: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(80)
+  source_network?: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(255)
+  source_value?: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(255)
+  source_label?: string;
 
   @Type(() => Number)
   @IsNumber()
@@ -170,6 +205,11 @@ export class CreateTransitTransferDto {
   @IsString()
   @MaxLength(150)
   destination_platform?: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(80)
+  destination_network?: string;
 
   @IsOptional()
   @IsString()

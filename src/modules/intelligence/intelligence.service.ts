@@ -3066,16 +3066,23 @@ export class IntelligenceService {
   }
 
   /**
-   * Bank vipiskasi / Karta harakati bo'yicha yangi Tranzit O'tkazmani to'g'ridan-to'g'ri Dosyedan kiritish
+   * Bank vipiskasi / Karta yoki Kripto harakati bo'yicha yangi Moliyaviy Oqim O'tkazmasini kiritish
    */
   async createTransitTransfer(
     dto: {
       sender_card_id?: string;
       sender_card_number?: string;
       sender_owner_name?: string;
+      sender_bank_name?: string;
       receiver_card_id?: string;
       receiver_card_number?: string;
       receiver_owner_name?: string;
+      receiver_bank_name?: string;
+      source_type?: string;
+      source_platform?: string;
+      source_network?: string;
+      source_value?: string;
+      source_label?: string;
       amount: number;
       currency?: string;
       transfer_date?: string;
@@ -3086,6 +3093,7 @@ export class IntelligenceService {
       application_id?: string;
       destination_type?: string;
       destination_platform?: string;
+      destination_network?: string;
       destination_value?: string;
       destination_label?: string;
       destination_details?: Record<string, unknown>;
@@ -3094,71 +3102,207 @@ export class IntelligenceService {
   ) {
     this.assertCanMutate(currentUser);
 
+    const resolveBankId = async (rawBankName?: string): Promise<string | null> => {
+      const clean = rawBankName?.trim();
+      if (!clean) return null;
+      let bank = await this.bankRepo.findOne({ where: { name: ILike(clean) } });
+      if (!bank) {
+        bank = await this.bankRepo.save(
+          this.bankRepo.create({
+            name: formatTitleCase(clean),
+            code: clean.toLowerCase().replace(/[^a-z0-9]+/g, '_'),
+            is_active: true,
+          }),
+        );
+      }
+      return bank.id;
+    };
+
+    const resolveIdentType = (channelType: TransferDestinationType, plat: string): string => {
+      if (channelType === TransferDestinationType.CRYPTO) return 'crypto_wallet';
+      if (channelType === TransferDestinationType.BANK_ACCOUNT) return 'bank_account';
+      if (channelType === TransferDestinationType.PLATFORM) {
+        return plat
+          ? `platform_${plat.toLowerCase().replace(/[^a-z0-9]+/g, '_')}`
+          : 'online_platform';
+      }
+      return 'cashout_destination';
+    };
+
+    const resolveTypeLabel = (
+      channelType: TransferDestinationType,
+      plat: string,
+      net: string,
+    ): string => {
+      const base =
+        plat ||
+        (channelType === TransferDestinationType.CRYPTO
+          ? 'Kripto-hamyon / Birja'
+          : channelType === TransferDestinationType.BANK_ACCOUNT
+            ? 'Bank hisob raqami'
+            : 'Onlayn tizim / Profil');
+      return net && !base.toLowerCase().includes(net.toLowerCase()) ? `${base} (${net})` : base;
+    };
+
+    const buildChannelLabel = (plat: string, net: string, val: string): string | null => {
+      const prefix =
+        plat && net && !plat.toLowerCase().includes(net.toLowerCase())
+          ? `${plat} (${net})`
+          : plat || net;
+      if (prefix && val) return `${prefix}: ${val}`;
+      if (val) return val;
+      if (prefix) return prefix;
+      return null;
+    };
+
+    const sourceType = (dto.source_type as TransferDestinationType) || TransferDestinationType.CARD;
     const destType =
       (dto.destination_type as TransferDestinationType) || TransferDestinationType.CARD;
 
-    let senderCardId = dto.sender_card_id || null;
-    if (!senderCardId && dto.sender_card_number) {
-      const sc = await this.syncService.upsertCard(dto.sender_card_number, {
-        fullName: dto.sender_owner_name ? formatUzbekName(dto.sender_owner_name) : null,
-      });
-      senderCardId = sc?.id || null;
+    let senderCardId =
+      sourceType === TransferDestinationType.CARD ? dto.sender_card_id || null : null;
+    if (sourceType === TransferDestinationType.CARD) {
+      const senderBankId = await resolveBankId(dto.sender_bank_name);
+      if (!senderCardId && dto.sender_card_number) {
+        const sc = await this.syncService.upsertCard(dto.sender_card_number, {
+          fullName: dto.sender_owner_name ? formatUzbekName(dto.sender_owner_name) : null,
+          bankId: senderBankId,
+        });
+        senderCardId = sc?.id || null;
+      } else if (senderCardId && (dto.sender_owner_name || senderBankId)) {
+        const existingCard = await this.cardRepo.findOne({ where: { id: senderCardId } });
+        if (existingCard) {
+          let changed = false;
+          if (dto.sender_owner_name && !existingCard.full_name) {
+            existingCard.full_name = formatUzbekName(dto.sender_owner_name);
+            changed = true;
+          }
+          if (senderBankId && !existingCard.bank_id) {
+            existingCard.bank_id = senderBankId;
+            changed = true;
+          }
+          if (changed) await this.cardRepo.save(existingCard);
+        }
+      }
     }
 
-    let receiverCardId = dto.receiver_card_id || null;
-    if (destType === TransferDestinationType.CARD && !receiverCardId && dto.receiver_card_number) {
-      const rc = await this.syncService.upsertCard(dto.receiver_card_number, {
-        fullName: dto.receiver_owner_name ? formatUzbekName(dto.receiver_owner_name) : null,
-      });
-      receiverCardId = rc?.id || null;
+    let receiverCardId =
+      destType === TransferDestinationType.CARD ? dto.receiver_card_id || null : null;
+    if (destType === TransferDestinationType.CARD) {
+      const receiverBankId = await resolveBankId(dto.receiver_bank_name);
+      if (!receiverCardId && dto.receiver_card_number) {
+        const rc = await this.syncService.upsertCard(dto.receiver_card_number, {
+          fullName: dto.receiver_owner_name ? formatUzbekName(dto.receiver_owner_name) : null,
+          bankId: receiverBankId,
+        });
+        receiverCardId = rc?.id || null;
+      } else if (receiverCardId && (dto.receiver_owner_name || receiverBankId)) {
+        const existingCard = await this.cardRepo.findOne({ where: { id: receiverCardId } });
+        if (existingCard) {
+          let changed = false;
+          if (dto.receiver_owner_name && !existingCard.full_name) {
+            existingCard.full_name = formatUzbekName(dto.receiver_owner_name);
+            changed = true;
+          }
+          if (receiverBankId && !existingCard.bank_id) {
+            existingCard.bank_id = receiverBankId;
+            changed = true;
+          }
+          if (changed) await this.cardRepo.save(existingCard);
+        }
+      }
     }
 
+    if (senderCardId && receiverCardId && senderCardId === receiverCardId) {
+      throw new BadRequestException(
+        'Joʻnatuvchi va qabul qiluvchi plastik karta bir xil boʻlishi mumkin emas',
+      );
+    }
+
+    // Manba (Qayerdan) — agar Karta emas (Kripto / Servis / Hisob / Naqd) bo'lsa
+    let sourceIdentifierId: string | null = null;
+    const sourcePlatform = dto.source_platform?.trim() || '';
+    const sourceNetwork = dto.source_network?.trim() || '';
+    const sourceRawVal = dto.source_value?.trim() || '';
+    const sourceLabel =
+      dto.source_label?.trim() || buildChannelLabel(sourcePlatform, sourceNetwork, sourceRawVal);
+
+    if (sourceType !== TransferDestinationType.CARD) {
+      senderCardId = null;
+      if (sourceRawVal.length >= 2 && sourceType !== TransferDestinationType.CASH) {
+        const ident = await this.syncService.upsertDigitalIdentifier(
+          resolveIdentType(sourceType, sourcePlatform),
+          sourceRawVal,
+          {
+            typeLabel: resolveTypeLabel(sourceType, sourcePlatform, sourceNetwork),
+          },
+        );
+        sourceIdentifierId = ident?.id || null;
+      }
+    }
+
+    // Qabul qiluvchi (Qayerga) — agar Karta emas (Kripto / Servis / Hisob / Naqd) bo'lsa
     let receiverIdentifierId: string | null = null;
     const platform = dto.destination_platform?.trim() || '';
+    const destNetwork = dto.destination_network?.trim() || '';
     const rawVal = dto.destination_value?.trim() || '';
     let destLabel = dto.destination_label?.trim() || null;
+
     const destDetails: Record<string, unknown> = {
       ...(dto.destination_details || {}),
       ...(platform ? { platform } : {}),
+      ...(destNetwork ? { network: destNetwork } : {}),
       ...(rawVal ? { value: rawVal } : {}),
+      ...(dto.receiver_owner_name?.trim() && destType !== TransferDestinationType.CARD
+        ? { owner_name: dto.receiver_owner_name.trim() }
+        : {}),
+      ...(sourceType !== TransferDestinationType.CARD
+        ? {
+            source_type: sourceType,
+            ...(sourcePlatform ? { source_platform: sourcePlatform } : {}),
+            ...(sourceNetwork ? { source_network: sourceNetwork } : {}),
+            ...(sourceRawVal ? { source_value: sourceRawVal } : {}),
+            ...(sourceLabel ? { source_label: sourceLabel } : {}),
+            ...(sourceIdentifierId ? { source_identifier_id: sourceIdentifierId } : {}),
+            ...(dto.sender_owner_name?.trim()
+              ? { source_owner_name: dto.sender_owner_name.trim() }
+              : {}),
+          }
+        : {}),
     };
 
     if (destType !== TransferDestinationType.CARD) {
       receiverCardId = null;
       if (!destLabel) {
-        if (platform && rawVal) destLabel = `${platform}: ${rawVal}`;
-        else if (rawVal) destLabel = rawVal;
-        else if (platform) destLabel = platform;
+        destLabel = buildChannelLabel(platform, destNetwork, rawVal);
       }
 
       if (rawVal.length >= 2 && destType !== TransferDestinationType.CASH) {
-        const identType =
-          destType === TransferDestinationType.CRYPTO
-            ? 'crypto_wallet'
-            : destType === TransferDestinationType.BANK_ACCOUNT
-              ? 'bank_account'
-              : destType === TransferDestinationType.PLATFORM
-                ? platform
-                  ? `platform_${platform.toLowerCase().replace(/[^a-z0-9]+/g, '_')}`
-                  : 'online_platform'
-                : 'cashout_destination';
-
-        const ident = await this.syncService.upsertDigitalIdentifier(identType, rawVal, {
-          typeLabel:
-            platform ||
-            (destType === TransferDestinationType.CRYPTO
-              ? 'Kripto-hamyon / Birja'
-              : destType === TransferDestinationType.BANK_ACCOUNT
-                ? 'Bank hisob raqami'
-                : 'Onlayn tizim / Profil'),
-        });
+        const ident = await this.syncService.upsertDigitalIdentifier(
+          resolveIdentType(destType, platform),
+          rawVal,
+          {
+            typeLabel: resolveTypeLabel(destType, platform, destNetwork),
+          },
+        );
         receiverIdentifierId = ident?.id || null;
       }
     }
 
-    if (!senderCardId && !receiverCardId) {
+    const hasSource = Boolean(
+      senderCardId ||
+      sourceIdentifierId ||
+      (sourceType !== TransferDestinationType.CARD && (sourceRawVal || sourcePlatform)),
+    );
+    const hasDest = Boolean(
+      receiverCardId ||
+      receiverIdentifierId ||
+      (destType !== TransferDestinationType.CARD && (rawVal || platform)),
+    );
+
+    if (!hasSource && !hasDest) {
       throw new BadRequestException(
-        'Kamida bitta plastik karta (joʻnatuvchi yoki qabul qiluvchi) koʻrsatilishi shart',
+        'Joʻnatuvchi va qabul qiluvchi maʼlumotlari (karta, kripto-hamyon yoki kanal) koʻrsatilishi shart',
       );
     }
 
@@ -3180,7 +3324,7 @@ export class IntelligenceService {
     const transfer = this.transferRepo.create({
       transaction_id: dto.transaction_id?.trim() || null,
       amount: Number(dto.amount) || 0,
-      currency: dto.currency || 'UZS',
+      currency: (dto.currency || 'UZS').toUpperCase(),
       status: TransferStatus.MUVAFFAQIYATLI,
       transfer_date: dto.transfer_date || new Date().toISOString().slice(0, 10),
       transfer_time: dto.transfer_time || null,

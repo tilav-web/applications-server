@@ -67,6 +67,8 @@ export interface IGraphEdge {
   from: string;
   to: string;
   amount: number;
+  displayAmount?: number;
+  currency?: string;
   paymentProvider?: string;
   transactionsCount: number;
   lastDate: string;
@@ -365,6 +367,60 @@ export class FinancialFlowService {
       (tr) => (!tr.currency || tr.currency.toUpperCase() === 'UZS') && Number(tr.amount) > 0,
     );
 
+    const resolveChannelRole = (chType: TransferDestinationType): GraphCardRole => {
+      if (chType === TransferDestinationType.CRYPTO) return 'CRYPTO_CASHOUT';
+      if (chType === TransferDestinationType.CASH) return 'ATM_TERMINAL';
+      if (chType === TransferDestinationType.BANK_ACCOUNT) return 'BANK_ACCOUNT_OUT';
+      return 'PLATFORM_CASHOUT';
+    };
+
+    const resolveChannelDefaultLabel = (chType: TransferDestinationType): string => {
+      if (chType === TransferDestinationType.CASH) return 'Naqdlashtirish (ATM)';
+      if (chType === TransferDestinationType.CRYPTO) return 'Kripto / Birja';
+      if (chType === TransferDestinationType.BANK_ACCOUNT) return 'Bank hisob raqami';
+      if (chType === TransferDestinationType.PLATFORM) return 'Onlayn servis';
+      return 'Boshqa kanal';
+    };
+
+    const getOrCreateChannelNode = (opts: {
+      channelType: TransferDestinationType;
+      displayLabel: string;
+      subLabel: string;
+      identifierId?: string;
+      ownerName?: string;
+    }): { key: string; node: IGraphNode } => {
+      const nodeKey = opts.identifierId
+        ? `ident__${opts.identifierId}`
+        : `dest__${opts.channelType}__${opts.displayLabel.toLowerCase().trim()}`;
+
+      if (!nodeMap.has(nodeKey)) {
+        nodeMap.set(nodeKey, {
+          id: nodeKey,
+          cardNumber: opts.displayLabel,
+          maskedCard: opts.displayLabel,
+          bankName: opts.subLabel,
+          totalIn: 0,
+          totalOut: 0,
+          netFlow: 0,
+          inDegree: 0,
+          outDegree: 0,
+          reportsCount: 0,
+          reportIds: [],
+          riskScore: 80,
+          role: resolveChannelRole(opts.channelType),
+          isBlacklisted: false,
+          ownerName: opts.ownerName || undefined,
+          destinationType: opts.channelType,
+          identifierId: opts.identifierId || undefined,
+          linkedApplications: [],
+        });
+      } else if (opts.ownerName && !nodeMap.get(nodeKey)!.ownerName) {
+        nodeMap.get(nodeKey)!.ownerName = opts.ownerName;
+      }
+
+      return { key: nodeKey, node: nodeMap.get(nodeKey)! };
+    };
+
     for (const tr of activeTransfers) {
       const senderCard = tr.sender_card;
       const receiverCard = tr.receiver_card;
@@ -377,124 +433,107 @@ export class FinancialFlowService {
       const sClean = senderCard ? this.cleanCard(senderCard.card_number) : '';
       const rClean = receiverCard ? this.cleanCard(receiverCard.card_number) : '';
       const destType = tr.destination_type || TransferDestinationType.CARD;
+      const details = (tr.destination_details || {}) as Record<string, string | undefined>;
+      const sourceType =
+        (details.source_type as TransferDestinationType) || TransferDestinationType.CARD;
 
-      if (destType !== TransferDestinationType.CARD && sClean) {
-        const fromNode = getOrCreateNode(senderCard, sClean, 'VICTIM_SOURCE');
+      // 4.1 Manba tugunini (fromNode) aniqlash: Karta yoki Kripto/Servis/Hisob/Naqd
+      let fromNode: IGraphNode | null = null;
+      let fromKey = '';
+      if (sClean) {
+        fromNode = getOrCreateNode(senderCard, sClean, 'VICTIM_SOURCE');
+        fromKey = sClean;
+      } else if (sourceType !== TransferDestinationType.CARD) {
+        const sPlatform = details.source_platform || '';
+        const sNetwork = details.source_network || '';
+        const sVal = details.source_value || '';
+        const sLabel =
+          details.source_label ||
+          (sPlatform && sVal ? `${sPlatform}: ${sVal}` : sVal || sPlatform) ||
+          resolveChannelDefaultLabel(sourceType);
+        const sSubLabel =
+          sPlatform && sNetwork
+            ? `${sPlatform} · ${sNetwork}`
+            : sPlatform || sNetwork || resolveChannelDefaultLabel(sourceType);
+        const created = getOrCreateChannelNode({
+          channelType: sourceType,
+          displayLabel: sLabel,
+          subLabel: sSubLabel,
+          identifierId: details.source_identifier_id || undefined,
+          ownerName: details.source_owner_name || undefined,
+        });
+        fromNode = created.node;
+        fromKey = created.key;
+      }
+
+      // 4.2 Qabul qiluvchi tugunini (toNode) aniqlash: Karta yoki Kripto/Servis/Hisob/Naqd
+      let toNode: IGraphNode | null = null;
+      let toKey = '';
+      let edgeProviderLabel = providerName;
+
+      if (destType !== TransferDestinationType.CARD) {
         const ident = tr.receiver_identifier;
-        const details = (tr.destination_details || {}) as Record<string, string | undefined>;
+        const dPlatform = details.platform || '';
+        const dNetwork = details.network || '';
+        const dVal = details.value || '';
         const displayLabel =
           tr.destination_label ||
           (ident ? `${ident.type_label || ident.type}: ${ident.raw_value}` : null) ||
-          details.value ||
-          details.platform ||
-          (destType === TransferDestinationType.CASH
-            ? 'Naqdlashtirish (ATM)'
-            : destType === TransferDestinationType.CRYPTO
-              ? 'Kripto-birja / Hamyon'
-              : destType === TransferDestinationType.PLATFORM
-                ? 'Onlayn servis'
-                : 'Boshqa chiqish');
-
-        const destKey = ident
-          ? `ident__${ident.id}`
-          : `dest__${destType}__${displayLabel.toLowerCase().trim()}`;
-
-        const destRole: GraphCardRole =
-          destType === TransferDestinationType.CRYPTO
-            ? 'CRYPTO_CASHOUT'
-            : destType === TransferDestinationType.CASH
-              ? 'ATM_TERMINAL'
-              : destType === TransferDestinationType.BANK_ACCOUNT
-                ? 'BANK_ACCOUNT_OUT'
-                : 'PLATFORM_CASHOUT';
-
+          dVal ||
+          dPlatform ||
+          resolveChannelDefaultLabel(destType);
         const subLabel =
-          details.platform ||
-          ident?.type_label ||
-          (destType === TransferDestinationType.CRYPTO
-            ? 'Kripto / Birja'
-            : destType === TransferDestinationType.CASH
-              ? 'Naqdlashtirish (ATM)'
-              : destType === TransferDestinationType.BANK_ACCOUNT
-                ? 'Bank hisob raqami'
-                : 'Onlayn tizim / Profil');
+          dPlatform && dNetwork
+            ? `${dPlatform} · ${dNetwork}`
+            : dPlatform || dNetwork || ident?.type_label || resolveChannelDefaultLabel(destType);
+        const created = getOrCreateChannelNode({
+          channelType: destType,
+          displayLabel,
+          subLabel,
+          identifierId: ident?.id || undefined,
+          ownerName: details.owner_name || undefined,
+        });
+        toNode = created.node;
+        toKey = created.key;
+        if (dPlatform) {
+          edgeProviderLabel = dNetwork ? `${dPlatform} · ${dNetwork}` : dPlatform;
+        }
+      } else if (rClean) {
+        toNode = getOrCreateNode(receiverCard, rClean, 'MULE_DROPPER');
+        toKey = rClean;
+        if (sourceType !== TransferDestinationType.CARD && details.source_platform) {
+          edgeProviderLabel = details.source_network
+            ? `${details.source_platform} · ${details.source_network}`
+            : details.source_platform;
+        }
+      }
 
-        if (!nodeMap.has(destKey)) {
-          nodeMap.set(destKey, {
-            id: destKey,
-            cardNumber: displayLabel,
-            maskedCard: displayLabel,
-            bankName: subLabel,
-            totalIn: 0,
-            totalOut: 0,
-            netFlow: 0,
-            inDegree: 0,
-            outDegree: 0,
-            reportsCount: 0,
-            reportIds: [],
-            riskScore: 80,
-            role: destRole,
-            isBlacklisted: false,
-            destinationType: destType,
-            identifierId: ident?.id || undefined,
-            linkedApplications: [],
+      if (fromNode && toNode && fromNode.id !== toNode.id) {
+        fromNode.totalOut += amount;
+        fromNode.outDegree += 1;
+        toNode.totalIn += amount;
+        toNode.inDegree += 1;
+
+        const edgeKey = curr === 'UZS' ? `${fromKey}__${toKey}` : `${fromKey}__${toKey}__${curr}`;
+        if (edgeMap.has(edgeKey)) {
+          const existingEdge = edgeMap.get(edgeKey)!;
+          existingEdge.amount += amount;
+          existingEdge.displayAmount = (existingEdge.displayAmount ?? 0) + rawAmount;
+          existingEdge.transactionsCount += 1;
+          existingEdge.lastDate = this.pickLatestDate(existingEdge.lastDate, dateStr);
+        } else {
+          edgeMap.set(edgeKey, {
+            id: tr.id || edgeKey,
+            from: fromNode.id,
+            to: toNode.id,
+            amount,
+            displayAmount: rawAmount,
+            currency: curr,
+            paymentProvider: edgeProviderLabel,
+            transactionsCount: 1,
+            lastDate: dateStr,
+            applicationId: tr.application_id || undefined,
           });
-        }
-
-        const toNode = nodeMap.get(destKey)!;
-        if (fromNode && toNode) {
-          fromNode.totalOut += amount;
-          fromNode.outDegree += 1;
-          toNode.totalIn += amount;
-          toNode.inDegree += 1;
-
-          const edgeKey = `${sClean}__${destKey}`;
-          if (edgeMap.has(edgeKey)) {
-            const existingEdge = edgeMap.get(edgeKey)!;
-            existingEdge.amount += amount;
-            existingEdge.transactionsCount += 1;
-            existingEdge.lastDate = this.pickLatestDate(existingEdge.lastDate, dateStr);
-          } else {
-            edgeMap.set(edgeKey, {
-              id: tr.id || edgeKey,
-              from: fromNode.id,
-              to: toNode.id,
-              amount,
-              paymentProvider: details.platform || providerName,
-              transactionsCount: 1,
-              lastDate: dateStr,
-              applicationId: tr.application_id || undefined,
-            });
-          }
-        }
-      } else if (sClean && rClean && sClean !== rClean) {
-        const fromNode = getOrCreateNode(senderCard, sClean, 'VICTIM_SOURCE');
-        const toNode = getOrCreateNode(receiverCard, rClean, 'MULE_DROPPER');
-
-        if (fromNode && toNode) {
-          fromNode.totalOut += amount;
-          fromNode.outDegree += 1;
-          toNode.totalIn += amount;
-          toNode.inDegree += 1;
-
-          const edgeKey = `${sClean}__${rClean}`;
-          if (edgeMap.has(edgeKey)) {
-            const existingEdge = edgeMap.get(edgeKey)!;
-            existingEdge.amount += amount;
-            existingEdge.transactionsCount += 1;
-            existingEdge.lastDate = this.pickLatestDate(existingEdge.lastDate, dateStr);
-          } else {
-            edgeMap.set(edgeKey, {
-              id: tr.id || edgeKey,
-              from: fromNode.id,
-              to: toNode.id,
-              amount,
-              paymentProvider: providerName,
-              transactionsCount: 1,
-              lastDate: dateStr,
-              applicationId: tr.application_id || undefined,
-            });
-          }
         }
       }
     }
@@ -692,7 +731,7 @@ export class FinancialFlowService {
       node.netFlow = node.totalIn - node.totalOut;
 
       if (specialExitRoles.has(node.role)) {
-        node.riskScore = Math.min(95, 70 + node.inDegree * 8);
+        node.riskScore = Math.min(95, 70 + (node.inDegree + node.outDegree) * 6);
       } else if (node.inDegree > 0 && node.outDegree === 0) {
         node.role = 'MULE_DROPPER';
         node.riskScore = Math.min(95, 60 + node.inDegree * 10 + (node.reportsCount > 1 ? 20 : 0));
