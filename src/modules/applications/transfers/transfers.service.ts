@@ -524,4 +524,107 @@ export class TransfersService {
       res.end();
     }
   }
+
+  async getStats(currentUser?: JwtAccessPayload): Promise<{
+    total: number;
+    totalAmountUzs: number;
+    avgAmountUzs: number;
+    successCount: number;
+    pendingCount: number;
+    cancelledCount: number;
+    cardToCardCount: number;
+    cryptoCount: number;
+    otherChannelCount: number;
+    topProviders: Array<{
+      id: string;
+      name: string;
+      count: number;
+      totalAmount: number;
+      percent: number;
+    }>;
+  }> {
+    const allowedDistrictIds = await getAllowedDistrictIds(this.userRepo, currentUser);
+
+    const summaryQb = this.transferRepo
+      .createQueryBuilder('transfer')
+      .select('COUNT(transfer.id)', 'total')
+      .addSelect(
+        `COALESCE(SUM(CASE WHEN UPPER(COALESCE(transfer.currency, 'UZS')) = 'UZS' THEN transfer.amount ELSE 0 END), 0)`,
+        'totalAmountUzs',
+      )
+      .addSelect(
+        `COUNT(*) FILTER (WHERE UPPER(COALESCE(transfer.currency, 'UZS')) = 'UZS' AND COALESCE(transfer.amount, 0) > 0)`,
+        'uzsCount',
+      )
+      .addSelect(`COUNT(*) FILTER (WHERE transfer.status = 'MUVAFFAQIYATLI')`, 'successCount')
+      .addSelect(`COUNT(*) FILTER (WHERE transfer.status = 'KUTILMOQDA')`, 'pendingCount')
+      .addSelect(`COUNT(*) FILTER (WHERE transfer.status = 'BEKOR_QILINDI')`, 'cancelledCount')
+      .addSelect(
+        `COUNT(*) FILTER (WHERE COALESCE(transfer.destination_type, 'CARD') = 'CARD' AND COALESCE(transfer.destination_details->>'source_type', '') <> 'CRYPTO')`,
+        'cardToCardCount',
+      )
+      .addSelect(
+        `COUNT(*) FILTER (WHERE transfer.destination_type = 'CRYPTO' OR COALESCE(transfer.destination_details->>'source_type', '') = 'CRYPTO')`,
+        'cryptoCount',
+      )
+      .addSelect(
+        `COUNT(*) FILTER (WHERE COALESCE(transfer.destination_type, 'CARD') NOT IN ('CARD', 'CRYPTO') AND COALESCE(transfer.destination_details->>'source_type', '') <> 'CRYPTO')`,
+        'otherChannelCount',
+      );
+    this.applyDistrictScope(summaryQb, allowedDistrictIds);
+
+    const provQb = this.transferRepo
+      .createQueryBuilder('transfer')
+      .innerJoin('transfer.payment_provider', 'provider')
+      .select('provider.id', 'id')
+      .addSelect('provider.name', 'name')
+      .addSelect('COUNT(transfer.id)', 'count')
+      .addSelect(
+        `COALESCE(SUM(CASE WHEN UPPER(COALESCE(transfer.currency, 'UZS')) = 'UZS' THEN transfer.amount ELSE 0 END), 0)`,
+        'totalAmount',
+      )
+      .groupBy('provider.id')
+      .addGroupBy('provider.name')
+      .orderBy('COUNT(transfer.id)', 'DESC')
+      .limit(5);
+    this.applyDistrictScope(provQb, allowedDistrictIds);
+
+    const [rawSummary, rawProviders] = await Promise.all([
+      summaryQb.getRawOne<Record<string, string | null>>(),
+      provQb.getRawMany<{
+        id: string;
+        name: string | null;
+        count: string;
+        totalAmount: string;
+      }>(),
+    ]);
+
+    const total = Number(rawSummary?.total) || 0;
+    const totalAmountUzs = Number(rawSummary?.totalAmountUzs) || 0;
+    const uzsCount = Number(rawSummary?.uzsCount) || 0;
+
+    const topProviders = rawProviders.map((row) => {
+      const count = Number(row.count) || 0;
+      return {
+        id: row.id,
+        name: row.name || 'Noma‘lum tizim',
+        count,
+        totalAmount: Number(row.totalAmount) || 0,
+        percent: total > 0 ? Math.round((count / total) * 100) : 0,
+      };
+    });
+
+    return {
+      total,
+      totalAmountUzs,
+      avgAmountUzs: uzsCount > 0 ? Math.round(totalAmountUzs / uzsCount) : 0,
+      successCount: Number(rawSummary?.successCount) || 0,
+      pendingCount: Number(rawSummary?.pendingCount) || 0,
+      cancelledCount: Number(rawSummary?.cancelledCount) || 0,
+      cardToCardCount: Number(rawSummary?.cardToCardCount) || 0,
+      cryptoCount: Number(rawSummary?.cryptoCount) || 0,
+      otherChannelCount: Number(rawSummary?.otherChannelCount) || 0,
+      topProviders,
+    };
+  }
 }

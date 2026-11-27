@@ -75,6 +75,11 @@ export class TransfersController {
     );
   }
 
+  @Get('stats')
+  getStats(@CurrentUser() currentUser?: JwtAccessPayload) {
+    return this.transfersService.getStats(currentUser);
+  }
+
   @Get('export/excel')
   async exportExcel(
     @Res() res: Response,

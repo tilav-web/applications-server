@@ -426,4 +426,80 @@ export class CardsService {
       res.end();
     }
   }
+
+  async getStats(currentUser?: JwtAccessPayload): Promise<{
+    total: number;
+    attachedCount: number;
+    unattachedCount: number;
+    uzcardCount: number;
+    humoCount: number;
+    visaMasterCount: number;
+    otherSystemCount: number;
+    topBanks: Array<{ id: string; name: string; count: number; percent: number }>;
+  }> {
+    const allowedDistrictIds = await getAllowedDistrictIds(this.userRepo, currentUser);
+
+    const summaryQb = this.cardRepo
+      .createQueryBuilder('card')
+      .select('COUNT(card.id)', 'total')
+      .addSelect('COUNT(*) FILTER (WHERE card.citizen_id IS NOT NULL)', 'attachedCount')
+      .addSelect('COUNT(*) FILTER (WHERE card.citizen_id IS NULL)', 'unattachedCount')
+      .addSelect(
+        `COUNT(*) FILTER (WHERE REGEXP_REPLACE(COALESCE(card.card_number, ''), '[^0-9]', '', 'g') LIKE '8600%' OR REGEXP_REPLACE(COALESCE(card.card_number, ''), '[^0-9]', '', 'g') LIKE '5614%')`,
+        'uzcardCount',
+      )
+      .addSelect(
+        `COUNT(*) FILTER (WHERE REGEXP_REPLACE(COALESCE(card.card_number, ''), '[^0-9]', '', 'g') LIKE '9860%')`,
+        'humoCount',
+      )
+      .addSelect(
+        `COUNT(*) FILTER (WHERE (REGEXP_REPLACE(COALESCE(card.card_number, ''), '[^0-9]', '', 'g') LIKE '4%' OR REGEXP_REPLACE(COALESCE(card.card_number, ''), '[^0-9]', '', 'g') LIKE '5%') AND REGEXP_REPLACE(COALESCE(card.card_number, ''), '[^0-9]', '', 'g') NOT LIKE '5614%')`,
+        'visaMasterCount',
+      );
+    this.applyDistrictScope(summaryQb, allowedDistrictIds);
+
+    const bankQb = this.cardRepo
+      .createQueryBuilder('card')
+      .innerJoin('card.bank', 'bank')
+      .select('bank.id', 'id')
+      .addSelect('bank.name', 'name')
+      .addSelect('COUNT(card.id)', 'count')
+      .groupBy('bank.id')
+      .addGroupBy('bank.name')
+      .orderBy('COUNT(card.id)', 'DESC')
+      .limit(5);
+    this.applyDistrictScope(bankQb, allowedDistrictIds);
+
+    const [rawSummary, rawBanks] = await Promise.all([
+      summaryQb.getRawOne<Record<string, string | null>>(),
+      bankQb.getRawMany<{ id: string; name: string | null; count: string }>(),
+    ]);
+
+    const total = Number(rawSummary?.total) || 0;
+    const uzcardCount = Number(rawSummary?.uzcardCount) || 0;
+    const humoCount = Number(rawSummary?.humoCount) || 0;
+    const visaMasterCount = Number(rawSummary?.visaMasterCount) || 0;
+    const otherSystemCount = Math.max(0, total - uzcardCount - humoCount - visaMasterCount);
+
+    const topBanks = rawBanks.map((row) => {
+      const count = Number(row.count) || 0;
+      return {
+        id: row.id,
+        name: row.name || 'Noma‘lum bank',
+        count,
+        percent: total > 0 ? Math.round((count / total) * 100) : 0,
+      };
+    });
+
+    return {
+      total,
+      attachedCount: Number(rawSummary?.attachedCount) || 0,
+      unattachedCount: Number(rawSummary?.unattachedCount) || 0,
+      uzcardCount,
+      humoCount,
+      visaMasterCount,
+      otherSystemCount,
+      topBanks,
+    };
+  }
 }

@@ -461,4 +461,79 @@ export class CitizensService {
       res.end();
     }
   }
+
+  async getStats(currentUser?: JwtAccessPayload): Promise<{
+    total: number;
+    maleCount: number;
+    femaleCount: number;
+    withPhoneCount: number;
+    withPassportCount: number;
+    withCardsCount: number;
+    topDistricts: Array<{ id: string; name: string; count: number; percent: number }>;
+  }> {
+    const allowedDistrictIds = await getAllowedDistrictIds(this.userRepo, currentUser);
+
+    const summaryQb = this.citizenRepo
+      .createQueryBuilder('citizen')
+      .select('COUNT(citizen.id)', 'total')
+      .addSelect(
+        `COUNT(*) FILTER (WHERE LOWER(COALESCE(citizen.gender, '')) = 'male')`,
+        'maleCount',
+      )
+      .addSelect(
+        `COUNT(*) FILTER (WHERE LOWER(COALESCE(citizen.gender, '')) = 'female')`,
+        'femaleCount',
+      )
+      .addSelect(
+        `COUNT(*) FILTER (WHERE citizen.phone_number IS NOT NULL AND TRIM(citizen.phone_number) <> '')`,
+        'withPhoneCount',
+      )
+      .addSelect(
+        `COUNT(*) FILTER (WHERE citizen.passport IS NOT NULL AND TRIM(citizen.passport) <> '')`,
+        'withPassportCount',
+      )
+      .addSelect(
+        `COUNT(*) FILTER (WHERE EXISTS (SELECT 1 FROM cards c WHERE c.citizen_id = citizen.id))`,
+        'withCardsCount',
+      );
+    this.applyDistrictScope(summaryQb, allowedDistrictIds);
+
+    const distQb = this.citizenRepo
+      .createQueryBuilder('citizen')
+      .innerJoin('citizen.district', 'district')
+      .select('district.id', 'id')
+      .addSelect('district.name', 'name')
+      .addSelect('COUNT(citizen.id)', 'count')
+      .groupBy('district.id')
+      .addGroupBy('district.name')
+      .orderBy('COUNT(citizen.id)', 'DESC')
+      .limit(5);
+    this.applyDistrictScope(distQb, allowedDistrictIds);
+
+    const [rawSummary, rawDistricts] = await Promise.all([
+      summaryQb.getRawOne<Record<string, string | null>>(),
+      distQb.getRawMany<{ id: string; name: string | null; count: string }>(),
+    ]);
+
+    const total = Number(rawSummary?.total) || 0;
+    const topDistricts = rawDistricts.map((row) => {
+      const count = Number(row.count) || 0;
+      return {
+        id: row.id,
+        name: row.name || 'Noma‘lum tuman',
+        count,
+        percent: total > 0 ? Math.round((count / total) * 100) : 0,
+      };
+    });
+
+    return {
+      total,
+      maleCount: Number(rawSummary?.maleCount) || 0,
+      femaleCount: Number(rawSummary?.femaleCount) || 0,
+      withPhoneCount: Number(rawSummary?.withPhoneCount) || 0,
+      withPassportCount: Number(rawSummary?.withPassportCount) || 0,
+      withCardsCount: Number(rawSummary?.withCardsCount) || 0,
+      topDistricts,
+    };
+  }
 }

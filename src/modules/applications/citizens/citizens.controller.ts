@@ -83,6 +83,11 @@ export class CitizensController {
     );
   }
 
+  @Get('stats')
+  getStats(@CurrentUser() currentUser?: JwtAccessPayload) {
+    return this.citizensService.getStats(currentUser);
+  }
+
   @Get('export/excel')
   async exportExcel(
     @Res() res: Response,

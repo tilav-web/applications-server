@@ -55,6 +55,11 @@ export class UsersController {
     );
   }
 
+  @Get('stats')
+  getStats(@CurrentUser() currentUser: JwtAccessPayload) {
+    return this.usersService.getStats(currentUser);
+  }
+
   @Get(':id')
   findOne(@Param('id') id: string, @CurrentUser() currentUser: JwtAccessPayload) {
     return this.usersService.findOne(id, currentUser);

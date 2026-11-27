@@ -75,6 +75,11 @@ export class CardsController {
     );
   }
 
+  @Get('stats')
+  getStats(@CurrentUser() currentUser?: JwtAccessPayload) {
+    return this.cardsService.getStats(currentUser);
+  }
+
   @Get('export/excel')
   async exportExcel(
     @Res() res: Response,

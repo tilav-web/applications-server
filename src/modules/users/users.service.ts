@@ -334,4 +334,44 @@ export class UsersService {
     await this.authService.revokeUserTokens(id);
     return { success: true, message: "Hodim o'chirildi" };
   }
+
+  async getStats(currentUser?: JwtAccessPayload): Promise<{
+    total: number;
+    withDistrictsCount: number;
+    rootCount: number;
+    byRole: Array<{ role: string; count: number; percent: number }>;
+  }> {
+    await this.assertRootSuperAdmin(currentUser);
+
+    const auths = await this.authRepository.find({
+      relations: { user: { assigned_districts: true } },
+    });
+
+    const total = auths.length;
+    let withDistrictsCount = 0;
+    let rootCount = 0;
+    const roleCounts = new Map<string, number>();
+
+    for (const a of auths) {
+      if (a.is_root) rootCount += 1;
+      if ((a.user?.assigned_districts?.length || 0) > 0) withDistrictsCount += 1;
+      const r = a.role || 'STAFF';
+      roleCounts.set(r, (roleCounts.get(r) || 0) + 1);
+    }
+
+    const byRole = Array.from(roleCounts.entries())
+      .map(([role, count]) => ({
+        role,
+        count,
+        percent: total > 0 ? Math.round((count / total) * 100) : 0,
+      }))
+      .sort((a, b) => b.count - a.count);
+
+    return {
+      total,
+      withDistrictsCount,
+      rootCount,
+      byRole,
+    };
+  }
 }
