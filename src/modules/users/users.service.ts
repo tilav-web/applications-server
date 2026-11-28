@@ -11,6 +11,8 @@ import { DataSource, In, Repository } from 'typeorm';
 import { Role } from '../../common/enums/role.enum';
 import type { PaginatedResult } from '../../common/interfaces/pagination.interface';
 import type { JwtAccessPayload } from '../../common/types/jwt-payload.interface';
+import { escapeLikePattern, isPgUniqueViolation } from '../../common/utils/normalization.util';
+import { normalizePagination } from '../../common/utils/pagination.util';
 import { District } from '../applications/districts/district.entity';
 import { Auth } from '../auth/auth.entity';
 import { AuthService } from '../auth/auth.service';
@@ -120,8 +122,9 @@ export class UsersService {
   ): Promise<PaginatedResult<UserView>> {
     await this.assertRootSuperAdmin(currentUser);
 
-    const take = limit;
-    const skip = (page - 1) * limit;
+    const { page: safePage, limit: safeLimit } = normalizePagination(page, limit, 10, 100);
+    const take = safeLimit;
+    const skip = (safePage - 1) * safeLimit;
 
     const query = this.authRepository
       .createQueryBuilder('auth')
@@ -137,16 +140,22 @@ export class UsersService {
     }
     if (filters?.fullName?.trim()) {
       query.andWhere("CONCAT_WS(' ', user.last_name, user.first_name) ILIKE :fullName", {
-        fullName: `%${filters.fullName.trim()}%`,
+        fullName: `%${escapeLikePattern(filters.fullName.trim())}%`,
       });
     }
     if (filters?.username?.trim()) {
       const cleanU = filters.username.trim().replace(/^@/, '');
-      query.andWhere('auth.username ILIKE :uName', { uName: `%${cleanU}%` });
+      if (cleanU) {
+        query.andWhere('auth.username ILIKE :uName', {
+          uName: `%${escapeLikePattern(cleanU)}%`,
+        });
+      }
     }
     if (filters?.phoneNumber?.trim()) {
       const cleanP = filters.phoneNumber.replace(/\D/g, '') || filters.phoneNumber.trim();
-      query.andWhere('user.phone_number ILIKE :uPhone', { uPhone: `%${cleanP}%` });
+      query.andWhere('user.phone_number ILIKE :uPhone', {
+        uPhone: `%${escapeLikePattern(cleanP)}%`,
+      });
     }
     if (filters?.districtId?.trim()) {
       query.andWhere('districts.id = :uDistrictId', {
@@ -155,7 +164,7 @@ export class UsersService {
     }
 
     if (search && search.trim()) {
-      const q = `%${search.trim()}%`;
+      const q = `%${escapeLikePattern(search.trim())}%`;
       query.andWhere(
         '(auth.username ILIKE :q OR user.first_name ILIKE :q OR user.last_name ILIKE :q OR user.phone_number ILIKE :q)',
         { q },
@@ -166,17 +175,17 @@ export class UsersService {
 
     const items: UserView[] = authList.map((auth) => this.mapAuthToUserView(auth));
 
-    const totalPages = Math.ceil(total / limit) || 1;
+    const totalPages = Math.ceil(total / safeLimit) || 1;
 
     return {
       items,
       meta: {
         total,
-        page,
-        limit,
+        page: safePage,
+        limit: safeLimit,
         totalPages,
-        hasNextPage: page < totalPages,
-        hasPreviousPage: page > 1,
+        hasNextPage: safePage < totalPages,
+        hasPreviousPage: safePage > 1,
       },
     };
   }
@@ -189,44 +198,57 @@ export class UsersService {
   async create(dto: CreateUserDto, currentUser?: JwtAccessPayload): Promise<UserView> {
     await this.assertRootSuperAdmin(currentUser);
 
-    const existing = await this.authRepository.findOne({ where: { username: dto.username } });
+    const username = dto.username?.trim();
+    if (!username) {
+      throw new BadRequestException("Login (username) bo'sh bo'lishi mumkin emas");
+    }
+
+    const existing = await this.authRepository.findOne({ where: { username } });
     if (existing) {
       throw new BadRequestException('Bunday loginli (username) hodim allaqachon mavjud');
     }
 
     const hashedPassword = await bcrypt.hash(dto.password, 10);
 
-    const savedAuthId = await this.dataSource.transaction(async (manager) => {
-      const authRepo = manager.getRepository(Auth);
-      const userRepo = manager.getRepository(User);
-      const districtRepo = manager.getRepository(District);
+    let savedAuthId: string;
+    try {
+      savedAuthId = await this.dataSource.transaction(async (manager) => {
+        const authRepo = manager.getRepository(Auth);
+        const userRepo = manager.getRepository(User);
+        const districtRepo = manager.getRepository(District);
 
-      const auth = authRepo.create({
-        username: dto.username,
-        password: hashedPassword,
-        role: dto.role || Role.STAFF,
-        is_root: false,
-      });
-      const savedAuth = await authRepo.save(auth);
-
-      let assignedDistricts: District[] = [];
-      if (dto.assigned_district_ids && dto.assigned_district_ids.length > 0) {
-        assignedDistricts = await districtRepo.findBy({
-          id: In(dto.assigned_district_ids),
+        const auth = authRepo.create({
+          username,
+          password: hashedPassword,
+          role: dto.role || Role.STAFF,
+          is_root: false,
         });
-      }
+        const savedAuth = await authRepo.save(auth);
 
-      const user = userRepo.create({
-        auth_id: savedAuth.id,
-        first_name: dto.first_name || null,
-        last_name: dto.last_name || null,
-        phone_number: dto.phone_number || null,
-        assigned_districts: assignedDistricts,
+        let assignedDistricts: District[] = [];
+        if (dto.assigned_district_ids && dto.assigned_district_ids.length > 0) {
+          assignedDistricts = await districtRepo.findBy({
+            id: In(dto.assigned_district_ids),
+          });
+        }
+
+        const user = userRepo.create({
+          auth_id: savedAuth.id,
+          first_name: dto.first_name || null,
+          last_name: dto.last_name || null,
+          phone_number: dto.phone_number || null,
+          assigned_districts: assignedDistricts,
+        });
+        await userRepo.save(user);
+
+        return savedAuth.id;
       });
-      await userRepo.save(user);
-
-      return savedAuth.id;
-    });
+    } catch (err) {
+      if (isPgUniqueViolation(err)) {
+        throw new BadRequestException('Bunday loginli (username) hodim allaqachon mavjud');
+      }
+      throw err;
+    }
 
     return this.getUserViewById(savedAuthId);
   }
@@ -255,13 +277,19 @@ export class UsersService {
 
     let shouldRevokeSessions = false;
 
-    if (dto.username && dto.username !== auth.username) {
-      const existing = await this.authRepository.findOne({ where: { username: dto.username } });
-      if (existing) {
-        throw new BadRequestException('Ushbu login band');
+    if (dto.username !== undefined) {
+      const nextUsername = dto.username.trim();
+      if (!nextUsername) {
+        throw new BadRequestException("Login (username) bo'sh bo'lishi mumkin emas");
       }
-      auth.username = dto.username;
-      shouldRevokeSessions = true;
+      if (nextUsername !== auth.username) {
+        const existing = await this.authRepository.findOne({ where: { username: nextUsername } });
+        if (existing) {
+          throw new BadRequestException('Ushbu login band');
+        }
+        auth.username = nextUsername;
+        shouldRevokeSessions = true;
+      }
     }
 
     if (dto.password) {
@@ -280,7 +308,14 @@ export class UsersService {
       auth.hashed_refresh_token = null;
     }
 
-    await this.authRepository.save(auth);
+    try {
+      await this.authRepository.save(auth);
+    } catch (err) {
+      if (isPgUniqueViolation(err)) {
+        throw new BadRequestException('Ushbu login band');
+      }
+      throw err;
+    }
 
     let user = auth.user;
     if (!user) {

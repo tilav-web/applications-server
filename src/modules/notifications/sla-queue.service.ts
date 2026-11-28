@@ -32,6 +32,7 @@ export class SlaQueueService implements OnModuleInit, OnModuleDestroy {
   private worker: Worker<SlaJobData> | null = null;
   private queueReady = false;
   private workerReady = false;
+  private reconcileTimer: NodeJS.Timeout | null = null;
 
   private get isReady(): boolean {
     return this.queueReady && this.workerReady && Boolean(this.queue);
@@ -136,9 +137,11 @@ export class SlaQueueService implements OnModuleInit, OnModuleDestroy {
       this.logger.log(`BullMQ SLA navbati ishga tushdi (${host}:${port})`);
 
       // Mavjud ochiq ariza va aniqlangan jinoyatlarning joblarini fon rejimida sinxronlash
-      setTimeout(() => {
+      this.reconcileTimer = setTimeout(() => {
+        this.reconcileTimer = null;
         void this.reconcileAllOpenApplications();
       }, 3000);
+      this.reconcileTimer.unref?.();
     } catch (err) {
       this.queueReady = false;
       this.workerReady = false;
@@ -149,6 +152,10 @@ export class SlaQueueService implements OnModuleInit, OnModuleDestroy {
   }
 
   async onModuleDestroy(): Promise<void> {
+    if (this.reconcileTimer) {
+      clearTimeout(this.reconcileTimer);
+      this.reconcileTimer = null;
+    }
     try {
       if (this.worker) await this.worker.close();
       if (this.queue) await this.queue.close();
@@ -174,7 +181,8 @@ export class SlaQueueService implements OnModuleInit, OnModuleDestroy {
 
   private async getSettingNumber(key: string, fallback: number): Promise<number> {
     const row = await this.settingRepo.findOne({ where: { key } });
-    const parsed = Number(row?.value);
+    const raw = row?.value?.trim();
+    const parsed = raw ? Number(raw) : NaN;
     return Number.isFinite(parsed) && parsed >= 0 ? parsed : fallback;
   }
 
@@ -194,10 +202,23 @@ export class SlaQueueService implements OnModuleInit, OnModuleDestroy {
   async cancelForApplication(applicationId: string, deadlineMs?: number): Promise<void> {
     if (!this.queue || !this.isReady) return;
     try {
+      let resolvedDeadlineMs = deadlineMs;
+      if (resolvedDeadlineMs === undefined) {
+        const app = await this.applicationRepo.findOne({
+          where: { id: applicationId },
+          select: { id: true, deadline_at: true },
+        });
+        if (app?.deadline_at) {
+          resolvedDeadlineMs = new Date(app.deadline_at).getTime();
+        }
+      }
+
       for (const stage of ALL_STAGES) {
         const candidateIds = [this.buildJobId(applicationId, stage, 'APPLICATION')];
-        if (deadlineMs) {
-          candidateIds.push(this.buildJobId(applicationId, stage, 'APPLICATION', deadlineMs));
+        if (resolvedDeadlineMs) {
+          candidateIds.push(
+            this.buildJobId(applicationId, stage, 'APPLICATION', resolvedDeadlineMs),
+          );
         }
         for (const jobId of candidateIds) {
           const job = await this.queue.getJob(jobId);
@@ -216,10 +237,21 @@ export class SlaQueueService implements OnModuleInit, OnModuleDestroy {
   async cancelForDetectedCrime(crimeId: string, deadlineMs?: number): Promise<void> {
     if (!this.queue || !this.isReady) return;
     try {
+      let resolvedDeadlineMs = deadlineMs;
+      if (resolvedDeadlineMs === undefined) {
+        const dc = await this.detectedCrimeRepo.findOne({
+          where: { id: crimeId },
+          select: { id: true, deadline_at: true },
+        });
+        if (dc?.deadline_at) {
+          resolvedDeadlineMs = new Date(dc.deadline_at).getTime();
+        }
+      }
+
       for (const stage of ALL_STAGES) {
         const candidateIds = [this.buildJobId(crimeId, stage, 'DETECTED_CRIME')];
-        if (deadlineMs) {
-          candidateIds.push(this.buildJobId(crimeId, stage, 'DETECTED_CRIME', deadlineMs));
+        if (resolvedDeadlineMs) {
+          candidateIds.push(this.buildJobId(crimeId, stage, 'DETECTED_CRIME', resolvedDeadlineMs));
         }
         for (const jobId of candidateIds) {
           const job = await this.queue.getJob(jobId);
@@ -238,13 +270,17 @@ export class SlaQueueService implements OnModuleInit, OnModuleDestroy {
   async scheduleForDetectedCrime(
     crimeId: string,
     preloadedThresholds?: { warnHours: number; urgentHours: number; escalateHours: number },
+    preloadedCrime?: DetectedCrime | null,
   ): Promise<void> {
     if (!this.queue || !this.isReady) return;
     try {
-      const dc = await this.detectedCrimeRepo.findOne({
-        where: { id: crimeId },
-        relations: { application_status: true },
-      });
+      const dc =
+        preloadedCrime !== undefined
+          ? preloadedCrime
+          : await this.detectedCrimeRepo.findOne({
+              where: { id: crimeId },
+              relations: { application_status: true },
+            });
 
       const deadlineMs = dc?.deadline_at ? new Date(dc.deadline_at).getTime() : undefined;
       await this.cancelForDetectedCrime(crimeId, deadlineMs);
@@ -292,13 +328,17 @@ export class SlaQueueService implements OnModuleInit, OnModuleDestroy {
   async scheduleForApplication(
     applicationId: string,
     preloadedThresholds?: { warnHours: number; urgentHours: number; escalateHours: number },
+    preloadedApp?: Application | null,
   ): Promise<void> {
     if (!this.queue || !this.isReady) return;
     try {
-      const app = await this.applicationRepo.findOne({
-        where: { id: applicationId },
-        relations: { application_status: true },
-      });
+      const app =
+        preloadedApp !== undefined
+          ? preloadedApp
+          : await this.applicationRepo.findOne({
+              where: { id: applicationId },
+              relations: { application_status: true },
+            });
 
       const deadlineMs = app?.deadline_at ? new Date(app.deadline_at).getTime() : undefined;
       await this.cancelForApplication(applicationId, deadlineMs);
@@ -356,7 +396,14 @@ export class SlaQueueService implements OnModuleInit, OnModuleDestroy {
           .andWhere('app.closed_at IS NULL')
           .andWhere('app.deadline_at IS NOT NULL')
           .andWhere('(st.tracks_sla = true OR st.id IS NULL)')
-          .select(['app.id', 'app.deadline_at', 'st.id', 'st.tracks_sla'])
+          .select([
+            'app.id',
+            'app.deadline_at',
+            'app.is_deleted',
+            'app.closed_at',
+            'st.id',
+            'st.tracks_sla',
+          ])
           .getMany(),
         this.detectedCrimeRepo
           .createQueryBuilder('dc')
@@ -365,7 +412,14 @@ export class SlaQueueService implements OnModuleInit, OnModuleDestroy {
           .andWhere('dc.closed_at IS NULL')
           .andWhere('dc.deadline_at IS NOT NULL')
           .andWhere('(st.tracks_sla = true OR st.id IS NULL)')
-          .select(['dc.id', 'dc.deadline_at', 'st.id', 'st.tracks_sla'])
+          .select([
+            'dc.id',
+            'dc.deadline_at',
+            'dc.is_deleted',
+            'dc.closed_at',
+            'st.id',
+            'st.tracks_sla',
+          ])
           .getMany(),
       ]);
 
@@ -375,7 +429,7 @@ export class SlaQueueService implements OnModuleInit, OnModuleDestroy {
         const chunk = openApps.slice(i, i + CHUNK_SIZE);
         await Promise.all(
           chunk.map(async (app) => {
-            await this.scheduleForApplication(app.id, thresholds);
+            await this.scheduleForApplication(app.id, thresholds, app);
             scheduled++;
           }),
         );
@@ -386,7 +440,7 @@ export class SlaQueueService implements OnModuleInit, OnModuleDestroy {
         const chunk = openCrimes.slice(i, i + CHUNK_SIZE);
         await Promise.all(
           chunk.map(async (dc) => {
-            await this.scheduleForDetectedCrime(dc.id, thresholds);
+            await this.scheduleForDetectedCrime(dc.id, thresholds, dc);
             detectedCrimes++;
           }),
         );

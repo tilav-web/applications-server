@@ -6,6 +6,7 @@ import { Repository } from 'typeorm';
 import { ApplicationStatus } from '../../common/enums/application-status.enum';
 import { Role } from '../../common/enums/role.enum';
 import { maskCardNumberForAlert } from '../../common/utils/district-scope.util';
+import { normalizePagination } from '../../common/utils/pagination.util';
 import { Application } from '../applications/application.entity';
 import { SystemSetting } from '../audit/system-setting.entity';
 import { DetectedCrime } from '../detected-crimes/entities/detected-crime.entity';
@@ -67,6 +68,7 @@ export class NotificationsService implements OnModuleInit, OnModuleDestroy {
       },
       15 * 60 * 1000,
     );
+    this.schedulerTimer.unref?.();
   }
 
   onModuleDestroy(): void {
@@ -78,7 +80,8 @@ export class NotificationsService implements OnModuleInit, OnModuleDestroy {
 
   private async getSettingNumber(key: string, fallback: number): Promise<number> {
     const row = await this.settingRepo.findOne({ where: { key } });
-    const parsed = Number(row?.value);
+    const raw = row?.value?.trim();
+    const parsed = raw ? Number(raw) : NaN;
     return Number.isFinite(parsed) && parsed >= 0 ? parsed : fallback;
   }
 
@@ -178,14 +181,18 @@ export class NotificationsService implements OnModuleInit, OnModuleDestroy {
     return this.notifRepo.save(entity);
   }
 
-  async findUsersByRoles(roles: Role[], districtId?: string | null): Promise<User[]> {
+  async findUsersByRoles(roles: Role[], districtId?: string | string[] | null): Promise<User[]> {
+    if (roles.length === 0) return [];
     const qb = this.userRepo
       .createQueryBuilder('user')
       .innerJoinAndSelect('user.auth', 'auth')
       .leftJoinAndSelect('user.assigned_districts', 'districts')
       .where('auth.role IN (:...roles)', { roles });
 
-    if (districtId) {
+    if (Array.isArray(districtId)) {
+      if (districtId.length === 0) return [];
+      qb.andWhere('districts.id IN (:...districtIds)', { districtIds: districtId });
+    } else if (districtId) {
       qb.andWhere('districts.id = :districtId', { districtId });
     }
 
@@ -201,7 +208,7 @@ export class NotificationsService implements OnModuleInit, OnModuleDestroy {
   async onApplicationCreated(appId: string, actorAuthId?: string): Promise<void> {
     try {
       const app = await this.applicationRepo.findOne({
-        where: { id: appId },
+        where: { id: appId, is_deleted: false },
         relations: {
           district: true,
           citizen: true,
@@ -277,12 +284,12 @@ export class NotificationsService implements OnModuleInit, OnModuleDestroy {
             ),
           );
 
-          const bossAndAdmins = await this.findUsersByRoles([Role.BOSS, Role.SUPER_ADMIN]);
-          const officers: User[] = [];
-          for (const dId of districtIds) {
-            const list = await this.findUsersByRoles([Role.DISTRICT_OFFICER], dId);
-            officers.push(...list);
-          }
+          const [bossAndAdmins, officers] = await Promise.all([
+            this.findUsersByRoles([Role.BOSS, Role.SUPER_ADMIN]),
+            districtIds.length > 0
+              ? this.findUsersByRoles([Role.DISTRICT_OFFICER], districtIds)
+              : Promise.resolve([]),
+          ]);
 
           const uniqueUsers = new Map<string, User>();
           [...bossAndAdmins, ...officers].forEach((u) => uniqueUsers.set(u.id, u));
@@ -318,7 +325,7 @@ export class NotificationsService implements OnModuleInit, OnModuleDestroy {
   ): Promise<void> {
     try {
       const app = await this.applicationRepo.findOne({
-        where: { id: appId },
+        where: { id: appId, is_deleted: false },
         relations: { district: true },
       });
       if (!app || !app.district_id) return;
@@ -753,8 +760,15 @@ export class NotificationsService implements OnModuleInit, OnModuleDestroy {
           this.lastDigestDate = todayKey;
           return;
         }
-        this.lastDigestDate = todayKey;
-        await this.sendDailyDigest();
+        try {
+          await this.sendDailyDigest();
+          this.lastDigestDate = todayKey;
+        } catch (digestErr) {
+          if (hasRedis) {
+            await this.redisService.del(lockKey).catch(() => {});
+          }
+          throw digestErr;
+        }
       }
 
       // 2. SLA muddat nazorati endi BullMQ (SlaQueueService) delayed joblari orqali sekundigacha aniq ishlaydi
@@ -766,16 +780,21 @@ export class NotificationsService implements OnModuleInit, OnModuleDestroy {
   // ===== USER ENDPOINTS =====
 
   async getMyNotifications(authId: string, page = 1, limit = 20) {
+    const { page: safePage, limit: safeLimit } = normalizePagination(page, limit, 20, 100);
     const user = await this.userRepo.findOne({ where: { auth_id: authId } });
     if (!user) {
-      return { items: [], unreadCount: 0, meta: { total: 0, page, limit, totalPages: 1 } };
+      return {
+        items: [],
+        unreadCount: 0,
+        meta: { total: 0, page: safePage, limit: safeLimit, totalPages: 1 },
+      };
     }
 
     const [items, total] = await this.notifRepo.findAndCount({
       where: { user_id: user.id },
       order: { created_at: 'DESC' },
-      take: limit,
-      skip: (page - 1) * limit,
+      take: safeLimit,
+      skip: (safePage - 1) * safeLimit,
     });
 
     const unreadCount = await this.notifRepo.count({
@@ -787,9 +806,9 @@ export class NotificationsService implements OnModuleInit, OnModuleDestroy {
       unreadCount,
       meta: {
         total,
-        page,
-        limit,
-        totalPages: Math.ceil(total / limit) || 1,
+        page: safePage,
+        limit: safeLimit,
+        totalPages: Math.ceil(total / safeLimit) || 1,
       },
     };
   }
@@ -834,10 +853,14 @@ export class NotificationsService implements OnModuleInit, OnModuleDestroy {
     const user = await this.userRepo.findOne({ where: { auth_id: authId } });
     if (!user) return { success: false };
 
-    user.notification_prefs = {
-      ...this.mergePrefs(user.notification_prefs),
-      ...prefs,
-    };
+    const merged = this.mergePrefs(user.notification_prefs);
+    const allowedKeys = Object.keys(DEFAULT_PREFS) as Array<keyof NotificationPrefs>;
+    for (const key of allowedKeys) {
+      if (typeof prefs[key] === 'boolean') {
+        merged[key] = prefs[key];
+      }
+    }
+    user.notification_prefs = { ...merged };
     await this.userRepo.save(user);
     return this.getMyPreferences(authId);
   }
@@ -944,37 +967,55 @@ export class NotificationsService implements OnModuleInit, OnModuleDestroy {
     daily_digest_enabled?: boolean;
     daily_digest_hour?: number;
   }) {
-    if (dto.high_value_threshold !== undefined) {
+    if (
+      dto.high_value_threshold !== undefined &&
+      Number.isFinite(Number(dto.high_value_threshold))
+    ) {
       await this.setSetting(
         'notif_high_value_threshold',
-        String(Math.max(0, Math.round(dto.high_value_threshold))),
+        String(Math.max(0, Math.round(Number(dto.high_value_threshold)))),
       );
     }
-    if (dto.sla_days !== undefined) {
-      await this.setSetting('notif_sla_days', String(Math.max(1, Math.min(365, dto.sla_days))));
+    if (dto.sla_days !== undefined && Number.isFinite(Number(dto.sla_days))) {
+      await this.setSetting(
+        'notif_sla_days',
+        String(Math.max(1, Math.min(365, Math.round(Number(dto.sla_days))))),
+      );
     }
-    if (dto.sla_warn_hours_before !== undefined) {
+    if (
+      dto.sla_warn_hours_before !== undefined &&
+      Number.isFinite(Number(dto.sla_warn_hours_before))
+    ) {
       await this.setSetting(
         'sla_warn_hours_before',
-        String(Math.max(0, Math.min(720, Math.round(dto.sla_warn_hours_before)))),
+        String(Math.max(0, Math.min(720, Math.round(Number(dto.sla_warn_hours_before))))),
       );
     }
-    if (dto.sla_urgent_hours_before !== undefined) {
+    if (
+      dto.sla_urgent_hours_before !== undefined &&
+      Number.isFinite(Number(dto.sla_urgent_hours_before))
+    ) {
       await this.setSetting(
         'sla_urgent_hours_before',
-        String(Math.max(0, Math.min(720, Math.round(dto.sla_urgent_hours_before)))),
+        String(Math.max(0, Math.min(720, Math.round(Number(dto.sla_urgent_hours_before))))),
       );
     }
-    if (dto.sla_escalate_hours_after !== undefined) {
+    if (
+      dto.sla_escalate_hours_after !== undefined &&
+      Number.isFinite(Number(dto.sla_escalate_hours_after))
+    ) {
       await this.setSetting(
         'sla_escalate_hours_after',
-        String(Math.max(0, Math.min(720, Math.round(dto.sla_escalate_hours_after)))),
+        String(Math.max(0, Math.min(720, Math.round(Number(dto.sla_escalate_hours_after))))),
       );
     }
-    if (dto.sla_max_extension_days !== undefined) {
+    if (
+      dto.sla_max_extension_days !== undefined &&
+      Number.isFinite(Number(dto.sla_max_extension_days))
+    ) {
       await this.setSetting(
         'sla_max_extension_days',
-        String(Math.max(1, Math.min(365, Math.round(dto.sla_max_extension_days)))),
+        String(Math.max(1, Math.min(365, Math.round(Number(dto.sla_max_extension_days))))),
       );
     }
     if (dto.daily_digest_enabled !== undefined) {
@@ -983,10 +1024,10 @@ export class NotificationsService implements OnModuleInit, OnModuleDestroy {
         dto.daily_digest_enabled ? 'true' : 'false',
       );
     }
-    if (dto.daily_digest_hour !== undefined) {
+    if (dto.daily_digest_hour !== undefined && Number.isFinite(Number(dto.daily_digest_hour))) {
       await this.setSetting(
         'notif_daily_digest_hour',
-        String(Math.max(0, Math.min(23, Math.round(dto.daily_digest_hour)))),
+        String(Math.max(0, Math.min(23, Math.round(Number(dto.daily_digest_hour))))),
       );
     }
     return this.getAdminSettings();

@@ -9,6 +9,7 @@ import { ConfigService } from '@nestjs/config';
 import { InjectRepository } from '@nestjs/typeorm';
 import ExcelJS from 'exceljs';
 import type { Response } from 'express';
+import { isIP } from 'net';
 import { LessThan, Repository } from 'typeorm';
 import { gzipSync } from 'zlib';
 
@@ -19,6 +20,7 @@ import {
   styleExcelDataRow,
   styleExcelHeaderRow,
 } from '../../common/utils/excel-style.util';
+import { escapeLikePattern } from '../../common/utils/normalization.util';
 import { normalizePagination } from '../../common/utils/pagination.util';
 import { MinioService } from '../minio/minio.service';
 import { RedisService } from '../redis/redis.service';
@@ -104,6 +106,7 @@ export class AuditService implements OnModuleInit, OnModuleDestroy {
     this.retentionTimer = setInterval(() => {
       void this.runRetentionCleanup();
     }, oneDayMs);
+    this.retentionTimer.unref?.();
   }
 
   onModuleDestroy(): void {
@@ -204,8 +207,17 @@ export class AuditService implements OnModuleInit, OnModuleDestroy {
     actor: JwtAccessPayload,
   ): Promise<{ success: boolean; ip: string; expires_at: string }> {
     const cleanIp = (ip || '').trim().replace(/^::ffff:/, '');
-    if (!cleanIp || cleanIp === '127.0.0.1' || cleanIp === '::1') {
+    if (
+      !cleanIp ||
+      cleanIp === '127.0.0.1' ||
+      cleanIp === '::1' ||
+      cleanIp === '0.0.0.0' ||
+      cleanIp.toLowerCase() === 'localhost'
+    ) {
       throw new BadRequestException("Localhost yoki bo'sh IP manzilni bloklab bo'lmaydi");
+    }
+    if (isIP(cleanIp) === 0) {
+      throw new BadRequestException("Yaroqsiz IP manzil formati (IPv4 yoki IPv6 bo'lishi kerak)");
     }
 
     const safeHours = Math.min(Math.max(Number(durationHours) || 24, 1), 720); // 1 soatdan 30 kungacha
@@ -255,6 +267,9 @@ export class AuditService implements OnModuleInit, OnModuleDestroy {
 
   async unblockIp(ip: string, actor: JwtAccessPayload): Promise<{ success: boolean; ip: string }> {
     const cleanIp = (ip || '').trim().replace(/^::ffff:/, '');
+    if (!cleanIp) {
+      throw new BadRequestException("IP manzil bo'sh bo'lishi mumkin emas");
+    }
     await this.redisService.del(`${BLOCKED_IP_PREFIX}${cleanIp}`);
 
     const client = this.redisService.getClient();
@@ -295,26 +310,34 @@ export class AuditService implements OnModuleInit, OnModuleDestroy {
       qb.andWhere('log.severity = :severity', { severity: q.severity.trim() });
     }
     if (q.username?.trim()) {
-      qb.andWhere('log.username ILIKE :username', { username: `%${q.username.trim()}%` });
+      qb.andWhere('log.username ILIKE :username', {
+        username: `%${escapeLikePattern(q.username.trim())}%`,
+      });
     }
     if (q.ip?.trim()) {
-      qb.andWhere('log.ip ILIKE :ip', { ip: `%${q.ip.trim()}%` });
+      qb.andWhere('log.ip ILIKE :ip', { ip: `%${escapeLikePattern(q.ip.trim())}%` });
     }
     if (q.is_success === 'true' || q.is_success === 'false') {
       qb.andWhere('log.is_success = :isSuccess', { isSuccess: q.is_success === 'true' });
     }
     if (q.date_from?.trim()) {
-      qb.andWhere('log.created_at >= :dateFrom', { dateFrom: new Date(q.date_from) });
+      const start = new Date(q.date_from.trim());
+      if (!Number.isNaN(start.getTime())) {
+        qb.andWhere('log.created_at >= :dateFrom', { dateFrom: start });
+      }
     }
     if (q.date_to?.trim()) {
-      const end = new Date(q.date_to);
-      if (q.date_to.length <= 10) {
-        end.setHours(23, 59, 59, 999);
+      const rawTo = q.date_to.trim();
+      const end = new Date(rawTo);
+      if (!Number.isNaN(end.getTime())) {
+        if (rawTo.length <= 10) {
+          end.setHours(23, 59, 59, 999);
+        }
+        qb.andWhere('log.created_at <= :dateTo', { dateTo: end });
       }
-      qb.andWhere('log.created_at <= :dateTo', { dateTo: end });
     }
     if (q.search?.trim()) {
-      const term = `%${q.search.trim()}%`;
+      const term = `%${escapeLikePattern(q.search.trim())}%`;
       qb.andWhere(
         '(log.username ILIKE :term OR log.summary ILIKE :term OR log.path ILIKE :term OR log.ip ILIKE :term OR log.action ILIKE :term OR log.entity_id ILIKE :term)',
         { term },
@@ -562,10 +585,15 @@ export class AuditService implements OnModuleInit, OnModuleDestroy {
     };
 
     logs.forEach((log, idx) => {
+      const createdDate = log.created_at ? new Date(log.created_at) : null;
+      const formattedCreatedAt =
+        createdDate && !Number.isNaN(createdDate.getTime())
+          ? createdDate.toISOString().slice(0, 19).replace('T', ' ')
+          : '—';
       const row = sheet.addRow(
         sanitizeExcelRow({
           idx: idx + 1,
-          created_at: new Date(log.created_at).toISOString().slice(0, 19).replace('T', ' '),
+          created_at: formattedCreatedAt,
           username: log.username || 'Anonim',
           role: log.role || '—',
           action: log.action,
@@ -611,14 +639,13 @@ export class AuditService implements OnModuleInit, OnModuleDestroy {
       };
     }
 
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 2500);
     try {
-      const controller = new AbortController();
-      const timeout = setTimeout(() => controller.abort(), 2500);
       const response = await fetch(`${lapiUrl}/v1/decisions`, {
         headers: { 'X-Api-Key': apiKey },
         signal: controller.signal,
       });
-      clearTimeout(timeout);
 
       if (!response.ok) {
         return {
@@ -639,6 +666,8 @@ export class AuditService implements OnModuleInit, OnModuleDestroy {
         decisions: [],
         error: err instanceof Error ? err.message : 'CrowdSec ulanmadi',
       };
+    } finally {
+      clearTimeout(timeout);
     }
   }
 
