@@ -8,8 +8,8 @@ import {
   SubmissionForm,
 } from '../../common/enums/appeal-classification.enum';
 import { ApplicationStatus } from '../../common/enums/application-status.enum';
-import { Role } from '../../common/enums/role.enum';
 import type { JwtAccessPayload } from '../../common/types/jwt-payload.interface';
+import { getAllowedDistrictIds } from '../../common/utils/district-scope.util';
 import { User } from '../users/user.entity';
 import { Application } from './application.entity';
 import { shouldIncludeInDamageTotal } from './application-chain.util';
@@ -34,24 +34,17 @@ export class ApplicationsStatisticsService {
   ) {}
 
   async getSlaOverview(currentUser?: JwtAccessPayload) {
-    let assignedDistrictIds: string[] | null = null;
-    if (currentUser && currentUser.role === Role.DISTRICT_OFFICER) {
-      const user = await this.userRepo.findOne({
-        where: { auth_id: currentUser.sub },
-        relations: { assigned_districts: true },
-      });
-      assignedDistrictIds = user?.assigned_districts?.map((d) => d.id) || [];
-      if (assignedDistrictIds.length === 0) {
-        return {
-          totalActive: 0,
-          overdueCount: 0,
-          due24hCount: 0,
-          due72hCount: 0,
-          extendedCount: 0,
-          onTrackCount: 0,
-          urgentItems: [],
-        };
-      }
+    const assignedDistrictIds = await getAllowedDistrictIds(this.userRepo, currentUser);
+    if (assignedDistrictIds !== null && assignedDistrictIds.length === 0) {
+      return {
+        totalActive: 0,
+        overdueCount: 0,
+        due24hCount: 0,
+        due72hCount: 0,
+        extendedCount: 0,
+        onTrackCount: 0,
+        urgentItems: [],
+      };
     }
 
     const now = new Date();
@@ -203,14 +196,7 @@ export class ApplicationsStatisticsService {
     const prevStart = new Date(start.getTime() - durationMs);
     const prevEnd = new Date(start.getTime() - 1);
 
-    let assignedDistrictIds: string[] | null = null;
-    if (currentUser && currentUser.role === Role.DISTRICT_OFFICER) {
-      const user = await this.userRepo.findOne({
-        where: { auth_id: currentUser.sub },
-        relations: { assigned_districts: true },
-      });
-      assignedDistrictIds = user?.assigned_districts?.map((d) => d.id) || [];
-    }
+    const assignedDistrictIds = await getAllowedDistrictIds(this.userRepo, currentUser);
 
     const appsQb = this.applicationRepo
       .createQueryBuilder('app')
@@ -323,7 +309,7 @@ export class ApplicationsStatisticsService {
       ) {
         return 'IN_PROGRESS';
       }
-      if (cat === 'NEW' || code === String(ApplicationStatus.YANGI)) return 'NEW';
+      if (cat === 'OPEN' || cat === 'NEW' || code === String(ApplicationStatus.YANGI)) return 'NEW';
       return 'IN_PROGRESS';
     };
 
@@ -576,7 +562,7 @@ export class ApplicationsStatisticsService {
           const pName = tr.payment_provider.name || 'Boshqa';
           const p = providerMap.get(pName) || { name: pName, count: 0, totalAmount: 0 };
           p.count++;
-          if (!tr.currency || tr.currency.toUpperCase() === 'UZS') {
+          if (includeInTotal && (!tr.currency || tr.currency.toUpperCase() === 'UZS')) {
             p.totalAmount += Number(tr.amount || 0);
           }
           providerMap.set(pName, p);
@@ -635,7 +621,9 @@ export class ApplicationsStatisticsService {
         if (timeline[bucketIndex]) {
           const b = classifyAppBucket(app);
           timeline[bucketIndex].total++;
-          timeline[bucketIndex].loss += getAppTotalLoss(app);
+          if (shouldIncludeInDamageTotal(app.repeat_type)) {
+            timeline[bucketIndex].loss += getAppTotalLoss(app);
+          }
           if (b === 'RESOLVED') timeline[bucketIndex].resolved++;
           else if (b === 'IN_PROGRESS') timeline[bucketIndex].in_progress++;
           else if (b === 'NEW') timeline[bucketIndex].new++;
@@ -685,7 +673,9 @@ export class ApplicationsStatisticsService {
         if (item) {
           const b = classifyAppBucket(app);
           item.total++;
-          item.loss += getAppTotalLoss(app);
+          if (shouldIncludeInDamageTotal(app.repeat_type)) {
+            item.loss += getAppTotalLoss(app);
+          }
           if (b === 'RESOLVED') item.resolved++;
           else if (b === 'IN_PROGRESS') item.in_progress++;
           else if (b === 'NEW') item.new++;
@@ -735,7 +725,9 @@ export class ApplicationsStatisticsService {
         if (item) {
           const b = classifyAppBucket(app);
           item.total++;
-          item.loss += getAppTotalLoss(app);
+          if (shouldIncludeInDamageTotal(app.repeat_type)) {
+            item.loss += getAppTotalLoss(app);
+          }
           if (b === 'RESOLVED') item.resolved++;
           else if (b === 'IN_PROGRESS') item.in_progress++;
           else if (b === 'NEW') item.new++;
@@ -843,8 +835,8 @@ export class ApplicationsStatisticsService {
         description: a.description,
         officer_notes: a.officer_notes,
         status: a.status,
-        date: a.date ? a.date.toISOString() : null,
-        created_at: a.created_at.toISOString(),
+        date: a.date ? new Date(a.date).toISOString() : null,
+        created_at: new Date(a.created_at).toISOString(),
         citizen_name: a.citizen?.full_name?.trim() || null,
         district_name: a.district?.name || null,
         crime_article: a.crime?.article || null,

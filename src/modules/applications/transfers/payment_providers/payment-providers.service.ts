@@ -1,10 +1,19 @@
-import { BadRequestException, Injectable, NotFoundException, OnModuleInit } from '@nestjs/common';
+import {
+  BadRequestException,
+  ConflictException,
+  Injectable,
+  NotFoundException,
+  OnModuleInit,
+} from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { FindOptionsWhere, ILike, Repository } from 'typeorm';
 
 import { assertNoDependencies } from '../../../../common/database/dependency-guard.util';
 import type { PaginatedResult } from '../../../../common/interfaces/pagination.interface';
-import { isPgUniqueViolation } from '../../../../common/utils/normalization.util';
+import {
+  escapeLikePattern,
+  isPgUniqueViolation,
+} from '../../../../common/utils/normalization.util';
 import type { CreatePaymentProviderDto } from './dto/create-payment-provider.dto';
 import type { UpdatePaymentProviderDto } from './dto/update-payment-provider.dto';
 import { PaymentProvider } from './payment_provider.entity';
@@ -78,13 +87,14 @@ export class PaymentProvidersService implements OnModuleInit {
   }
 
   async create(dto: CreatePaymentProviderDto): Promise<PaymentProvider> {
-    const cleanName = dto.name?.trim() || '';
-    const cleanCode = dto.code?.trim().toLowerCase() || null;
+    const cleanName = dto.name?.trim().replace(/\s+/g, ' ') || '';
     if (!cleanName) throw new BadRequestException("To'lov provayderi nomi kiritilishi shart");
+    const effectiveCode =
+      dto.code?.trim().toLowerCase() || cleanName.toLowerCase().replace(/\s+/g, '_').slice(0, 50);
 
     const findExisting = () =>
       this.providerRepo.findOne({
-        where: [{ name: ILike(cleanName) }, ...(cleanCode ? [{ code: cleanCode }] : [])],
+        where: [{ name: ILike(escapeLikePattern(cleanName)) }, { code: effectiveCode }],
       });
 
     const existing = await findExisting();
@@ -93,7 +103,7 @@ export class PaymentProvidersService implements OnModuleInit {
     const provider = this.providerRepo.create({
       ...dto,
       name: cleanName,
-      code: cleanCode || cleanName.toLowerCase().replace(/\s+/g, '_').slice(0, 50),
+      code: effectiveCode,
     });
     try {
       return await this.providerRepo.save(provider);
@@ -107,12 +117,14 @@ export class PaymentProvidersService implements OnModuleInit {
   }
 
   async findAll(page = 1, limit = 50, search?: string): Promise<PaginatedResult<PaymentProvider>> {
-    const take = limit;
-    const skip = (page - 1) * limit;
+    const safePage = Math.max(1, page);
+    const safeLimit = Math.max(1, limit);
+    const take = safeLimit;
+    const skip = (safePage - 1) * safeLimit;
 
     let where: FindOptionsWhere<PaymentProvider> | FindOptionsWhere<PaymentProvider>[] = {};
-    if (search) {
-      const q = `%${search}%`;
+    if (search?.trim()) {
+      const q = `%${escapeLikePattern(search.trim())}%`;
       where = [{ name: ILike(q) }, { code: ILike(q) }];
     }
 
@@ -123,17 +135,17 @@ export class PaymentProvidersService implements OnModuleInit {
       take,
     });
 
-    const totalPages = Math.ceil(total / limit) || 1;
+    const totalPages = Math.ceil(total / safeLimit) || 1;
 
     return {
       items,
       meta: {
         total,
-        page,
-        limit,
+        page: safePage,
+        limit: safeLimit,
         totalPages,
-        hasNextPage: page < totalPages,
-        hasPreviousPage: page > 1,
+        hasNextPage: safePage < totalPages,
+        hasPreviousPage: safePage > 1,
       },
     };
   }
@@ -153,10 +165,12 @@ export class PaymentProvidersService implements OnModuleInit {
   async update(id: string, dto: UpdatePaymentProviderDto): Promise<PaymentProvider> {
     const provider = await this.findOne(id);
     if (dto.name !== undefined) {
-      const cleanName = dto.name.trim();
+      const cleanName = dto.name.trim().replace(/\s+/g, ' ');
       if (!cleanName)
         throw new BadRequestException("To'lov provayderi nomi bo'sh bo'lishi mumkin emas");
-      const existing = await this.providerRepo.findOne({ where: { name: ILike(cleanName) } });
+      const existing = await this.providerRepo.findOne({
+        where: { name: ILike(escapeLikePattern(cleanName)) },
+      });
       if (existing && existing.id !== id) {
         throw new BadRequestException(`"${cleanName}" nomli provayder allaqachon mavjud`);
       }
@@ -172,7 +186,14 @@ export class PaymentProvidersService implements OnModuleInit {
         provider.code = cleanCode;
       }
     }
-    return this.providerRepo.save(provider);
+    try {
+      return await this.providerRepo.save(provider);
+    } catch (err) {
+      if (isPgUniqueViolation(err)) {
+        throw new ConflictException("Bunday nom yoki kodli to'lov provayderi allaqachon mavjud");
+      }
+      throw err;
+    }
   }
 
   async remove(id: string): Promise<{ success: boolean; message: string }> {

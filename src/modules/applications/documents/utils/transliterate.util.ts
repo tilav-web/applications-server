@@ -89,6 +89,21 @@ export function latinToCyrillic(text: string): string {
   // Normalize quotes
   s = s.replace(/[\u2018\u2019\u02BB\u02BC'`]/g, '’');
 
+  // Sanksiya / tranzaksiya standard back to Cyrillic (MUST run before ya/ts digraph replacements)
+  const replacePreservingCase = (input: string, regex: RegExp, lowerTarget: string): string => {
+    const capTarget = lowerTarget.charAt(0).toUpperCase() + lowerTarget.slice(1);
+    const upperTarget = lowerTarget.toUpperCase();
+    return input.replace(regex, (m) => {
+      if (m === m.toUpperCase()) return upperTarget;
+      if (m[0] === m[0].toUpperCase()) return capTarget;
+      return lowerTarget;
+    });
+  };
+  s = replacePreservingCase(s, /sanksiya/gi, 'санкция');
+  s = replacePreservingCase(s, /tranzaksiya/gi, 'транзакция');
+  s = replacePreservingCase(s, /protsessual/gi, 'процессуал');
+  s = replacePreservingCase(s, /protsessing/gi, 'процессинг');
+
   // O‘, G‘
   s = s.replace(/O’|O‘|O`/g, 'Ў');
   s = s.replace(/o’|o‘|o`/g, 'ў');
@@ -104,12 +119,6 @@ export function latinToCyrillic(text: string): string {
   s = s.replace(/YU/g, 'Ю').replace(/Yu/g, 'Ю').replace(/yu/g, 'ю');
   s = s.replace(/YA/g, 'Я').replace(/Ya/g, 'Я').replace(/ya/g, 'я');
   s = s.replace(/YE/g, 'Е').replace(/Ye/g, 'Е').replace(/ye/g, 'е');
-
-  // Sanksiya / tranzaksiya standard back to Cyrillic
-  s = s.replace(/Sanksiya/gi, 'Санкция');
-  s = s.replace(/Tranzaksiya/gi, 'Транзакция');
-  s = s.replace(/Protsessual/gi, 'Процессуал');
-  s = s.replace(/Protsessing/gi, 'Процессинг');
 
   // Ts
   s = s.replace(/TS/g, 'Ц').replace(/Ts/g, 'Ц').replace(/ts/g, 'ц');
@@ -165,8 +174,9 @@ export function adaptToScript(
  * Raqamlarni probel bilan guruhlash (masalan: 3350000 -> 3 350 000)
  */
 export function formatAmountNumber(amount: number | string | null | undefined): string {
-  if (!amount) return '0';
-  const num = typeof amount === 'string' ? parseFloat(amount) : amount;
+  if (amount === null || amount === undefined || amount === '') return '0';
+  const num =
+    typeof amount === 'string' ? parseFloat(amount.replace(/\s+/g, '').replace(/,/g, '.')) : amount;
   if (isNaN(num)) return String(amount);
   return Math.round(num)
     .toString()
@@ -231,8 +241,11 @@ export function numberToWordsUz(
   amount: number | string | null | undefined,
   script: 'lotin' | 'krill' = 'lotin',
 ): string {
-  if (!amount) return script === 'lotin' ? 'nol' : 'ноль';
-  const num = typeof amount === 'string' ? parseFloat(amount) : amount;
+  if (amount === null || amount === undefined || amount === '') {
+    return script === 'lotin' ? 'nol' : 'ноль';
+  }
+  const num =
+    typeof amount === 'string' ? parseFloat(amount.replace(/\s+/g, '').replace(/,/g, '.')) : amount;
   if (isNaN(num)) return '';
 
   const unitsLotin = [

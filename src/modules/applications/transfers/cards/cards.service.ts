@@ -1,4 +1,10 @@
-import { ForbiddenException, Injectable, NotFoundException, Optional } from '@nestjs/common';
+import {
+  ConflictException,
+  ForbiddenException,
+  Injectable,
+  NotFoundException,
+  Optional,
+} from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import type { Response } from 'express';
 import { In, Repository } from 'typeorm';
@@ -9,6 +15,7 @@ import type { JwtAccessPayload } from '../../../../common/types/jwt-payload.inte
 import { getAllowedDistrictIds } from '../../../../common/utils/district-scope.util';
 import { formatUzbekName } from '../../../../common/utils/name-formatter.util';
 import {
+  escapeLikePattern,
   isPgUniqueViolation,
   normalizeCardNumber,
 } from '../../../../common/utils/normalization.util';
@@ -41,12 +48,16 @@ export class CardsService {
       });
       if (!existing) return null;
       let changed = false;
+      let citizenAttached = false;
       if (dto.citizen_id && !existing.citizen_id) {
         existing.citizen_id = dto.citizen_id;
+        delete (existing as unknown as Record<string, unknown>).citizen;
         changed = true;
+        citizenAttached = true;
       }
       if (dto.bank_id && !existing.bank_id) {
         existing.bank_id = dto.bank_id;
+        delete (existing as unknown as Record<string, unknown>).bank;
         changed = true;
       }
       if (dto.full_name && !existing.full_name) {
@@ -57,7 +68,12 @@ export class CardsService {
         existing.expire_date = dto.expire_date;
         changed = true;
       }
-      return changed ? this.cardRepo.save(existing) : existing;
+      if (!changed) return existing;
+      const saved = await this.cardRepo.save(existing);
+      if (citizenAttached) {
+        await this.intelligenceSync?.syncApplicationsByCardId(saved.id);
+      }
+      return saved;
     };
 
     const existingBefore = await attachIfExisting();
@@ -109,16 +125,16 @@ export class CardsService {
     }
     if (filters?.cardNumber?.trim()) {
       const cleaned = filters.cardNumber.replace(/\D/g, '') || filters.cardNumber.trim();
-      const cardQ = `%${cleaned}%`;
+      const cardQ = `%${escapeLikePattern(cleaned)}%`;
       qb.andWhere('(card.card_number ILIKE :cardQ OR card.masked_number ILIKE :cardQ)', { cardQ });
     }
     if (filters?.ownerName?.trim()) {
-      const ownerQ = `%${filters.ownerName.trim()}%`;
+      const ownerQ = `%${escapeLikePattern(filters.ownerName.trim())}%`;
       qb.andWhere('(card.full_name ILIKE :ownerQ OR citizen.full_name ILIKE :ownerQ)', { ownerQ });
     }
     if (filters?.phoneNumber?.trim()) {
       const cleanedPhone = filters.phoneNumber.replace(/\D/g, '') || filters.phoneNumber.trim();
-      const phoneQ = `%${cleanedPhone}%`;
+      const phoneQ = `%${escapeLikePattern(cleanedPhone)}%`;
       qb.andWhere(
         `(
           citizen.phone_number ILIKE :phoneQ
@@ -131,15 +147,17 @@ export class CardsService {
       );
     }
     if (filters?.expireDate?.trim()) {
-      qb.andWhere('card.expire_date ILIKE :expQ', { expQ: `%${filters.expireDate.trim()}%` });
+      qb.andWhere('card.expire_date ILIKE :expQ', {
+        expQ: `%${escapeLikePattern(filters.expireDate.trim())}%`,
+      });
     }
     if (search?.trim()) {
-      const q = `%${search.trim()}%`;
+      const q = `%${escapeLikePattern(search.trim())}%`;
       const digits = search.replace(/\D/g, '');
       if (digits.length >= 3) {
         qb.andWhere(
           '(card.card_number ILIKE :q OR card.masked_number ILIKE :q OR card.full_name ILIKE :q OR card.card_number ILIKE :digitsQ OR citizen.full_name ILIKE :q)',
-          { q, digitsQ: `%${digits}%` },
+          { q, digitsQ: `%${escapeLikePattern(digits)}%` },
         );
       } else {
         qb.andWhere(
@@ -198,8 +216,10 @@ export class CardsService {
     currentUser?: JwtAccessPayload,
   ): Promise<PaginatedResult<Card>> {
     const allowedDistrictIds = await getAllowedDistrictIds(this.userRepo, currentUser);
-    const take = limit;
-    const skip = (page - 1) * limit;
+    const safePage = Math.max(1, page);
+    const safeLimit = Math.max(1, limit);
+    const take = safeLimit;
+    const skip = (safePage - 1) * safeLimit;
 
     const qb = this.buildCardsFilterQuery(search, citizenId, filters);
     this.applyDistrictScope(qb, allowedDistrictIds);
@@ -216,20 +236,21 @@ export class CardsService {
         where: { id: In(ids) },
         relations: { citizen: true, bank: true },
       });
-      items.sort((a, b) => ids.indexOf(a.id) - ids.indexOf(b.id));
+      const orderMap = new Map(ids.map((id, idx) => [id, idx]));
+      items.sort((a, b) => (orderMap.get(a.id) ?? 0) - (orderMap.get(b.id) ?? 0));
     }
 
-    const totalPages = Math.ceil(total / limit) || 1;
+    const totalPages = Math.ceil(total / safeLimit) || 1;
 
     return {
       items,
       meta: {
         total,
-        page,
-        limit,
+        page: safePage,
+        limit: safeLimit,
         totalPages,
-        hasNextPage: page < totalPages,
-        hasPreviousPage: page > 1,
+        hasNextPage: safePage < totalPages,
+        hasPreviousPage: safePage > 1,
       },
     };
   }
@@ -275,7 +296,18 @@ export class CardsService {
       updatedData.full_name = dto.full_name ? formatUzbekName(dto.full_name) : null;
     }
     if (dto.card_number !== undefined) {
-      updatedData.card_number = dto.card_number ? dto.card_number.replace(/\D/g, '') : '';
+      const normalizedCardNumber = normalizeCardNumber(dto.card_number);
+      if (normalizedCardNumber) {
+        const duplicate = await this.cardRepo.findOne({
+          where: { card_number: normalizedCardNumber },
+        });
+        if (duplicate && duplicate.id !== id) {
+          throw new ConflictException(
+            `"${normalizedCardNumber}" raqamli plastik karta bazada allaqachon mavjud`,
+          );
+        }
+      }
+      updatedData.card_number = normalizedCardNumber;
     }
     // Stale loaded relation ob'ektlarini tozalash (TypeORM FK yangilanishini bosib ketmasligi uchun)
     if (dto.bank_id !== undefined) delete (card as unknown as Record<string, unknown>).bank;
@@ -283,11 +315,25 @@ export class CardsService {
     delete (card as unknown as Record<string, unknown>).applications;
 
     Object.assign(card, updatedData);
-    await this.cardRepo.save(card);
+    try {
+      await this.cardRepo.save(card);
+    } catch (err) {
+      if (isPgUniqueViolation(err)) {
+        throw new ConflictException('Ushbu karta raqami bazada allaqachon mavjud');
+      }
+      throw err;
+    }
     if (dto.citizen_id !== undefined || dto.card_number !== undefined) {
       await this.intelligenceSync?.syncApplicationsByCardId(id);
     }
-    return this.findOne(id);
+    const reloaded = await this.findOne(id);
+    const allowedDistrictIds = await getAllowedDistrictIds(this.userRepo, currentUser);
+    if (allowedDistrictIds !== null) {
+      reloaded.applications = (reloaded.applications || []).filter(
+        (a) => !a.is_deleted && a.district_id && allowedDistrictIds.includes(a.district_id),
+      );
+    }
+    return reloaded;
   }
 
   async remove(id: string): Promise<{ success: boolean; message: string }> {
@@ -359,6 +405,11 @@ export class CardsService {
 
     if (ids.length > 0) {
       for (const card of items) {
+        if (allowedDistrictIds !== null) {
+          card.applications = (card.applications || []).filter(
+            (a) => !a.is_deleted && a.district_id && allowedDistrictIds.includes(a.district_id),
+          );
+        }
         const appNums = new Set<string>();
         for (const a of card.applications || []) {
           if (!a.is_deleted) {
@@ -374,6 +425,12 @@ export class CardsService {
         });
       }
 
+      const districtFilterA1 =
+        allowedDistrictIds !== null ? ' AND a1.district_id = ANY($2::uuid[])' : '';
+      const districtFilterA2 =
+        allowedDistrictIds !== null ? ' AND a2.district_id = ANY($2::uuid[])' : '';
+      const txParams: unknown[] = allowedDistrictIds !== null ? [ids, allowedDistrictIds] : [ids];
+
       const txRows: Array<{
         sender_card_id: string | null;
         receiver_card_id: string | null;
@@ -386,10 +443,10 @@ export class CardsService {
                 COALESCE(a1.id, a2.id) AS app_id,
                 COALESCE(a1.application_number, a2.application_number) AS app_num
          FROM transfers t
-         LEFT JOIN applications a1 ON a1.id = t.application_id AND a1.is_deleted = false
-         LEFT JOIN applications a2 ON a2.transfer_id = t.id AND a2.is_deleted = false
+         LEFT JOIN applications a1 ON a1.id = t.application_id AND a1.is_deleted = false${districtFilterA1}
+         LEFT JOIN applications a2 ON a2.transfer_id = t.id AND a2.is_deleted = false${districtFilterA2}
          WHERE t.sender_card_id = ANY($1::uuid[]) OR t.receiver_card_id = ANY($1::uuid[])`,
-        [ids],
+        txParams,
       );
 
       for (const row of txRows) {
@@ -441,6 +498,7 @@ export class CardsService {
 
     const summaryQb = this.cardRepo
       .createQueryBuilder('card')
+      .leftJoin('card.citizen', 'citizen')
       .select('COUNT(card.id)', 'total')
       .addSelect('COUNT(*) FILTER (WHERE card.citizen_id IS NOT NULL)', 'attachedCount')
       .addSelect('COUNT(*) FILTER (WHERE card.citizen_id IS NULL)', 'unattachedCount')
@@ -460,6 +518,7 @@ export class CardsService {
 
     const bankQb = this.cardRepo
       .createQueryBuilder('card')
+      .leftJoin('card.citizen', 'citizen')
       .innerJoin('card.bank', 'bank')
       .select('bank.id', 'id')
       .addSelect('bank.name', 'name')

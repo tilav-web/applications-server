@@ -15,6 +15,11 @@ import { TransferDestinationType } from '../../common/enums/transfer-destination
 import { TransferStatus } from '../../common/enums/transfer-status.enum';
 import type { JwtAccessPayload } from '../../common/types/jwt-payload.interface';
 import { formatTitleCase, formatUzbekName } from '../../common/utils/name-formatter.util';
+import {
+  escapeLikePattern,
+  isPgUniqueViolation,
+  normalizePassport,
+} from '../../common/utils/normalization.util';
 import { Application } from '../applications/application.entity';
 import { Citizen } from '../applications/citizens/citizen.entity';
 import { Bank } from '../applications/transfers/banks/bank.entity';
@@ -234,10 +239,12 @@ export class IntelligenceService {
 
     const digits = q.replace(/\D/g, '');
     const handleClean = q
-      .replace(/^https?:\/\/(t\.me|telegram\.me|instagram\.com)\//i, '')
+      .replace(/^(https?:\/\/)?(www\.)?(t\.me|telegram\.me|instagram\.com)\//i, '')
       .replace(/^@+/, '')
       .trim();
-    const ilikeQ = `%${q}%`;
+    const ilikeQ = `%${escapeLikePattern(q)}%`;
+    const digitsQ = `%${escapeLikePattern(digits)}%`;
+    const handleQ = `%${escapeLikePattern(handleClean.toLowerCase())}%`;
     const perCategoryLimit = Math.min(Math.max(Number(limit) || 25, 10), 50);
 
     // 1. Fuqarolar qidiruvi
@@ -253,7 +260,7 @@ export class IntelligenceService {
           OR c.address ILIKE :ilikeQ
           ${digits.length >= 3 ? 'OR c.phone_number ILIKE :digitsQ OR c.pinfl ILIKE :digitsQ' : ''}
         )`,
-        { ilikeQ, digitsQ: `%${digits}%` },
+        { ilikeQ, digitsQ },
       )
       .orderBy('c.created_at', 'DESC')
       .take(perCategoryLimit);
@@ -270,7 +277,7 @@ export class IntelligenceService {
           OR card.full_name ILIKE :ilikeQ
           ${digits.length >= 3 ? 'OR card.card_number ILIKE :digitsQ OR card.masked_number ILIKE :digitsQ' : ''}
         )`,
-        { ilikeQ, digitsQ: `%${digits}%` },
+        { ilikeQ, digitsQ },
       )
       .orderBy('card.created_at', 'DESC')
       .take(perCategoryLimit);
@@ -287,7 +294,7 @@ export class IntelligenceService {
           OR p.operator ILIKE :ilikeQ
           ${digits.length >= 3 ? 'OR p.phone_number ILIKE :digitsQ' : ''}
         )`,
-        { ilikeQ, digitsQ: `%${digits}%` },
+        { ilikeQ, digitsQ },
       )
       .orderBy('p.created_at', 'DESC')
       .take(perCategoryLimit);
@@ -303,7 +310,7 @@ export class IntelligenceService {
           OR d.type_label ILIKE :ilikeQ
           OR d.notes ILIKE :ilikeQ
         )`,
-        { ilikeQ, handleQ: `%${handleClean.toLowerCase()}%` },
+        { ilikeQ, handleQ },
       )
       .orderBy('d.created_at', 'DESC')
       .take(perCategoryLimit);
@@ -338,7 +345,7 @@ export class IntelligenceService {
           tr.transaction_id ILIKE :ilikeQ
           ${digits.length >= 4 ? 'OR CAST(tr.amount AS TEXT) ILIKE :digitsQ' : ''}
         )`,
-        { ilikeQ, digitsQ: `%${digits}%` },
+        { ilikeQ, digitsQ },
       )
       .orderBy('tr.created_at', 'DESC')
       .take(15);
@@ -710,9 +717,7 @@ export class IntelligenceService {
       }
     } else if (cleanType === 'pinfl' || cleanType === 'passport') {
       const cleanVal =
-        cleanType === 'pinfl'
-          ? rawValue.replace(/\D/g, '')
-          : rawValue.replace(/\s+/g, '').toUpperCase();
+        cleanType === 'pinfl' ? rawValue.replace(/\D/g, '') : normalizePassport(rawValue) || '';
       if (cleanVal.length < 6) return empty;
 
       const citizen = await this.citizenRepo.findOne({
@@ -944,7 +949,11 @@ export class IntelligenceService {
 
     for (const a of directApps) {
       if (a.role_in_app === 'VICTIM') victimAppsCount++;
-      else if (a.role_in_app === 'SUSPECT' || a.role_in_app === 'DROPPER')
+      else if (
+        a.role_in_app === 'SUSPECT' ||
+        a.role_in_app === 'DROPPER' ||
+        a.role_in_app === 'TRANSIT'
+      )
         suspectOrDropperAppsCount++;
       else if (a.role_in_app === 'WITNESS') witnessAppsCount++;
 
@@ -2831,14 +2840,14 @@ export class IntelligenceService {
 
     // Ushbu telefon oldin noma'lum gumonlanuvchi sifatida o'tgan arizalarni avtomatik fuqaroga bog'lash!
     const existingPhoneLinks = await this.linkRepo.find({ where: { phone_id: phone.id } });
-    let newlyLinkedAppsCount = 0;
-    for (const pl of existingPhoneLinks) {
-      if (!pl.citizen_id) {
+    const phoneLinksToUpdate = existingPhoneLinks.filter((pl) => !pl.citizen_id);
+    if (phoneLinksToUpdate.length > 0) {
+      for (const pl of phoneLinksToUpdate) {
         pl.citizen_id = citizen.id;
-        await this.linkRepo.save(pl);
-        newlyLinkedAppsCount++;
       }
+      await this.linkRepo.save(phoneLinksToUpdate);
     }
+    const newlyLinkedAppsCount = phoneLinksToUpdate.length;
 
     return {
       phone,
@@ -2888,9 +2897,20 @@ export class IntelligenceService {
     let bankId = dto.bank_id || null;
     if (!bankId && dto.bank_name?.trim()) {
       const bName = formatTitleCase(dto.bank_name.trim());
-      let bank = await this.bankRepo.findOne({ where: { name: ILike(bName) } });
+      let bank = await this.bankRepo.findOne({ where: { name: ILike(escapeLikePattern(bName)) } });
       if (!bank) {
-        bank = await this.bankRepo.save(this.bankRepo.create({ name: bName }));
+        try {
+          bank = await this.bankRepo.save(this.bankRepo.create({ name: bName }));
+        } catch (err) {
+          if (isPgUniqueViolation(err)) {
+            bank = await this.bankRepo.findOne({
+              where: { name: ILike(escapeLikePattern(bName)) },
+            });
+            if (!bank) throw err;
+          } else {
+            throw err;
+          }
+        }
       }
       bankId = bank.id;
     }
@@ -2923,14 +2943,14 @@ export class IntelligenceService {
     }
 
     const existingCardLinks = await this.linkRepo.find({ where: { card_id: card.id } });
-    let newlyLinkedAppsCount = 0;
-    for (const cl of existingCardLinks) {
-      if (!cl.citizen_id) {
+    const cardLinksToUpdate = existingCardLinks.filter((cl) => !cl.citizen_id);
+    if (cardLinksToUpdate.length > 0) {
+      for (const cl of cardLinksToUpdate) {
         cl.citizen_id = citizen.id;
-        await this.linkRepo.save(cl);
-        newlyLinkedAppsCount++;
       }
+      await this.linkRepo.save(cardLinksToUpdate);
     }
+    const newlyLinkedAppsCount = cardLinksToUpdate.length;
 
     return {
       card,
@@ -2973,14 +2993,14 @@ export class IntelligenceService {
     }
 
     const existingLinks = await this.linkRepo.find({ where: { identifier_id: ident.id } });
-    let newlyLinkedAppsCount = 0;
-    for (const el of existingLinks) {
-      if (!el.citizen_id) {
+    const identLinksToUpdate = existingLinks.filter((el) => !el.citizen_id);
+    if (identLinksToUpdate.length > 0) {
+      for (const el of identLinksToUpdate) {
         el.citizen_id = citizen.id;
-        await this.linkRepo.save(el);
-        newlyLinkedAppsCount++;
       }
+      await this.linkRepo.save(identLinksToUpdate);
     }
+    const newlyLinkedAppsCount = identLinksToUpdate.length;
 
     return { identifier: ident, newlyLinkedAppsCount };
   }
@@ -3102,18 +3122,33 @@ export class IntelligenceService {
   ) {
     this.assertCanMutate(currentUser);
 
+    const parsedAmount = Number(dto.amount);
+    if (!Number.isFinite(parsedAmount) || parsedAmount < 0) {
+      throw new BadRequestException("O'tkazma summasi noto'g'ri yoki manfiy bo'lishi mumkin emas");
+    }
+
     const resolveBankId = async (rawBankName?: string): Promise<string | null> => {
       const clean = rawBankName?.trim();
       if (!clean) return null;
-      let bank = await this.bankRepo.findOne({ where: { name: ILike(clean) } });
+      const escaped = escapeLikePattern(clean);
+      let bank = await this.bankRepo.findOne({ where: { name: ILike(escaped) } });
       if (!bank) {
-        bank = await this.bankRepo.save(
-          this.bankRepo.create({
-            name: formatTitleCase(clean),
-            code: clean.toLowerCase().replace(/[^a-z0-9]+/g, '_'),
-            is_active: true,
-          }),
-        );
+        try {
+          bank = await this.bankRepo.save(
+            this.bankRepo.create({
+              name: formatTitleCase(clean),
+              code: clean.toLowerCase().replace(/[^a-z0-9]+/g, '_'),
+              is_active: true,
+            }),
+          );
+        } catch (err) {
+          if (isPgUniqueViolation(err)) {
+            bank = await this.bankRepo.findOne({ where: { name: ILike(escaped) } });
+            if (!bank) throw err;
+          } else {
+            throw err;
+          }
+        }
       }
       return bank.id;
     };
@@ -3309,21 +3344,31 @@ export class IntelligenceService {
     let providerId = dto.payment_provider_id || null;
     if (!providerId && dto.payment_provider_name?.trim()) {
       const pName = formatTitleCase(dto.payment_provider_name.trim());
-      let prov = await this.providerRepo.findOne({ where: { name: ILike(pName) } });
+      const escapedPName = escapeLikePattern(pName);
+      let prov = await this.providerRepo.findOne({ where: { name: ILike(escapedPName) } });
       if (!prov) {
-        prov = await this.providerRepo.save(
-          this.providerRepo.create({
-            name: pName,
-            code: pName.toLowerCase().replace(/\s+/g, '_'),
-          }),
-        );
+        try {
+          prov = await this.providerRepo.save(
+            this.providerRepo.create({
+              name: pName,
+              code: pName.toLowerCase().replace(/\s+/g, '_'),
+            }),
+          );
+        } catch (err) {
+          if (isPgUniqueViolation(err)) {
+            prov = await this.providerRepo.findOne({ where: { name: ILike(escapedPName) } });
+            if (!prov) throw err;
+          } else {
+            throw err;
+          }
+        }
       }
       providerId = prov.id;
     }
 
     const transfer = this.transferRepo.create({
       transaction_id: dto.transaction_id?.trim() || null,
-      amount: Number(dto.amount) || 0,
+      amount: parsedAmount,
       currency: (dto.currency || 'UZS').toUpperCase(),
       status: TransferStatus.MUVAFFAQIYATLI,
       transfer_date: dto.transfer_date || new Date().toISOString().slice(0, 10),
@@ -3339,7 +3384,17 @@ export class IntelligenceService {
       destination_details: Object.keys(destDetails).length > 0 ? destDetails : null,
     });
 
-    const saved = await this.transferRepo.save(transfer);
+    let saved: Transfer;
+    try {
+      saved = await this.transferRepo.save(transfer);
+    } catch (err) {
+      if (isPgUniqueViolation(err)) {
+        throw new ConflictException(
+          "Ushbu tranzaksiya ID (transaction_id) bilan o'tkazma allaqachon mavjud",
+        );
+      }
+      throw err;
+    }
     if (dto.application_id) {
       await this.syncService.syncApplicationById(dto.application_id);
     }
@@ -3360,6 +3415,19 @@ export class IntelligenceService {
     currentUser?: JwtAccessPayload,
   ) {
     this.assertCanMutate(currentUser);
+    const app = await this.appRepo.findOne({
+      where: { id: dto.application_id, is_deleted: false },
+      select: { id: true, district_id: true },
+    });
+    if (!app) {
+      throw new NotFoundException('Ariza topilmadi');
+    }
+    const permCtx = await this.getUserPermissionsContext(currentUser);
+    if (!this.canEditApp(app.district_id, permCtx)) {
+      throw new ForbiddenException(
+        "Siz faqat o'zingizga biriktirilgan tuman(lar) arizalariga shaxs biriktira olasiz",
+      );
+    }
 
     const existing = await this.linkRepo.findOne({
       where: {

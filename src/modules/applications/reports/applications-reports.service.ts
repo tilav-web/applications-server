@@ -6,6 +6,7 @@ import { Repository } from 'typeorm';
 import type { JwtAccessPayload } from '../../../common/types/jwt-payload.interface';
 import { getAllowedDistrictIds } from '../../../common/utils/district-scope.util';
 import { sanitizeExcelValue } from '../../../common/utils/excel-style.util';
+import { escapeLikePattern } from '../../../common/utils/normalization.util';
 import { User } from '../../users/user.entity';
 import { Application } from '../application.entity';
 import { Crime } from '../crimes/crime.entity';
@@ -159,8 +160,9 @@ export class ApplicationsReportsService {
     total: OperationalMatrixRow;
   }> {
     const allowedDistrictIds = await getAllowedDistrictIds(this.userRepo, currentUser);
-    const targetDateStr = dto?.date || new Date().toISOString().substring(0, 10);
-    const targetDate = new Date(targetDateStr);
+    const parsedTarget = dto?.date ? new Date(dto.date) : new Date();
+    const targetDate = Number.isNaN(parsedTarget.getTime()) ? new Date() : parsedTarget;
+    const targetDateStr = targetDate.toISOString().substring(0, 10);
 
     const dayStart = new Date(
       targetDate.getFullYear(),
@@ -426,6 +428,7 @@ export class ApplicationsReportsService {
           status === 'YANGI' ||
           status === 'JARAYONDA' ||
           status.includes('JARAYON') ||
+          statusCategory === 'OPEN' ||
           statusCategory === 'NEW' ||
           statusCategory === 'IN_PROGRESS' ||
           statusCategory === 'EXTENDED'
@@ -586,8 +589,9 @@ export class ApplicationsReportsService {
     total: DepartmentServicesRow;
   }> {
     const allowedDistrictIds = await getAllowedDistrictIds(this.userRepo, currentUser);
-    const targetDateStr = dto?.date || new Date().toISOString().substring(0, 10);
-    const targetDate = new Date(targetDateStr);
+    const parsedTarget = dto?.date ? new Date(dto.date) : new Date();
+    const targetDate = Number.isNaN(parsedTarget.getTime()) ? new Date() : parsedTarget;
+    const targetDateStr = targetDate.toISOString().substring(0, 10);
 
     const dayStart = new Date(
       targetDate.getFullYear(),
@@ -608,10 +612,19 @@ export class ApplicationsReportsService {
       999,
     );
 
-    const periodStart = dto?.startDate
-      ? new Date(dto.startDate)
-      : new Date(targetDate.getFullYear(), targetDate.getMonth(), 1, 0, 0, 0, 0);
-    const periodEnd = dto?.endDate ? new Date(dto.endDate) : dayEnd;
+    const parsedPeriodStart = dto?.startDate ? new Date(dto.startDate) : null;
+    const periodStart =
+      parsedPeriodStart && !Number.isNaN(parsedPeriodStart.getTime())
+        ? parsedPeriodStart
+        : new Date(targetDate.getFullYear(), targetDate.getMonth(), 1, 0, 0, 0, 0);
+    let periodEnd = dayEnd;
+    if (dto?.endDate) {
+      const parsedPeriodEnd = new Date(dto.endDate);
+      if (!Number.isNaN(parsedPeriodEnd.getTime())) {
+        parsedPeriodEnd.setHours(23, 59, 59, 999);
+        periodEnd = parsedPeriodEnd;
+      }
+    }
 
     const deptQb = this.applicationRepo
       .createQueryBuilder('app')
@@ -725,7 +738,10 @@ export class ApplicationsReportsService {
         } else if (
           deptCode.includes('yhx') ||
           deptCode.includes('yhxx') ||
-          deptCode.includes('yo') ||
+          deptCode.includes("yo'l") ||
+          deptCode.includes('yo‘l') ||
+          deptCode.includes('yoʻl') ||
+          deptCode.includes('yul') ||
           deptCode.includes('йўл')
         ) {
           service = 'traffic_safety';
@@ -739,7 +755,10 @@ export class ApplicationsReportsService {
           service = 'probation';
         } else if (
           deptCode.includes('mmix') ||
-          deptCode.includes('ma') ||
+          deptCode.includes("ma'nav") ||
+          deptCode.includes('ma‘nav') ||
+          deptCode.includes('maʻnav') ||
+          deptCode.includes('manav') ||
           deptCode.includes('маънав')
         ) {
           service = 'spiritual_educational';
@@ -849,7 +868,7 @@ export class ApplicationsReportsService {
     totalPages: number;
   }> {
     const allowedDistrictIds = await getAllowedDistrictIds(this.userRepo, currentUser);
-    const page = dto.page || 1;
+    const page = Math.max(1, dto.page || 1);
     const limit = Math.min(Math.max(dto.limit || 50, 1), maxAllowedLimit);
     const skip = (page - 1) * limit;
 
@@ -883,8 +902,8 @@ export class ApplicationsReportsService {
       }
     }
 
-    if (dto.search) {
-      const s = `%${dto.search.trim()}%`;
+    if (dto.search?.trim()) {
+      const s = `%${escapeLikePattern(dto.search.trim())}%`;
       qb.andWhere(
         '(app.application_number ILIKE :s OR app.description ILIKE :s OR citizen.full_name ILIKE :s OR citizen.phone_number ILIKE :s)',
         { s },
@@ -893,19 +912,19 @@ export class ApplicationsReportsService {
 
     if (dto.applicationNumber?.trim()) {
       qb.andWhere('app.application_number ILIKE :regAppNum', {
-        regAppNum: `%${dto.applicationNumber.trim()}%`,
+        regAppNum: `%${escapeLikePattern(dto.applicationNumber.trim())}%`,
       });
     }
 
     if (dto.citizenName?.trim()) {
       qb.andWhere('citizen.full_name ILIKE :regCitName', {
-        regCitName: `%${dto.citizenName.trim()}%`,
+        regCitName: `%${escapeLikePattern(dto.citizenName.trim())}%`,
       });
     }
 
     if (dto.cardNumber?.trim()) {
       const cardDigits = dto.cardNumber.replace(/\D/g, '') || dto.cardNumber.trim();
-      const regCardQ = `%${cardDigits}%`;
+      const regCardQ = `%${escapeLikePattern(cardDigits)}%`;
       qb.andWhere(
         `(
           card.card_number ILIKE :regCardQ OR card.masked_number ILIKE :regCardQ
@@ -923,7 +942,7 @@ export class ApplicationsReportsService {
 
     if (dto.phoneNumber?.trim()) {
       const phoneDigits = dto.phoneNumber.replace(/\D/g, '') || dto.phoneNumber.trim();
-      const regPhoneQ = `%${phoneDigits}%`;
+      const regPhoneQ = `%${escapeLikePattern(phoneDigits)}%`;
       qb.andWhere(
         `(
           citizen.phone_number ILIKE :regPhoneQ
@@ -935,7 +954,7 @@ export class ApplicationsReportsService {
 
     if (dto.description?.trim()) {
       qb.andWhere('(app.description ILIKE :regDesc OR app.officer_notes ILIKE :regDesc)', {
-        regDesc: `%${dto.description.trim()}%`,
+        regDesc: `%${escapeLikePattern(dto.description.trim())}%`,
       });
     }
 
@@ -948,15 +967,20 @@ export class ApplicationsReportsService {
     }
 
     if (dto.startDate) {
-      qb.andWhere('COALESCE(app.date, app.created_at) >= :startDate', {
-        startDate: new Date(dto.startDate),
-      });
+      const parsedStart = new Date(dto.startDate);
+      if (!Number.isNaN(parsedStart.getTime())) {
+        qb.andWhere('COALESCE(app.date, app.created_at) >= :startDate', {
+          startDate: parsedStart,
+        });
+      }
     }
 
     if (dto.endDate) {
       const e = new Date(dto.endDate);
-      e.setHours(23, 59, 59, 999);
-      qb.andWhere('COALESCE(app.date, app.created_at) <= :endDate', { endDate: e });
+      if (!Number.isNaN(e.getTime())) {
+        e.setHours(23, 59, 59, 999);
+        qb.andWhere('COALESCE(app.date, app.created_at) <= :endDate', { endDate: e });
+      }
     }
 
     qb.orderBy('app.date', 'DESC', 'NULLS LAST').addOrderBy('app.created_at', 'DESC');
@@ -1012,19 +1036,25 @@ export class ApplicationsReportsService {
       let totalRegistryLoss = 0;
       if (app.transfer) {
         if (app.transfer.id) seenTransferIds.add(app.transfer.id);
-        totalRegistryLoss += Number(app.transfer.amount || 0);
+        if (!app.transfer.currency || app.transfer.currency.toUpperCase() === 'UZS') {
+          totalRegistryLoss += Number(app.transfer.amount || 0);
+        }
       }
       if (app.custom_fields) {
         for (const cf of app.custom_fields) {
           if (cf.transfer && (!cf.transfer.id || !seenTransferIds.has(cf.transfer.id))) {
             if (cf.transfer.id) seenTransferIds.add(cf.transfer.id);
-            totalRegistryLoss += Number(cf.transfer.amount || 0);
+            if (!cf.transfer.currency || cf.transfer.currency.toUpperCase() === 'UZS') {
+              totalRegistryLoss += Number(cf.transfer.amount || 0);
+            }
           }
         }
       }
       if (Array.isArray(app.damages)) {
         for (const dmg of app.damages) {
-          totalRegistryLoss += Number(dmg.amount || 0);
+          if (!dmg.currency || dmg.currency.toUpperCase() === 'UZS') {
+            totalRegistryLoss += Number(dmg.amount || 0);
+          }
         }
       }
 
@@ -1377,7 +1407,7 @@ export class ApplicationsReportsService {
       views: [{ state: 'frozen', xSplit: 2, ySplit: 4 }],
     });
 
-    sheet.mergeCells('A1:R1');
+    sheet.mergeCells('A1:T1');
     const titleCell = sheet.getCell('A1');
     titleCell.value = `СОҲАВИЙ ХИЗМАТЛАР КЎРСАТКИЧЛАРИ ҲИСОБОТИ (${data.date})`;
     titleCell.font = { name: 'Calibri', size: 13, bold: true };
@@ -1397,6 +1427,7 @@ export class ApplicationsReportsService {
       'Йўл ҳаракати хавфсизлиги',
       'Жамоат тартибини сақлаш',
       'Пробация хизмати',
+      'Маънавий-маърифий ишлар',
       'Жами кўрсаткич',
     ];
 
@@ -1454,6 +1485,8 @@ export class ApplicationsReportsService {
         r.public_order.period,
         r.probation.daily,
         r.probation.period,
+        r.spiritual_educational.daily,
+        r.spiritual_educational.period,
         r.total.daily,
         r.total.period,
       ];
@@ -1476,7 +1509,7 @@ export class ApplicationsReportsService {
 
     const totalRow = sheet.getRow(current);
     const totalVals: (string | number | { formula: string })[] = ['', 'ЖАМИ'];
-    for (let c = 3; c <= 18; c++) {
+    for (let c = 3; c <= 20; c++) {
       const colLetter = sheet.getColumn(c).letter;
       totalVals.push({ formula: `SUM(${colLetter}5:${colLetter}${current - 1})` });
     }
@@ -1496,7 +1529,7 @@ export class ApplicationsReportsService {
 
     sheet.getColumn(1).width = 5;
     sheet.getColumn(2).width = 18;
-    for (let c = 3; c <= 18; c++) {
+    for (let c = 3; c <= 20; c++) {
       sheet.getColumn(c).width = 12;
     }
 

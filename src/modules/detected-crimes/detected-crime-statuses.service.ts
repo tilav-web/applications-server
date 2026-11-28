@@ -9,6 +9,7 @@ import { InjectRepository } from '@nestjs/typeorm';
 import { ILike, Repository } from 'typeorm';
 
 import { assertNoDependencies } from '../../common/database/dependency-guard.util';
+import { escapeLikePattern, isPgUniqueViolation } from '../../common/utils/normalization.util';
 import { DetectedCrimeStatus } from './entities/detected-crime-status.entity';
 
 const DEFAULT_DETECTED_CRIME_STATUSES = [
@@ -113,7 +114,8 @@ export class DetectedCrimeStatusesService implements OnModuleInit {
       .replace(/^_|_$/g, '')
       .slice(0, 55);
 
-    const dup = await this.repo.findOne({ where: [{ name: ILike(name) }, { code }] });
+    const dupWhere = [{ name: ILike(escapeLikePattern(name)) }, ...(code ? [{ code }] : [])];
+    const dup = await this.repo.findOne({ where: dupWhere });
     if (dup) throw new ConflictException(`«${name}» statusi allaqachon mavjud`);
 
     if (dto.is_default) {
@@ -129,7 +131,14 @@ export class DetectedCrimeStatusesService implements OnModuleInit {
       sort_order: dto.sort_order ?? 10,
       is_active: dto.is_active ?? true,
     });
-    return this.repo.save(entity);
+    try {
+      return await this.repo.save(entity);
+    } catch (err) {
+      if (isPgUniqueViolation(err)) {
+        throw new ConflictException(`«${name}» statusi yoki kodi allaqachon mavjud`);
+      }
+      throw err;
+    }
   }
 
   async update(
@@ -150,12 +159,17 @@ export class DetectedCrimeStatusesService implements OnModuleInit {
     if (dto.name !== undefined) {
       const name = dto.name.trim();
       if (!name) throw new BadRequestException('Status nomi bo‘sh bo‘lishi mumkin emas');
-      const dup = await this.repo.findOne({ where: { name: ILike(name) } });
+      const dup = await this.repo.findOne({ where: { name: ILike(escapeLikePattern(name)) } });
       if (dup && dup.id !== id) throw new ConflictException(`«${name}» statusi allaqachon mavjud`);
       item.name = name;
     }
     if (dto.code !== undefined && dto.code.trim()) {
-      item.code = dto.code.trim().toUpperCase();
+      const nextCode = dto.code.trim().toUpperCase();
+      const dupCode = await this.repo.findOne({ where: { code: nextCode } });
+      if (dupCode && dupCode.id !== id) {
+        throw new ConflictException(`«${nextCode}» kodli status allaqachon mavjud`);
+      }
+      item.code = nextCode;
     }
     if (dto.color !== undefined) item.color = dto.color;
     if (dto.is_final !== undefined) item.is_final = dto.is_final;
@@ -168,7 +182,14 @@ export class DetectedCrimeStatusesService implements OnModuleInit {
       item.is_default = dto.is_default;
     }
 
-    return this.repo.save(item);
+    try {
+      return await this.repo.save(item);
+    } catch (err) {
+      if (isPgUniqueViolation(err)) {
+        throw new ConflictException('Bunday nom yoki kodli status allaqachon mavjud');
+      }
+      throw err;
+    }
   }
 
   async remove(id: string): Promise<{ success: boolean; message: string }> {

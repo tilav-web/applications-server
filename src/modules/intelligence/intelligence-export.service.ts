@@ -35,7 +35,9 @@ export class IntelligenceExportService {
   private formatDate(dateStr?: string | null): string {
     if (!dateStr) return '—';
     try {
-      return new Date(dateStr).toLocaleDateString('uz-UZ', {
+      const parsed = new Date(dateStr);
+      if (Number.isNaN(parsed.getTime())) return dateStr;
+      return parsed.toLocaleDateString('uz-UZ', {
         day: '2-digit',
         month: '2-digit',
         year: 'numeric',
@@ -432,7 +434,13 @@ export class IntelligenceExportService {
           new TableRow({
             children: [
               makeCell(String(idx + 1)),
-              makeCell(tr.direction === 'INCOMING' ? 'Kirim' : 'Chiqim'),
+              makeCell(
+                tr.direction === 'INCOMING'
+                  ? 'Kirim'
+                  : tr.direction === 'OUTGOING'
+                    ? 'Chiqim'
+                    : 'Ichki',
+              ),
               makeCell(this.formatMoney(tr.amount, tr.currency)),
               makeCell(tr.sender_card_number || '—'),
               makeCell(tr.receiver_card_number || '—'),

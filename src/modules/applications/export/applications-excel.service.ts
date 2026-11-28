@@ -81,6 +81,7 @@ export class ApplicationsExcelService {
       (cnt, app) => cnt + this.extractAllTransfers(app, extraTransfersMap).length,
       0,
     );
+    const allDamagesCount = applications.reduce((cnt, app) => cnt + (app.damages?.length || 0), 0);
     const allSuspectsCount = applications.reduce(
       (cnt, app) => cnt + this.extractSuspectItems(app.suspect_tree).length,
       0,
@@ -99,7 +100,14 @@ export class ApplicationsExcelService {
     this.buildSuspectsSheet(workbook, applications);
 
     // 4. Sheet 4: Xulosa va Statistika (Dinamik JPK status va hudud formulalari)
-    this.buildSummarySheet(workbook, applications, totalApps, allTransfersCount, allSuspectsCount);
+    this.buildSummarySheet(
+      workbook,
+      applications,
+      totalApps,
+      allTransfersCount,
+      allDamagesCount,
+      allSuspectsCount,
+    );
 
     return Promise.resolve(workbook);
   }
@@ -636,6 +644,7 @@ export class ApplicationsExcelService {
     applications: Application[],
     appCount: number,
     transferCount: number,
+    damageCount: number,
     suspectCount: number,
   ): void {
     const ws = workbook.addWorksheet('Xulosa va Statistika');
@@ -666,6 +675,7 @@ export class ApplicationsExcelService {
 
     const maxAppRow = Math.max(appCount + 1, 2);
     const maxTransferRow = Math.max(transferCount + 1, 2);
+    const maxDamageRow = Math.max(damageCount + 1, 2);
     const maxSuspectRow = Math.max(suspectCount + 1, 2);
 
     const kpiRows = [
@@ -683,7 +693,7 @@ export class ApplicationsExcelService {
       },
       {
         title: 'Jami yetkazilgan moddiy zarar (UZS)',
-        formula: `SUMIF('Pul o''tkazmalari'!G2:G${maxTransferRow}, "UZS", 'Pul o''tkazmalari'!F2:F${maxTransferRow})`,
+        formula: `SUMIF('Pul o''tkazmalari'!G2:G${maxTransferRow}, "UZS", 'Pul o''tkazmalari'!F2:F${maxTransferRow})+SUMIF('Kartasiz zararlar'!G2:G${maxDamageRow}, "UZS", 'Kartasiz zararlar'!F2:F${maxDamageRow})`,
         unit: "so'm (UZS)",
         format: '#,##0.00',
       },

@@ -1,5 +1,6 @@
 import {
   BadRequestException,
+  ConflictException,
   ForbiddenException,
   Injectable,
   NotFoundException,
@@ -17,6 +18,7 @@ import {
   getAllowedDistrictIds,
 } from '../../common/utils/district-scope.util';
 import { sanitizeExcelRow } from '../../common/utils/excel-style.util';
+import { escapeLikePattern, isPgUniqueViolation } from '../../common/utils/normalization.util';
 import type { SuspectTreeNode } from '../applications/application.entity';
 import { Citizen } from '../applications/citizens/citizen.entity';
 import { District } from '../applications/districts/district.entity';
@@ -120,6 +122,67 @@ export class DetectedCrimesService {
     });
   }
 
+  private parseOptionalDate(value: string | null | undefined, label: string): Date | null {
+    if (!value) return null;
+    const parsed = new Date(value);
+    if (Number.isNaN(parsed.getTime())) {
+      throw new BadRequestException(`${label} noto'g'ri formatda`);
+    }
+    return parsed;
+  }
+
+  private parseOptionalDamage(value: number | null | undefined): number | null {
+    if (value === undefined || value === null) return null;
+    const num = Number(value);
+    if (!Number.isFinite(num) || num < 0) {
+      throw new BadRequestException("Zarar summasi manfiy yoki noto'g'ri bo'lishi mumkin emas");
+    }
+    return num;
+  }
+
+  private applyDetectedCrimeFilters(
+    qb: ReturnType<Repository<DetectedCrime>['createQueryBuilder']>,
+    params: {
+      search?: string;
+      district_id?: string;
+      crime_id?: string;
+      detection_source_id?: string;
+      crime_status_id?: string;
+      status_id?: string;
+      qualification_type?: string;
+    },
+    allowedDistrictIds: string[] | null,
+  ): void {
+    if (allowedDistrictIds !== null) {
+      if (allowedDistrictIds.length > 0) {
+        qb.andWhere('dc.district_id IN (:...assigned)', { assigned: allowedDistrictIds });
+      } else {
+        qb.andWhere('1 = 0');
+      }
+    }
+
+    if (params.search?.trim()) {
+      const q = `%${escapeLikePattern(params.search.trim())}%`;
+      qb.andWhere(
+        '(dc.case_number ILIKE :q OR dc.title ILIKE :q OR dc.description ILIKE :q OR dc.report_number ILIKE :q OR dc.kusp_number ILIKE :q OR dc.platform ILIKE :q OR dc.channel_or_source_url ILIKE :q OR dc.mjtk_article ILIKE :q)',
+        { q },
+      );
+    }
+
+    if (params.district_id) qb.andWhere('dc.district_id = :dId', { dId: params.district_id });
+    if (params.crime_id) qb.andWhere('dc.crime_id = :cId', { cId: params.crime_id });
+    if (params.detection_source_id) {
+      qb.andWhere('dc.detection_source_id = :srcId', { srcId: params.detection_source_id });
+    }
+    const filterStatusId = params.crime_status_id || params.status_id;
+    if (filterStatusId) {
+      qb.andWhere('dc.crime_status_id = :cstId', { cstId: filterStatusId });
+    }
+    if (params.qualification_type) {
+      qb.andWhere('dc.qualification_type = :qt', { qt: params.qualification_type });
+    }
+  }
+
   private async generateCaseNumber(manager: EntityManager): Promise<string> {
     const year = new Date().getFullYear();
     const lockKey = `detected_crimes_case_number_${year}`;
@@ -145,6 +208,9 @@ export class DetectedCrimesService {
     currentUser?: JwtAccessPayload,
   ) {
     const allowedDistrictIds = await getAllowedDistrictIds(this.userRepo, currentUser);
+    if (allowedDistrictIds !== null && allowedDistrictIds.length === 0) {
+      return { isRepeat: false, count: 0, items: [] };
+    }
 
     const qb = this.suspectRepo
       .createQueryBuilder('s')
@@ -158,9 +224,6 @@ export class DetectedCrimesService {
     }
 
     if (allowedDistrictIds !== null) {
-      if (allowedDistrictIds.length === 0) {
-        return { isRepeat: false, count: 0, items: [] };
-      }
       qb.andWhere('dc.district_id IN (:...allowedDistrictIds)', { allowedDistrictIds });
     }
 
@@ -257,62 +320,74 @@ export class DetectedCrimesService {
       crimeStatusId = crimeStatusObj?.id || null;
     }
 
-    const detectedAt = dto.detected_at ? new Date(dto.detected_at) : new Date();
+    const detectedAt = dto.detected_at
+      ? (this.parseOptionalDate(dto.detected_at, 'Aniqlangan sana') as Date)
+      : new Date();
+    const reportDate = this.parseOptionalDate(dto.report_date, 'Bildirgi sanasi');
+    const decisionDate = this.parseOptionalDate(dto.decision_date, 'Qaror sanasi');
+    const estimatedDamage = this.parseOptionalDamage(dto.estimated_damage);
     const isFinal = Boolean(crimeStatusObj?.is_final);
 
-    const savedId = await this.repo.manager.transaction(async (manager) => {
-      const txRepo = manager.getRepository(DetectedCrime);
-      const caseNumber = dto.case_number?.trim() || (await this.generateCaseNumber(manager));
+    let savedId: string;
+    try {
+      savedId = await this.repo.manager.transaction(async (manager) => {
+        const txRepo = manager.getRepository(DetectedCrime);
+        const caseNumber = dto.case_number?.trim() || (await this.generateCaseNumber(manager));
 
-      const entity = txRepo.create({
-        case_number: caseNumber,
-        title,
-        description: dto.description?.trim() || null,
-        report_number: dto.report_number?.trim() || null,
-        report_date: dto.report_date ? new Date(dto.report_date) : null,
-        kusp_number: dto.kusp_number?.trim() || null,
-        detected_at: detectedAt,
-        qualification_type: dto.qualification_type || DetectedCrimeQualification.CRIMINAL,
-        crime_id: dto.crime_id || null,
-        crime_method_id: dto.crime_method_id || null,
-        mjtk_article: dto.mjtk_article?.trim() || null,
-        detection_source_id: dto.detection_source_id || null,
-        district_id: dto.district_id || null,
-        department_service_id: dto.department_service_id || null,
-        platform: dto.platform?.trim() || null,
-        channel_or_source_url: dto.channel_or_source_url?.trim() || null,
-        suspect_tree: dto.suspect_tree || [],
-        measures: Array.isArray(dto.measures) ? dto.measures : [],
-        estimated_damage:
-          dto.estimated_damage !== undefined && dto.estimated_damage !== null
-            ? Number(dto.estimated_damage)
-            : null,
-        officer_notes: dto.officer_notes?.trim() || null,
-        crime_status_id: crimeStatusId,
-        decision_type_id: dto.decision_type_id || null,
-        decision_number: dto.decision_number?.trim() || null,
-        decision_date: dto.decision_date ? new Date(dto.decision_date) : null,
-        decision_note: dto.decision_note?.trim() || null,
-        deadline_at: null,
-        sla_days: null,
-        closed_at: isFinal ? new Date() : null,
-        detected_by_id: user?.id || null,
-        created_by_id: user?.id || null,
-        is_deleted: false,
+        const entity = txRepo.create({
+          case_number: caseNumber,
+          title,
+          description: dto.description?.trim() || null,
+          report_number: dto.report_number?.trim() || null,
+          report_date: reportDate,
+          kusp_number: dto.kusp_number?.trim() || null,
+          detected_at: detectedAt,
+          qualification_type: dto.qualification_type || DetectedCrimeQualification.CRIMINAL,
+          crime_id: dto.crime_id || null,
+          crime_method_id: dto.crime_method_id || null,
+          mjtk_article: dto.mjtk_article?.trim() || null,
+          detection_source_id: dto.detection_source_id || null,
+          district_id: dto.district_id || null,
+          department_service_id: dto.department_service_id || null,
+          platform: dto.platform?.trim() || null,
+          channel_or_source_url: dto.channel_or_source_url?.trim() || null,
+          suspect_tree: dto.suspect_tree || [],
+          measures: Array.isArray(dto.measures) ? dto.measures : [],
+          estimated_damage: estimatedDamage,
+          officer_notes: dto.officer_notes?.trim() || null,
+          crime_status_id: crimeStatusId,
+          decision_type_id: dto.decision_type_id || null,
+          decision_number: dto.decision_number?.trim() || null,
+          decision_date: decisionDate,
+          decision_note: dto.decision_note?.trim() || null,
+          deadline_at: null,
+          sla_days: null,
+          closed_at: isFinal ? new Date() : null,
+          detected_by_id: user?.id || null,
+          created_by_id: user?.id || null,
+          is_deleted: false,
+        });
+
+        const saved = await txRepo.save(entity);
+
+        if (Array.isArray(dto.suspects) && dto.suspects.length > 0) {
+          await this.syncSuspects(saved.id, dto.suspects, manager);
+        }
+
+        if (Array.isArray(dto.evidences) && dto.evidences.length > 0) {
+          await this.syncEvidences(saved.id, dto.evidences, manager);
+        }
+
+        return saved.id;
       });
-
-      const saved = await txRepo.save(entity);
-
-      if (Array.isArray(dto.suspects) && dto.suspects.length > 0) {
-        await this.syncSuspects(saved.id, dto.suspects, manager);
+    } catch (err) {
+      if (isPgUniqueViolation(err)) {
+        throw new ConflictException(
+          'Ushbu ichki kod (case_number) bilan aniqlangan jinoyat allaqachon mavjud',
+        );
       }
-
-      if (Array.isArray(dto.evidences) && dto.evidences.length > 0) {
-        await this.syncEvidences(saved.id, dto.evidences, manager);
-      }
-
-      return saved.id;
-    });
+      throw err;
+    }
 
     void this.slaQueueService.scheduleForDetectedCrime(savedId);
     return this.findOne(savedId, currentUser);
@@ -330,14 +405,17 @@ export class DetectedCrimesService {
     for (const s of suspects) {
       if (!s.citizen_id || seen.has(s.citizen_id)) continue;
       seen.add(s.citizen_id);
-      const prior = await this.checkCitizenRepeatHistory(s.citizen_id, crimeId);
+      const isRepeat =
+        s.is_repeat_offender !== undefined
+          ? s.is_repeat_offender
+          : (await this.checkCitizenRepeatHistory(s.citizen_id, crimeId)).isRepeat;
       rows.push(
         txSuspectRepo.create({
           detected_crime_id: crimeId,
           citizen_id: s.citizen_id,
           role_in_crime: s.role_in_crime || 'IJROCHI',
           detention_status: s.detention_status || 'ANIQLANMOQDA',
-          is_repeat_offender: s.is_repeat_offender ?? prior.isRepeat,
+          is_repeat_offender: isRepeat,
           notes: s.notes?.trim() || null,
         }),
       );
@@ -363,7 +441,7 @@ export class DetectedCrimesService {
           evidence_type: e.evidence_type || 'OTHER',
           title: e.title.trim(),
           identifier_value: e.identifier_value?.trim() || null,
-          seized_at: e.seized_at ? new Date(e.seized_at) : null,
+          seized_at: this.parseOptionalDate(e.seized_at, 'Ashyoviy dalil olingan sana'),
           seized_from_citizen_id: e.seized_from_citizen_id || null,
           file_key: e.file_key || null,
           file_name: e.file_name || null,
@@ -405,36 +483,8 @@ export class DetectedCrimesService {
       .leftJoinAndSelect('suspects.citizen', 'suspect_citizen')
       .where('dc.is_deleted = false');
 
-    if (currentUser?.role === Role.DISTRICT_OFFICER) {
-      const user = await this.getUserWithDistricts(currentUser);
-      const assigned = user?.assigned_districts?.map((d) => d.id) || [];
-      if (assigned.length > 0) {
-        qb.andWhere('dc.district_id IN (:...assigned)', { assigned });
-      } else {
-        qb.andWhere('1 = 0');
-      }
-    }
-
-    if (params.search?.trim()) {
-      const q = `%${params.search.trim()}%`;
-      qb.andWhere(
-        '(dc.case_number ILIKE :q OR dc.title ILIKE :q OR dc.description ILIKE :q OR dc.report_number ILIKE :q OR dc.kusp_number ILIKE :q OR dc.platform ILIKE :q OR dc.channel_or_source_url ILIKE :q OR dc.mjtk_article ILIKE :q)',
-        { q },
-      );
-    }
-
-    if (params.district_id) qb.andWhere('dc.district_id = :dId', { dId: params.district_id });
-    if (params.crime_id) qb.andWhere('dc.crime_id = :cId', { cId: params.crime_id });
-    if (params.detection_source_id) {
-      qb.andWhere('dc.detection_source_id = :srcId', { srcId: params.detection_source_id });
-    }
-    const filterStatusId = params.crime_status_id || params.status_id;
-    if (filterStatusId) {
-      qb.andWhere('dc.crime_status_id = :cstId', { cstId: filterStatusId });
-    }
-    if (params.qualification_type) {
-      qb.andWhere('dc.qualification_type = :qt', { qt: params.qualification_type });
-    }
+    const allowedDistrictIds = await getAllowedDistrictIds(this.userRepo, currentUser);
+    this.applyDetectedCrimeFilters(qb, params, allowedDistrictIds);
 
     qb.orderBy('dc.detected_at', 'DESC').skip(skip).take(limit);
 
@@ -519,17 +569,23 @@ export class DetectedCrimesService {
     delete (item as unknown as Record<string, unknown>).suspects;
     delete (item as unknown as Record<string, unknown>).evidences;
 
-    if (fields.title !== undefined) item.title = fields.title.trim();
+    if (fields.title !== undefined) {
+      const nextTitle = fields.title.trim();
+      if (!nextTitle) {
+        throw new BadRequestException("Aniqlangan jinoyat sarlavhasi bo'sh bo'lishi mumkin emas");
+      }
+      item.title = nextTitle;
+    }
     if (fields.case_number !== undefined) item.case_number = fields.case_number?.trim() || null;
     if (fields.description !== undefined) item.description = fields.description?.trim() || null;
     if (fields.report_number !== undefined)
       item.report_number = fields.report_number?.trim() || null;
     if (fields.report_date !== undefined) {
-      item.report_date = fields.report_date ? new Date(fields.report_date) : null;
+      item.report_date = this.parseOptionalDate(fields.report_date, 'Bildirgi sanasi');
     }
     if (fields.kusp_number !== undefined) item.kusp_number = fields.kusp_number?.trim() || null;
     if (fields.detected_at !== undefined && fields.detected_at) {
-      item.detected_at = new Date(fields.detected_at);
+      item.detected_at = this.parseOptionalDate(fields.detected_at, 'Aniqlangan sana') as Date;
     }
     if (fields.qualification_type !== undefined)
       item.qualification_type = fields.qualification_type;
@@ -551,8 +607,7 @@ export class DetectedCrimesService {
     if (fields.measures !== undefined)
       item.measures = Array.isArray(fields.measures) ? fields.measures : [];
     if (fields.estimated_damage !== undefined) {
-      item.estimated_damage =
-        fields.estimated_damage !== null ? Number(fields.estimated_damage) : null;
+      item.estimated_damage = this.parseOptionalDamage(fields.estimated_damage);
     }
     if (fields.officer_notes !== undefined)
       item.officer_notes = fields.officer_notes?.trim() || null;
@@ -569,21 +624,30 @@ export class DetectedCrimesService {
       item.decision_number = fields.decision_number?.trim() || null;
     }
     if (fields.decision_date !== undefined) {
-      item.decision_date = fields.decision_date ? new Date(fields.decision_date) : null;
+      item.decision_date = this.parseOptionalDate(fields.decision_date, 'Qaror sanasi');
     }
     if (fields.decision_note !== undefined)
       item.decision_note = fields.decision_note?.trim() || null;
 
-    await this.repo.manager.transaction(async (manager) => {
-      await manager.getRepository(DetectedCrime).save(item);
+    try {
+      await this.repo.manager.transaction(async (manager) => {
+        await manager.getRepository(DetectedCrime).save(item);
 
-      if (suspects !== undefined) {
-        await this.syncSuspects(id, suspects, manager);
+        if (suspects !== undefined) {
+          await this.syncSuspects(id, suspects, manager);
+        }
+        if (evidences !== undefined) {
+          await this.syncEvidences(id, evidences, manager);
+        }
+      });
+    } catch (err) {
+      if (isPgUniqueViolation(err)) {
+        throw new ConflictException(
+          'Ushbu ichki kod (case_number) bilan aniqlangan jinoyat allaqachon mavjud',
+        );
       }
-      if (evidences !== undefined) {
-        await this.syncEvidences(id, evidences, manager);
-      }
-    });
+      throw err;
+    }
 
     if (item.closed_at) {
       void this.slaQueueService.cancelForDetectedCrime(
@@ -657,27 +721,26 @@ export class DetectedCrimesService {
   }
 
   async getStats(currentUser?: JwtAccessPayload) {
+    const allowedDistrictIds = await getAllowedDistrictIds(this.userRepo, currentUser);
+    if (allowedDistrictIds !== null && allowedDistrictIds.length === 0) {
+      return {
+        total: 0,
+        criminalCount: 0,
+        adminCount: 0,
+        preInvCount: 0,
+        finalCount: 0,
+        inProgressCount: 0,
+        overdueCount: 0,
+      };
+    }
+
     const qb = this.repo
       .createQueryBuilder('dc')
       .leftJoin('dc.crime_status', 'cst')
       .where('dc.is_deleted = false');
 
-    if (currentUser?.role === Role.DISTRICT_OFFICER) {
-      const user = await this.getUserWithDistricts(currentUser);
-      const assigned = user?.assigned_districts?.map((d) => d.id) || [];
-      if (assigned.length > 0) {
-        qb.andWhere('dc.district_id IN (:...assigned)', { assigned });
-      } else {
-        return {
-          total: 0,
-          criminalCount: 0,
-          adminCount: 0,
-          preInvCount: 0,
-          finalCount: 0,
-          inProgressCount: 0,
-          overdueCount: 0,
-        };
-      }
+    if (allowedDistrictIds !== null) {
+      qb.andWhere('dc.district_id IN (:...assigned)', { assigned: allowedDistrictIds });
     }
 
     const raw = await qb
@@ -756,9 +819,22 @@ export class DetectedCrimesService {
     } else if (params.period === 'year') {
       fromDate = new Date(now.getTime() - 365 * 24 * 60 * 60 * 1000);
     } else if (params.period === 'custom') {
-      if (params.startDate) fromDate = new Date(params.startDate);
+      if (params.startDate) {
+        const parsedFrom = new Date(params.startDate);
+        if (!Number.isNaN(parsedFrom.getTime())) fromDate = parsedFrom;
+      }
       if (params.endDate) {
-        toDate = new Date(params.endDate);
+        const parsedTo = new Date(params.endDate);
+        if (!Number.isNaN(parsedTo.getTime())) {
+          parsedTo.setHours(23, 59, 59, 999);
+          toDate = parsedTo;
+        }
+      }
+      if (fromDate && toDate && toDate.getTime() < fromDate.getTime()) {
+        const tmp = fromDate;
+        fromDate = new Date(toDate);
+        fromDate.setHours(0, 0, 0, 0);
+        toDate = tmp;
         toDate.setHours(23, 59, 59, 999);
       }
     }
@@ -895,36 +971,8 @@ export class DetectedCrimesService {
       .leftJoinAndSelect('dc.evidences', 'evidences')
       .where('dc.is_deleted = false');
 
-    if (currentUser?.role === Role.DISTRICT_OFFICER) {
-      const user = await this.getUserWithDistricts(currentUser);
-      const assigned = user?.assigned_districts?.map((d) => d.id) || [];
-      if (assigned.length > 0) {
-        qb.andWhere('dc.district_id IN (:...assigned)', { assigned });
-      } else {
-        qb.andWhere('1 = 0');
-      }
-    }
-
-    if (params.search?.trim()) {
-      const q = `%${params.search.trim()}%`;
-      qb.andWhere(
-        '(dc.case_number ILIKE :q OR dc.title ILIKE :q OR dc.description ILIKE :q OR dc.report_number ILIKE :q OR dc.kusp_number ILIKE :q OR dc.platform ILIKE :q OR dc.channel_or_source_url ILIKE :q OR dc.mjtk_article ILIKE :q)',
-        { q },
-      );
-    }
-    if (params.district_id) qb.andWhere('dc.district_id = :dId', { dId: params.district_id });
-    if (params.crime_id) qb.andWhere('dc.crime_id = :cId', { cId: params.crime_id });
-    if (params.detection_source_id) {
-      qb.andWhere('dc.detection_source_id = :srcId', { srcId: params.detection_source_id });
-    }
-    if (params.crime_status_id || params.status_id) {
-      qb.andWhere('dc.crime_status_id = :cstId', {
-        cstId: params.crime_status_id || params.status_id,
-      });
-    }
-    if (params.qualification_type) {
-      qb.andWhere('dc.qualification_type = :qt', { qt: params.qualification_type });
-    }
+    const allowedDistrictIds = await getAllowedDistrictIds(this.userRepo, currentUser);
+    this.applyDetectedCrimeFilters(qb, params, allowedDistrictIds);
 
     const items = await qb.orderBy('dc.detected_at', 'DESC').take(2000).getMany();
 

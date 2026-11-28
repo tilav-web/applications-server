@@ -21,6 +21,7 @@ import {
   assertDistrictAccess,
   getAllowedDistrictIds,
 } from '../../../../common/utils/district-scope.util';
+import { escapeLikePattern } from '../../../../common/utils/normalization.util';
 import { MinioService } from '../../../minio/minio.service';
 import { User } from '../../../users/user.entity';
 import { Application } from '../../application.entity';
@@ -88,7 +89,7 @@ export class TemplatesManagementService implements OnApplicationBootstrap {
     if (search && search.trim()) {
       qb.andWhere(
         '(LOWER(t.title) LIKE :search OR LOWER(t.description) LIKE :search OR LOWER(t.category) LIKE :search)',
-        { search: `%${search.toLowerCase().trim()}%` },
+        { search: `%${escapeLikePattern(search.toLowerCase().trim())}%` },
       );
     }
 
@@ -192,6 +193,11 @@ export class TemplatesManagementService implements OnApplicationBootstrap {
     dto: CreateTemplateDto,
     user?: TemplateActor | null,
   ): Promise<DocumentTemplate> {
+    const cleanTitle = (dto.title || '').trim();
+    if (!cleanTitle) {
+      throw new BadRequestException('Shablon nomi kiritilishi shart');
+    }
+
     const doc = new Document({
       sections: [
         {
@@ -305,10 +311,16 @@ export class TemplatesManagementService implements OnApplicationBootstrap {
   async updateTemplate(id: string, dto: UpdateTemplateDto): Promise<DocumentTemplate> {
     const tpl = await this.getTemplateById(id);
 
-    if (dto.title !== undefined) tpl.title = dto.title.trim();
-    if (dto.title_krill !== undefined) tpl.title_krill = dto.title_krill.trim();
+    if (dto.title !== undefined) {
+      const nextTitle = dto.title.trim();
+      if (!nextTitle) {
+        throw new BadRequestException("Shablon nomi bo'sh bo'lishi mumkin emas");
+      }
+      tpl.title = nextTitle;
+    }
+    if (dto.title_krill !== undefined) tpl.title_krill = dto.title_krill?.trim() || null;
     if (dto.description !== undefined) tpl.description = dto.description?.trim() || null;
-    if (dto.category !== undefined) tpl.category = dto.category.trim();
+    if (dto.category !== undefined) tpl.category = dto.category?.trim() || null;
     if (dto.is_active !== undefined) tpl.is_active = dto.is_active;
 
     return this.templateRepo.save(tpl);
@@ -508,11 +520,13 @@ export class TemplatesManagementService implements OnApplicationBootstrap {
   ): Promise<Buffer> {
     const tpl = await this.getTemplateById(templateId);
 
-    // MinIO dan shablon buferini yuklab olamiz
-    const stream = await this.minioService.getFileStream(tpl.file_key);
+    // MinIO dan tegishli alifbo (Krill/Lotin) shablon buferini yuklab olamiz
+    const targetFileKey =
+      script === 'krill' && tpl.file_key_krill ? tpl.file_key_krill : tpl.file_key;
+    const stream = await this.minioService.getFileStream(targetFileKey);
     const chunks: Buffer[] = [];
     for await (const chunk of stream) {
-      chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
+      chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk as Uint8Array));
     }
     const templateBuffer = Buffer.concat(chunks);
 

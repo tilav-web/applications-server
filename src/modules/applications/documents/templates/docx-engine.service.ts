@@ -117,16 +117,25 @@ export class DocxEngineService {
         linebreaks: true,
       });
 
-      // Word XML matnidan barcha teglarni regex orqali ajratib olamiz
-      const content = zip.file('word/document.xml')?.asText() || '';
+      // Word XML (asosiy matn + header/footer) ichidan bo'linib ketgan <w:t> runlarni birlashtirib teglarni ajratamiz
+      const xmlParts = Object.keys(zip.files).filter(
+        (name) =>
+          name === 'word/document.xml' ||
+          /^word\/header\d*\.xml$/i.test(name) ||
+          /^word\/footer\d*\.xml$/i.test(name),
+      );
       const tagRegex = /\{\{([^{}]+)\}\}/g;
       const foundTags = new Set<string>();
-      let match: RegExpExecArray | null;
 
-      while ((match = tagRegex.exec(content)) !== null) {
-        const tag = match[1].trim().replace(/^[#/^]/, ''); // #transfers yoki /transfers bo'lsa tozalash
-        if (tag) {
-          foundTags.add(tag);
+      for (const partName of xmlParts) {
+        const rawXml = zip.file(partName)?.asText() || '';
+        const plainText = rawXml.replace(/<[^>]+>/g, '');
+        let match: RegExpExecArray | null;
+        while ((match = tagRegex.exec(plainText)) !== null) {
+          const tag = match[1].trim().replace(/^[#/^]/, ''); // #transfers yoki /transfers bo'lsa tozalash
+          if (tag && !FORBIDDEN_TAG_SEGMENTS.has(tag)) {
+            foundTags.add(tag);
+          }
         }
       }
 

@@ -712,7 +712,7 @@ export class DocumentsService {
     user?: DocumentActor | null,
   ) {
     const application = await this.applicationsRepository.findOne({
-      where: { id: applicationId },
+      where: { id: applicationId, is_deleted: false },
       relations: {
         citizen: { district: true, neighborhood: true },
         district: true,
@@ -963,7 +963,7 @@ export class DocumentsService {
 
     if (dbTemplate) {
       const application = await this.applicationsRepository.findOne({
-        where: { id: applicationId },
+        where: { id: applicationId, is_deleted: false },
         relations: {
           citizen: { district: true, neighborhood: true },
           district: true,
@@ -988,6 +988,8 @@ export class DocumentsService {
       if (!application) {
         throw new NotFoundException(`Ariza (ID: ${applicationId}) topilmadi`);
       }
+
+      await this.assertActorDistrictAccess(application.district_id, user);
 
       const transfers = await this.transferRepo.find({
         where: { application_id: applicationId },
@@ -1021,7 +1023,7 @@ export class DocumentsService {
       const stream = await this.minioService.getFileStream(fileKey);
       const chunks: Buffer[] = [];
       for await (const chunk of stream) {
-        chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
+        chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk as Uint8Array));
       }
       const templateBuffer = Buffer.concat(chunks);
 
@@ -1049,6 +1051,8 @@ export class DocumentsService {
 
       const docKey = `doc_${randomUUID().slice(0, 8)}_${Date.now()}`;
 
+      const createdById = officerUser?.id ?? (await this.resolveActorUserId(user));
+
       const appDoc = this.documentsRepository.create({
         application_id: applicationId,
         title: defaultDocTitle,
@@ -1059,7 +1063,7 @@ export class DocumentsService {
         size: generatedBuffer.length,
         version: 1,
         doc_key: docKey,
-        created_by_id: user?.sub || user?.id || null,
+        created_by_id: createdById,
       });
 
       const saved = await this.documentsRepository.save(appDoc);
@@ -1075,36 +1079,8 @@ export class DocumentsService {
     const fileName = script === 'krill' ? template.krillFileName : template.lotinFileName;
     const templateFilePath = this.resolveTemplateFilePath(script, fileName);
 
-    const application = await this.applicationsRepository.findOne({
-      where: { id: applicationId },
-      relations: {
-        citizen: { district: true, neighborhood: true },
-        district: true,
-        crime: true,
-        card: { bank: true, citizen: true },
-        transfer: {
-          payment_provider: true,
-          sender_card: { bank: true },
-          receiver_card: { bank: true },
-        },
-        application_status: true,
-        custom_fields: {
-          citizen: { district: true, neighborhood: true },
-          card: { bank: true },
-          crime: true,
-          district: true,
-          transfer: { payment_provider: true },
-        },
-      },
-    });
-
-    if (!application) {
-      throw new NotFoundException(`Ariza (ID: ${applicationId}) topilmadi`);
-    }
-
-    await this.assertActorDistrictAccess(application.district_id, user);
-
     const preview = await this.getTemplatePreview(applicationId, dto.templateId, script, user);
+    const createdById = await this.resolveActorUserId(user);
     // Foydalanuvchi kiritgan customData mavjud bo'lsa, avtomatik to'ldirilgan ma'lumotlar bilan birlashtiramiz
     const finalData: Record<string, string> = {};
     for (const [key, value] of Object.entries(preview.prefilledData)) {
@@ -1192,7 +1168,7 @@ export class DocumentsService {
       size: generatedBuffer.length,
       version: 1,
       doc_key: docKey,
-      created_by_id: user?.sub || user?.id || null,
+      created_by_id: createdById,
     });
 
     const saved = await this.documentsRepository.save(appDoc);

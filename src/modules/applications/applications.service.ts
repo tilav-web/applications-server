@@ -23,6 +23,7 @@ import {
   assertDistrictAccess,
   getAllowedDistrictIds,
 } from '../../common/utils/district-scope.util';
+import { escapeLikePattern } from '../../common/utils/normalization.util';
 import { IntelligenceSyncService } from '../intelligence/intelligence-sync.service';
 import { NotificationsService } from '../notifications/notifications.service';
 import { SlaQueueService } from '../notifications/sla-queue.service';
@@ -216,11 +217,15 @@ export class ApplicationsService {
       let providerId = d.payment_provider_id || null;
 
       if (orgName && !bankId) {
-        const matchedBank = await bankRepo.findOne({ where: { name: ILike(orgName) } });
+        const matchedBank = await bankRepo.findOne({
+          where: { name: ILike(escapeLikePattern(orgName)) },
+        });
         if (matchedBank) bankId = matchedBank.id;
       }
       if (orgName && !providerId) {
-        const matchedProvider = await providerRepo.findOne({ where: { name: ILike(orgName) } });
+        const matchedProvider = await providerRepo.findOne({
+          where: { name: ILike(escapeLikePattern(orgName)) },
+        });
         if (matchedProvider) providerId = matchedProvider.id;
       }
 
@@ -612,6 +617,9 @@ export class ApplicationsService {
       status = statusParam;
     }
 
+    page = Math.max(1, page);
+    limit = Math.max(1, limit);
+
     const qb = this.applicationRepo
       .createQueryBuilder('app')
       .leftJoin('app.application_status', 'application_status')
@@ -620,13 +628,8 @@ export class ApplicationsService {
       .leftJoin('app.crime', 'crime')
       .where('app.is_deleted = false');
 
-    let allowedDistrictIds: string[] | null = null;
-    if (currentUser && currentUser.role === Role.DISTRICT_OFFICER) {
-      const user = await this.userRepo.findOne({
-        where: { auth_id: currentUser.sub },
-        relations: { assigned_districts: true },
-      });
-      allowedDistrictIds = user?.assigned_districts?.map((d) => d.id) || [];
+    const allowedDistrictIds = await getAllowedDistrictIds(this.userRepo, currentUser);
+    if (allowedDistrictIds !== null) {
       if (allowedDistrictIds.length > 0) {
         qb.andWhere('app.district_id IN (:...userDistricts)', {
           userDistricts: allowedDistrictIds,
@@ -637,7 +640,7 @@ export class ApplicationsService {
     }
 
     if (search && search.trim()) {
-      const q = `%${search.trim()}%`;
+      const q = `%${escapeLikePattern(search.trim())}%`;
       qb.andWhere(
         '(app.application_number ILIKE :q OR app.description ILIKE :q OR app.officer_notes ILIKE :q OR citizen.full_name ILIKE :q OR citizen.phone_number ILIKE :q OR citizen.passport ILIKE :q)',
         { q },
@@ -652,7 +655,7 @@ export class ApplicationsService {
       } else {
         qb.andWhere(
           '(app.status ILIKE :stVal OR application_status.code ILIKE :stVal OR application_status.name ILIKE :stVal)',
-          { stVal: val },
+          { stVal: escapeLikePattern(val) },
         );
       }
     }
@@ -704,18 +707,18 @@ export class ApplicationsService {
 
     if (application_number && application_number.trim()) {
       qb.andWhere('app.application_number ILIKE :appNum', {
-        appNum: `%${application_number.trim()}%`,
+        appNum: `%${escapeLikePattern(application_number.trim())}%`,
       });
     }
 
     if (citizen_name && citizen_name.trim()) {
-      const cName = `%${citizen_name.trim()}%`;
+      const cName = `%${escapeLikePattern(citizen_name.trim())}%`;
       qb.andWhere('citizen.full_name ILIKE :cName', { cName });
     }
 
     if (card_number && card_number.trim()) {
       const cleanedCard = card_number.replace(/\D/g, '') || card_number.trim();
-      const cardQ = `%${cleanedCard}%`;
+      const cardQ = `%${escapeLikePattern(cleanedCard)}%`;
       qb.andWhere(
         `(
           EXISTS (
@@ -742,7 +745,7 @@ export class ApplicationsService {
 
     if (phone_number && phone_number.trim()) {
       const cleanedPhone = phone_number.replace(/\D/g, '') || phone_number.trim();
-      const phoneQ = `%${cleanedPhone}%`;
+      const phoneQ = `%${escapeLikePattern(cleanedPhone)}%`;
       qb.andWhere(
         `(
           citizen.phone_number ILIKE :phoneQ
@@ -758,7 +761,7 @@ export class ApplicationsService {
     }
 
     if (description && description.trim()) {
-      const desc = `%${description.trim()}%`;
+      const desc = `%${escapeLikePattern(description.trim())}%`;
       qb.andWhere('(app.description ILIKE :desc OR app.officer_notes ILIKE :desc)', { desc });
     }
 
@@ -770,15 +773,20 @@ export class ApplicationsService {
     }
 
     if (date_from && date_from.trim()) {
-      qb.andWhere('COALESCE(app.date, app.created_at) >= :date_from', {
-        date_from: new Date(date_from.trim()),
-      });
+      const parsedFrom = new Date(date_from.trim());
+      if (!Number.isNaN(parsedFrom.getTime())) {
+        qb.andWhere('COALESCE(app.date, app.created_at) >= :date_from', {
+          date_from: parsedFrom,
+        });
+      }
     }
 
     if (date_to && date_to.trim()) {
       const dTo = new Date(date_to.trim());
-      dTo.setHours(23, 59, 59, 999);
-      qb.andWhere('COALESCE(app.date, app.created_at) <= :date_to', { date_to: dTo });
+      if (!Number.isNaN(dTo.getTime())) {
+        dTo.setHours(23, 59, 59, 999);
+        qb.andWhere('COALESCE(app.date, app.created_at) <= :date_to', { date_to: dTo });
+      }
     }
 
     const lossSubquery = `((SELECT COALESCE(SUM(t.amount), 0) FROM transfers t WHERE t.id = app.transfer_id OR t.application_id = app.id) + (SELECT COALESCE(SUM(d.amount), 0) FROM application_damages d WHERE d.application_id = app.id))`;
@@ -933,7 +941,8 @@ export class ApplicationsService {
         where: { id: In(allIds) },
         relations,
       });
-      allItems.sort((a, b) => allIds.indexOf(a.id) - allIds.indexOf(b.id));
+      const allOrderMap = new Map(allIds.map((id, idx) => [id, idx]));
+      allItems.sort((a, b) => (allOrderMap.get(a.id) ?? 0) - (allOrderMap.get(b.id) ?? 0));
       await this.relationsService.attachRelationsSummaries(allItems, allowedDistrictIds);
       await this.attachChainCounts(allItems);
 
@@ -988,7 +997,8 @@ export class ApplicationsService {
         where: { id: In(ids) },
         relations,
       });
-      items.sort((a, b) => ids.indexOf(a.id) - ids.indexOf(b.id));
+      const orderMap = new Map(ids.map((id, idx) => [id, idx]));
+      items.sort((a, b) => (orderMap.get(a.id) ?? 0) - (orderMap.get(b.id) ?? 0));
       await this.relationsService.attachRelationsSummaries(items, allowedDistrictIds);
       await this.attachChainCounts(items);
     }
@@ -1104,14 +1114,7 @@ export class ApplicationsService {
       throw new NotFoundException('Eksport uchun kamida bitta murojaat tanlanishi shart');
     }
 
-    let allowedDistrictIds: string[] | null = null;
-    if (currentUser && currentUser.role === Role.DISTRICT_OFFICER) {
-      const user = await this.userRepo.findOne({
-        where: { auth_id: currentUser.sub },
-        relations: { assigned_districts: true },
-      });
-      allowedDistrictIds = user?.assigned_districts?.map((d) => d.id) || [];
-    }
+    const allowedDistrictIds = await getAllowedDistrictIds(this.userRepo, currentUser);
 
     const apps = await this.applicationRepo.find({
       where: {
@@ -1145,6 +1148,10 @@ export class ApplicationsService {
       },
     });
 
+    if (apps.length === 0) {
+      throw new NotFoundException('Tanlangan murojaatlar topilmadi');
+    }
+
     const filteredApps =
       allowedDistrictIds !== null
         ? apps.filter((a) => a.district_id && allowedDistrictIds.includes(a.district_id))
@@ -1157,7 +1164,8 @@ export class ApplicationsService {
     }
 
     // Foydalanuvchi tanlagan tartibni saqlaymiz
-    filteredApps.sort((a, b) => uniqueIds.indexOf(a.id) - uniqueIds.indexOf(b.id));
+    const orderMap = new Map(uniqueIds.map((id, idx) => [id, idx]));
+    filteredApps.sort((a, b) => (orderMap.get(a.id) ?? 0) - (orderMap.get(b.id) ?? 0));
 
     // Qo'shimcha application_id orqali bog'langan transferlarni ham yig'amiz
     const appIds = filteredApps.map((a) => a.id);
@@ -1530,6 +1538,7 @@ export class ApplicationsService {
   ): Promise<Application> {
     const application = await this.findOne(id, currentUser);
 
+    let officerDistrictIds: string[] | null = null;
     if (currentUser) {
       if (currentUser.role === Role.BOSS) {
         throw new ForbiddenException(
@@ -1537,15 +1546,15 @@ export class ApplicationsService {
         );
       }
       if (currentUser.role === Role.DISTRICT_OFFICER) {
-        const assignedDistrictIds = await getAllowedDistrictIds(this.userRepo, currentUser);
+        officerDistrictIds = await getAllowedDistrictIds(this.userRepo, currentUser);
         assertDistrictAccess(
-          assignedDistrictIds,
+          officerDistrictIds,
           application.district_id,
           "Siz faqat o'zingizga biriktirilgan tuman(lar) arizalarini tahrirlashingiz mumkin",
         );
         if (dto.district_id !== undefined) {
           assertDistrictAccess(
-            assignedDistrictIds,
+            officerDistrictIds,
             dto.district_id,
             "Siz arizani boshqa tumanga o'tkaza olmaysiz",
           );
@@ -1584,6 +1593,15 @@ export class ApplicationsService {
         const txCustomFieldRepo = manager.getRepository(ApplicationCustomField);
 
         const resolved = await this.resolverService.resolvePrimaryModels(dto, id, manager);
+
+        // district_data orqali boshqa tumanga o'tkazish urinishini ham bloklaymiz
+        if (officerDistrictIds !== null && resolved.district_id !== undefined) {
+          assertDistrictAccess(
+            officerDistrictIds,
+            resolved.district_id,
+            "Siz arizani boshqa tumanga o'tkaza olmaysiz",
+          );
+        }
 
         // Status o'zgarayotgan bo'lsa, dinamik status qoidalarini tekshiramiz
         const nextStatusId = resolved.status_id || application.status_id;
@@ -1674,18 +1692,44 @@ export class ApplicationsService {
             : null;
         }
         if (date) {
-          application.date = new Date(date);
+          const parsedDate = new Date(date);
+          if (Number.isNaN(parsedDate.getTime())) {
+            throw new BadRequestException("Ariza sanasi noto'g'ri formatda");
+          }
+          application.date = parsedDate;
         }
         if (prosecutor_approval_date !== undefined) {
-          application.prosecutor_approval_date = prosecutor_approval_date
-            ? new Date(prosecutor_approval_date)
-            : null;
+          if (prosecutor_approval_date) {
+            const parsedProcDate = new Date(prosecutor_approval_date);
+            if (Number.isNaN(parsedProcDate.getTime())) {
+              throw new BadRequestException("Prokuror ruxsati sanasi noto'g'ri formatda");
+            }
+            application.prosecutor_approval_date = parsedProcDate;
+          } else {
+            application.prosecutor_approval_date = null;
+          }
         }
         if (decision_date !== undefined) {
-          application.decision_date = decision_date ? new Date(decision_date) : null;
+          if (decision_date) {
+            const parsedDecisionDate = new Date(decision_date);
+            if (Number.isNaN(parsedDecisionDate.getTime())) {
+              throw new BadRequestException("Qaror sanasi noto'g'ri formatda");
+            }
+            application.decision_date = parsedDecisionDate;
+          } else {
+            application.decision_date = null;
+          }
         }
         if (deadline_at !== undefined) {
-          application.deadline_at = deadline_at ? new Date(deadline_at) : null;
+          if (deadline_at) {
+            const parsedDeadline = new Date(deadline_at);
+            if (Number.isNaN(parsedDeadline.getTime())) {
+              throw new BadRequestException("Muddat sanasi noto'g'ri formatda");
+            }
+            application.deadline_at = parsedDeadline;
+          } else {
+            application.deadline_at = null;
+          }
         } else if (sla_days !== undefined && sla_days !== null) {
           const base = application.date || application.created_at || new Date();
           application.sla_days = sla_days;
@@ -1810,7 +1854,7 @@ export class ApplicationsService {
       void this.slaQueueService.scheduleForApplication(id);
     }
     if (dto.status || dto.status_id) {
-      const updatedApp = await this.findOne(id);
+      const updatedApp = await this.findOne(id, currentUser);
       const statusLabel = updatedApp.application_status?.name || updatedApp.status || '';
       if (statusLabel) {
         void this.notificationsService.onApplicationStatusChanged(
@@ -1821,7 +1865,7 @@ export class ApplicationsService {
       }
       return updatedApp;
     }
-    return this.findOne(id);
+    return this.findOne(id, currentUser);
   }
 
   async remove(
@@ -1843,10 +1887,11 @@ export class ApplicationsService {
         if (!application.created_by_id || application.created_by_id !== currentUserId) {
           throw new ForbiddenException("Faqat o'zingiz yaratgan arizani o'chira olasiz");
         }
-        application.is_deleted = true;
-        application.deleted_at = new Date();
-        application.deleted_by_id = currentUserId || null;
-        await this.applicationRepo.save(application);
+        await this.applicationRepo.update(id, {
+          is_deleted: true,
+          deleted_at: new Date(),
+          deleted_by_id: currentUserId || null,
+        });
         await this.intelligenceSync.syncApplicationById(id);
         void this.slaQueueService.cancelForApplication(id);
         return { success: true, message: "Ariza arxivlandi (o'chirildi)" };
@@ -1856,10 +1901,11 @@ export class ApplicationsService {
     const adminUser = currentUser
       ? await this.userRepo.findOne({ where: { auth_id: currentUser.sub } })
       : null;
-    application.is_deleted = true;
-    application.deleted_at = new Date();
-    application.deleted_by_id = adminUser?.id || null;
-    await this.applicationRepo.save(application);
+    await this.applicationRepo.update(id, {
+      is_deleted: true,
+      deleted_at: new Date(),
+      deleted_by_id: adminUser?.id || null,
+    });
     await this.intelligenceSync.syncApplicationById(id);
     void this.slaQueueService.cancelForApplication(id);
     return { success: true, message: "Ariza muvaffaqiyatli o'chirildi" };

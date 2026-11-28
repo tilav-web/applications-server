@@ -188,7 +188,7 @@ export class CyberControlShablonExcelService {
     );
     const isEducationWorkplace =
       Boolean(workplaceName) &&
-      /\b(universitet|institut|litsey|texnikum|kollej|maktab|dmtt|bogcha|talim)\b/.test(
+      /\b(universitet|institut|litsey|texnikum|kollej|maktab|dmtt|bogcha|talim|akademiy)/.test(
         eduCheckText,
       );
 
@@ -197,7 +197,7 @@ export class CyberControlShablonExcelService {
     let kursVal: number | null = null;
     if (
       workPosition &&
-      /\b(talaba|oquvchi|litsey|texnikum|kollej|kurs|sinf)\b/.test(
+      /\b(talaba|oquvchi|litsey|texnikum|kollej|kurs|sinf)/.test(
         this.toAscii(`${rawOccName} ${workPosition}`),
       )
     ) {
@@ -330,7 +330,7 @@ export class CyberControlShablonExcelService {
     ) {
       return findOpt('jarayon') || findOpt('tekshir') || rawName || '';
     }
-    if (code === 'YANGI' || category === 'NEW') {
+    if (code === 'YANGI' || category === 'OPEN' || category === 'NEW') {
       return findOpt('yangi') || rawName || '';
     }
     return rawName || '';
@@ -691,12 +691,15 @@ export class CyberControlShablonExcelService {
     const seenIds = new Set<string>();
     let sum = 0;
 
-    const addTransfer = (t?: { id?: string | null; amount?: number | string | null } | null) => {
+    const addTransfer = (
+      t?: { id?: string | null; amount?: number | string | null; currency?: string | null } | null,
+    ) => {
       if (!t) return;
       if (t.id) {
         if (seenIds.has(t.id)) return;
         seenIds.add(t.id);
       }
+      if (t.currency && t.currency.toUpperCase() !== 'UZS') return;
       const amt = Number(t.amount);
       if (!Number.isNaN(amt) && amt > 0) {
         sum += amt;
@@ -714,6 +717,7 @@ export class CyberControlShablonExcelService {
     }
     if (Array.isArray(app.damages)) {
       for (const dmg of app.damages) {
+        if (dmg.currency && dmg.currency.toUpperCase() !== 'UZS') continue;
         const amt = Number(dmg.amount);
         if (!Number.isNaN(amt) && amt > 0) {
           sum += amt;

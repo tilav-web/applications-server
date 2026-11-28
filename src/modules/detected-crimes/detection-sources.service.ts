@@ -1,8 +1,15 @@
-import { BadRequestException, Injectable, NotFoundException, OnModuleInit } from '@nestjs/common';
+import {
+  BadRequestException,
+  ConflictException,
+  Injectable,
+  NotFoundException,
+  OnModuleInit,
+} from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 
 import { assertNoDependencies } from '../../common/database/dependency-guard.util';
+import { isPgUniqueViolation } from '../../common/utils/normalization.util';
 import { DetectionSource } from './entities/detection-source.entity';
 
 const DEFAULT_DETECTION_SOURCES = [
@@ -91,21 +98,36 @@ export class DetectionSourcesService implements OnModuleInit {
     const cleanName = (data.name || '').trim();
     if (!cleanName) throw new BadRequestException('Nom kiritilishi shart');
 
+    const cleanCode = data.code?.trim().toUpperCase() || null;
+
     const existing = await this.repo
       .createQueryBuilder('ds')
       .where('LOWER(ds.name) = LOWER(:name)', { name: cleanName })
       .getOne();
     if (existing) throw new BadRequestException(`«${cleanName}» allaqachon mavjud`);
 
-    return this.repo.save(
-      this.repo.create({
-        name: cleanName,
-        code: data.code?.trim().toUpperCase() || null,
-        description: data.description?.trim() || null,
-        sort_order: data.sort_order ?? 10,
-        is_active: data.is_active ?? true,
-      }),
-    );
+    if (cleanCode) {
+      const dupCode = await this.repo.findOne({ where: { code: cleanCode } });
+      if (dupCode)
+        throw new ConflictException(`«${cleanCode}» kodli aniqlash usuli allaqachon mavjud`);
+    }
+
+    try {
+      return await this.repo.save(
+        this.repo.create({
+          name: cleanName,
+          code: cleanCode,
+          description: data.description?.trim() || null,
+          sort_order: data.sort_order ?? 10,
+          is_active: data.is_active ?? true,
+        }),
+      );
+    } catch (err) {
+      if (isPgUniqueViolation(err)) {
+        throw new ConflictException(`«${cleanName}» aniqlash usuli allaqachon mavjud`);
+      }
+      throw err;
+    }
   }
 
   async update(
@@ -129,11 +151,27 @@ export class DetectionSourcesService implements OnModuleInit {
       if (dup) throw new BadRequestException(`«${cleanName}» allaqachon mavjud`);
       item.name = cleanName;
     }
-    if (data.code !== undefined) item.code = data.code?.trim().toUpperCase() || null;
+    if (data.code !== undefined) {
+      const nextCode = data.code?.trim().toUpperCase() || null;
+      if (nextCode) {
+        const dupCode = await this.repo.findOne({ where: { code: nextCode } });
+        if (dupCode && dupCode.id !== id) {
+          throw new ConflictException(`«${nextCode}» kodli aniqlash usuli allaqachon mavjud`);
+        }
+      }
+      item.code = nextCode;
+    }
     if (data.description !== undefined) item.description = data.description?.trim() || null;
     if (data.sort_order !== undefined) item.sort_order = Number(data.sort_order) || 0;
     if (data.is_active !== undefined) item.is_active = Boolean(data.is_active);
-    return this.repo.save(item);
+    try {
+      return await this.repo.save(item);
+    } catch (err) {
+      if (isPgUniqueViolation(err)) {
+        throw new ConflictException('Bunday nom yoki kodli aniqlash usuli allaqachon mavjud');
+      }
+      throw err;
+    }
   }
 
   async remove(id: string): Promise<{ success: boolean; message: string }> {

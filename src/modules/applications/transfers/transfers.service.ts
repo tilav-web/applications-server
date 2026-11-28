@@ -1,4 +1,10 @@
-import { ForbiddenException, Injectable, NotFoundException, Optional } from '@nestjs/common';
+import {
+  ConflictException,
+  ForbiddenException,
+  Injectable,
+  NotFoundException,
+  Optional,
+} from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import type { Response } from 'express';
 import { In, Repository } from 'typeorm';
@@ -9,6 +15,7 @@ import { TransferStatus } from '../../../common/enums/transfer-status.enum';
 import type { PaginatedResult } from '../../../common/interfaces/pagination.interface';
 import type { JwtAccessPayload } from '../../../common/types/jwt-payload.interface';
 import { getAllowedDistrictIds } from '../../../common/utils/district-scope.util';
+import { escapeLikePattern, isPgUniqueViolation } from '../../../common/utils/normalization.util';
 import { DigitalIdentifierEntity } from '../../intelligence/entities/digital-identifier.entity';
 import { IntelligenceSyncService } from '../../intelligence/intelligence-sync.service';
 import {
@@ -93,23 +100,34 @@ export class TransfersService {
             where: { type: identType, normalized_value: normalized },
           });
           if (!ident) {
-            ident = await this.identifierRepo.save(
-              this.identifierRepo.create({
-                type: identType,
-                type_label:
-                  platform ||
-                  getIdentifierTypeLabel(
-                    identType,
-                    destType === TransferDestinationType.CRYPTO
-                      ? 'Kripto-hamyon / Birja'
-                      : destType === TransferDestinationType.BANK_ACCOUNT
-                        ? 'Bank hisob raqami'
-                        : 'Onlayn tizim / Profil',
-                  ),
-                raw_value: rawVal,
-                normalized_value: normalized,
-              }),
-            );
+            try {
+              ident = await this.identifierRepo.save(
+                this.identifierRepo.create({
+                  type: identType,
+                  type_label:
+                    platform ||
+                    getIdentifierTypeLabel(
+                      identType,
+                      destType === TransferDestinationType.CRYPTO
+                        ? 'Kripto-hamyon / Birja'
+                        : destType === TransferDestinationType.BANK_ACCOUNT
+                          ? 'Bank hisob raqami'
+                          : 'Onlayn tizim / Profil',
+                    ),
+                  raw_value: rawVal,
+                  normalized_value: normalized,
+                }),
+              );
+            } catch (err) {
+              if (isPgUniqueViolation(err)) {
+                ident = await this.identifierRepo.findOne({
+                  where: { type: identType, normalized_value: normalized },
+                });
+                if (!ident) throw err;
+              } else {
+                throw err;
+              }
+            }
           }
           receiverIdentifierId = ident.id;
         }
@@ -153,7 +171,17 @@ export class TransfersService {
           ? transferData.receiver_card_id || null
           : null,
     });
-    const saved = await this.transferRepo.save(transfer);
+    let saved: Transfer;
+    try {
+      saved = await this.transferRepo.save(transfer);
+    } catch (err) {
+      if (isPgUniqueViolation(err)) {
+        throw new ConflictException(
+          "Ushbu tranzaksiya ID (transaction_id) bilan o'tkazma allaqachon mavjud",
+        );
+      }
+      throw err;
+    }
 
     if (custom_fields && custom_fields.length > 0) {
       const fieldEntities = custom_fields.map((f) =>
@@ -203,12 +231,12 @@ export class TransfersService {
     }
     if (filters?.transactionId?.trim()) {
       qb.andWhere('transfer.transaction_id ILIKE :txId', {
-        txId: `%${filters.transactionId.trim()}%`,
+        txId: `%${escapeLikePattern(filters.transactionId.trim())}%`,
       });
     }
     if (filters?.senderCardNumber?.trim()) {
       const sClean = filters.senderCardNumber.replace(/\D/g, '') || filters.senderCardNumber.trim();
-      const sCardQ = `%${sClean}%`;
+      const sCardQ = `%${escapeLikePattern(sClean)}%`;
       qb.andWhere(
         '(sender_card.card_number ILIKE :sCardQ OR sender_card.masked_number ILIKE :sCardQ)',
         {
@@ -219,7 +247,7 @@ export class TransfersService {
     if (filters?.receiverCardNumber?.trim()) {
       const rClean =
         filters.receiverCardNumber.replace(/\D/g, '') || filters.receiverCardNumber.trim();
-      const rCardQ = `%${rClean}%`;
+      const rCardQ = `%${escapeLikePattern(rClean)}%`;
       qb.andWhere(
         '(receiver_card.card_number ILIKE :rCardQ OR receiver_card.masked_number ILIKE :rCardQ)',
         { rCardQ },
@@ -231,12 +259,12 @@ export class TransfersService {
       });
     }
     if (search?.trim()) {
-      const q = `%${search.trim()}%`;
+      const q = `%${escapeLikePattern(search.trim())}%`;
       const digits = search.replace(/\D/g, '');
       if (digits.length >= 3) {
         qb.andWhere(
           '(transfer.transaction_id ILIKE :q OR sender_card.card_number ILIKE :dQ OR receiver_card.card_number ILIKE :dQ)',
-          { q, dQ: `%${digits}%` },
+          { q, dQ: `%${escapeLikePattern(digits)}%` },
         );
       } else {
         qb.andWhere('transfer.transaction_id ILIKE :q', { q });
@@ -282,8 +310,10 @@ export class TransfersService {
     currentUser?: JwtAccessPayload,
   ): Promise<PaginatedResult<Transfer>> {
     const allowedDistrictIds = await getAllowedDistrictIds(this.userRepo, currentUser);
-    const take = limit;
-    const skip = (page - 1) * limit;
+    const safePage = Math.max(1, page);
+    const safeLimit = Math.max(1, limit);
+    const take = safeLimit;
+    const skip = (safePage - 1) * safeLimit;
 
     const qb = this.buildTransfersFilterQuery(search, filters);
     this.applyDistrictScope(qb, allowedDistrictIds);
@@ -307,20 +337,21 @@ export class TransfersService {
           custom_fields: true,
         },
       });
-      items.sort((a, b) => ids.indexOf(a.id) - ids.indexOf(b.id));
+      const orderMap = new Map(ids.map((id, idx) => [id, idx]));
+      items.sort((a, b) => (orderMap.get(a.id) ?? 0) - (orderMap.get(b.id) ?? 0));
     }
 
-    const totalPages = Math.ceil(total / limit) || 1;
+    const totalPages = Math.ceil(total / safeLimit) || 1;
 
     return {
       items,
       meta: {
         total,
-        page,
-        limit,
+        page: safePage,
+        limit: safeLimit,
         totalPages,
-        hasNextPage: page < totalPages,
-        hasPreviousPage: page > 1,
+        hasNextPage: safePage < totalPages,
+        hasPreviousPage: safePage > 1,
       },
     };
   }
@@ -386,20 +417,35 @@ export class TransfersService {
       destination_details !== undefined ||
       receiver_identifier_id !== undefined
     ) {
+      const nextDestType = destination_type ?? transfer.destination_type;
       const resolvedDest = await this.resolveDestinationFields({
-        destination_type: destination_type ?? transfer.destination_type,
+        destination_type: nextDestType,
         receiver_identifier_id:
-          destination_value !== undefined
+          nextDestType === TransferDestinationType.CARD
             ? undefined
-            : (receiver_identifier_id ?? transfer.receiver_identifier_id ?? undefined),
+            : destination_value !== undefined
+              ? undefined
+              : (receiver_identifier_id ?? transfer.receiver_identifier_id ?? undefined),
         destination_platform,
         destination_value,
-        destination_label,
-        destination_details,
+        destination_label:
+          destination_label !== undefined
+            ? destination_label
+            : destination_platform === undefined && destination_value === undefined
+              ? (transfer.destination_label ?? undefined)
+              : undefined,
+        destination_details:
+          destination_details !== undefined
+            ? destination_details
+            : nextDestType === transfer.destination_type
+              ? (transfer.destination_details ?? undefined)
+              : undefined,
       });
       Object.assign(transfer, transferData, resolvedDest);
       if (resolvedDest.destination_type !== TransferDestinationType.CARD) {
         transfer.receiver_card_id = null;
+      } else {
+        transfer.receiver_identifier_id = null;
       }
     } else {
       Object.assign(transfer, transferData);
@@ -414,26 +460,35 @@ export class TransfersService {
     delete (transfer as unknown as Record<string, unknown>).application;
     delete (transfer as unknown as Record<string, unknown>).custom_fields;
 
-    await this.transferRepo.manager.transaction(async (manager) => {
-      const txTransferRepo = manager.getRepository(Transfer);
-      const txFieldRepo = manager.getRepository(TransferCustomField);
+    try {
+      await this.transferRepo.manager.transaction(async (manager) => {
+        const txTransferRepo = manager.getRepository(Transfer);
+        const txFieldRepo = manager.getRepository(TransferCustomField);
 
-      await txTransferRepo.save(transfer);
+        await txTransferRepo.save(transfer);
 
-      if (custom_fields !== undefined) {
-        // Mavjud maydonlarni tranzaksiya ichida yangilash yoki almashtirish
-        await txFieldRepo.delete({ transfer_id: id });
-        if (custom_fields.length > 0) {
-          const fieldEntities = custom_fields.map((f) =>
-            txFieldRepo.create({
-              ...f,
-              transfer_id: id,
-            }),
-          );
-          await txFieldRepo.save(fieldEntities);
+        if (custom_fields !== undefined) {
+          // Mavjud maydonlarni tranzaksiya ichida yangilash yoki almashtirish
+          await txFieldRepo.delete({ transfer_id: id });
+          if (custom_fields.length > 0) {
+            const fieldEntities = custom_fields.map((f) =>
+              txFieldRepo.create({
+                ...f,
+                transfer_id: id,
+              }),
+            );
+            await txFieldRepo.save(fieldEntities);
+          }
         }
+      });
+    } catch (err) {
+      if (isPgUniqueViolation(err)) {
+        throw new ConflictException(
+          "Ushbu tranzaksiya ID (transaction_id) bilan o'tkazma allaqachon mavjud",
+        );
       }
-    });
+      throw err;
+    }
 
     const affectedAppIds = new Set<string>();
     if (previousAppId) affectedAppIds.add(previousAppId);

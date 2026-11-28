@@ -114,7 +114,7 @@ export function normalizeIdentifierValue(type: string, raw?: string | null): str
   ) {
     return trimmed
       .replace(
-        /^https?:\/\/(www\.)?(t\.me|telegram\.me|telegram\.dog|instagram\.com|tiktok\.com)\//i,
+        /^(https?:\/\/)?(www\.)?(t\.me|telegram\.me|telegram\.dog|instagram\.com|tiktok\.com)\//i,
         '',
       )
       .replace(/[?#].*$/, '')
@@ -144,10 +144,15 @@ export function normalizeIdentifierValue(type: string, raw?: string | null): str
     const onlyDigits = trimmed.replace(/\D/g, '');
     return (onlyDigits || trimmed.toLowerCase()).slice(0, 255);
   }
-  if (t.includes('ip')) {
+  if (t === 'ip' || t.startsWith('ip_') || t.endsWith('_ip') || t.includes('ip_address')) {
     return trimmed.toLowerCase().replace(/\s+/g, '').slice(0, 255);
   }
-  if (t.includes('car') || t.includes('avto')) {
+  if (
+    t === 'car_plate' ||
+    t.includes('car_plate') ||
+    t.includes('car_number') ||
+    t.includes('avto')
+  ) {
     return trimmed.replace(/\s+/g, '').toUpperCase().slice(0, 64);
   }
   if (t.includes('crypto') || t.includes('wallet')) {

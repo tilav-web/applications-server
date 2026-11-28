@@ -1,4 +1,9 @@
-import { ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
+import {
+  ConflictException,
+  ForbiddenException,
+  Injectable,
+  NotFoundException,
+} from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import type { Response } from 'express';
 import { In, Repository } from 'typeorm';
@@ -9,6 +14,7 @@ import type { JwtAccessPayload } from '../../../common/types/jwt-payload.interfa
 import { getAllowedDistrictIds } from '../../../common/utils/district-scope.util';
 import { formatUzbekName } from '../../../common/utils/name-formatter.util';
 import {
+  escapeLikePattern,
   isPgUniqueViolation,
   normalizeCitizenFullName,
   normalizePassport,
@@ -111,7 +117,7 @@ export class CitizensService {
     const qb = this.citizenRepo.createQueryBuilder('citizen').orderBy('citizen.created_at', 'DESC');
 
     if (search?.trim()) {
-      const q = `%${search.trim()}%`;
+      const q = `%${escapeLikePattern(search.trim())}%`;
       qb.andWhere(
         '(citizen.full_name ILIKE :q OR citizen.passport ILIKE :q OR citizen.pinfl ILIKE :q OR citizen.phone_number ILIKE :q)',
         { q },
@@ -120,37 +126,37 @@ export class CitizensService {
 
     if (filters?.fullName?.trim()) {
       qb.andWhere('citizen.full_name ILIKE :fullName', {
-        fullName: `%${filters.fullName.trim()}%`,
+        fullName: `%${escapeLikePattern(filters.fullName.trim())}%`,
       });
     }
     if (filters?.firstName?.trim()) {
       qb.andWhere('citizen.full_name ILIKE :firstName', {
-        firstName: `%${filters.firstName.trim()}%`,
+        firstName: `%${escapeLikePattern(filters.firstName.trim())}%`,
       });
     }
     if (filters?.lastName?.trim()) {
       qb.andWhere('citizen.full_name ILIKE :lastName', {
-        lastName: `%${filters.lastName.trim()}%`,
+        lastName: `%${escapeLikePattern(filters.lastName.trim())}%`,
       });
     }
     if (filters?.middleName?.trim()) {
       qb.andWhere('citizen.full_name ILIKE :middleName', {
-        middleName: `%${filters.middleName.trim()}%`,
+        middleName: `%${escapeLikePattern(filters.middleName.trim())}%`,
       });
     }
     if (filters?.passport?.trim()) {
       qb.andWhere('citizen.passport ILIKE :passport', {
-        passport: `%${filters.passport.trim()}%`,
+        passport: `%${escapeLikePattern(filters.passport.trim())}%`,
       });
     }
     if (filters?.pinfl?.trim()) {
       qb.andWhere('citizen.pinfl ILIKE :pinfl', {
-        pinfl: `%${filters.pinfl.trim()}%`,
+        pinfl: `%${escapeLikePattern(filters.pinfl.trim())}%`,
       });
     }
     if (filters?.phoneNumber?.trim()) {
       const cleanedPhone = filters.phoneNumber.replace(/\D/g, '') || filters.phoneNumber.trim();
-      const phoneQ = `%${cleanedPhone}%`;
+      const phoneQ = `%${escapeLikePattern(cleanedPhone)}%`;
       qb.andWhere(
         `(
           citizen.phone_number ILIKE :phoneQ
@@ -164,7 +170,7 @@ export class CitizensService {
     }
     if (filters?.cardNumber?.trim()) {
       const cleanedCard = filters.cardNumber.replace(/\D/g, '') || filters.cardNumber.trim();
-      const cardQ = `%${cleanedCard}%`;
+      const cardQ = `%${escapeLikePattern(cleanedCard)}%`;
       qb.andWhere(
         `EXISTS (
           SELECT 1 FROM cards c
@@ -229,8 +235,10 @@ export class CitizensService {
     currentUser?: JwtAccessPayload,
   ): Promise<PaginatedResult<Citizen>> {
     const allowedDistrictIds = await getAllowedDistrictIds(this.userRepo, currentUser);
-    const take = limit;
-    const skip = (page - 1) * limit;
+    const safePage = Math.max(1, page);
+    const safeLimit = Math.max(1, limit);
+    const take = safeLimit;
+    const skip = (safePage - 1) * safeLimit;
 
     const qb = this.buildCitizensFilterQuery(search, filters);
     this.applyDistrictScope(qb, allowedDistrictIds);
@@ -256,20 +264,28 @@ export class CitizensService {
           occupation: true,
         },
       });
-      items.sort((a, b) => ids.indexOf(a.id) - ids.indexOf(b.id));
+      const orderMap = new Map(ids.map((id, idx) => [id, idx]));
+      items.sort((a, b) => (orderMap.get(a.id) ?? 0) - (orderMap.get(b.id) ?? 0));
+      if (allowedDistrictIds !== null) {
+        for (const item of items) {
+          item.applications = (item.applications || []).filter(
+            (a) => !a.is_deleted && a.district_id && allowedDistrictIds.includes(a.district_id),
+          );
+        }
+      }
     }
 
-    const totalPages = Math.ceil(total / limit) || 1;
+    const totalPages = Math.ceil(total / safeLimit) || 1;
 
     return {
       items,
       meta: {
         total,
-        page,
-        limit,
+        page: safePage,
+        limit: safeLimit,
         totalPages,
-        hasNextPage: page < totalPages,
-        hasPreviousPage: page > 1,
+        hasNextPage: safePage < totalPages,
+        hasPreviousPage: safePage > 1,
       },
     };
   }
@@ -346,10 +362,32 @@ export class CitizensService {
       updatedData.full_name = mergedName ? formatUzbekName(mergedName) : null;
     }
     if (dto.passport !== undefined) {
-      updatedData.passport = normalizePassport(dto.passport);
+      const normalizedPassport = normalizePassport(dto.passport);
+      if (normalizedPassport) {
+        const duplicate = await this.citizenRepo.findOne({
+          where: { passport: normalizedPassport },
+        });
+        if (duplicate && duplicate.id !== id) {
+          throw new ConflictException(
+            `"${normalizedPassport}" pasport raqamli fuqaro bazada allaqachon mavjud`,
+          );
+        }
+      }
+      updatedData.passport = normalizedPassport;
     }
     if (dto.pinfl !== undefined) {
-      updatedData.pinfl = normalizePinfl(dto.pinfl);
+      const normalizedPinfl = normalizePinfl(dto.pinfl);
+      if (normalizedPinfl) {
+        const duplicate = await this.citizenRepo.findOne({
+          where: { pinfl: normalizedPinfl },
+        });
+        if (duplicate && duplicate.id !== id) {
+          throw new ConflictException(
+            `"${normalizedPinfl}" JSHSHIR raqamli fuqaro bazada allaqachon mavjud`,
+          );
+        }
+      }
+      updatedData.pinfl = normalizedPinfl;
     }
     if (dto.phone_number !== undefined) {
       updatedData.phone_number = normalizeUzPhone(dto.phone_number);
@@ -371,12 +409,29 @@ export class CitizensService {
     delete (citizen as unknown as Record<string, unknown>).applications;
 
     Object.assign(citizen, updatedData);
-    const saved = await this.citizenRepo.save(citizen);
+    let saved: Citizen;
+    try {
+      saved = await this.citizenRepo.save(citizen);
+    } catch (err) {
+      if (isPgUniqueViolation(err)) {
+        throw new ConflictException(
+          'Kiritilgan pasport yoki JSHSHIR boshqa fuqaroga biriktirilgan',
+        );
+      }
+      throw err;
+    }
     await this.intelligenceSync.syncCitizenEntity(saved);
     if (dto.phone_number !== undefined) {
       await this.intelligenceSync.syncApplicationsByCitizenId(saved.id);
     }
-    return this.findOne(id);
+    const reloaded = await this.findOne(id);
+    const allowedDistrictIds = await getAllowedDistrictIds(this.userRepo, currentUser);
+    if (allowedDistrictIds !== null) {
+      reloaded.applications = (reloaded.applications || []).filter(
+        (a) => !a.is_deleted && a.district_id && allowedDistrictIds.includes(a.district_id),
+      );
+    }
+    return reloaded;
   }
 
   async remove(id: string): Promise<{ success: boolean; message: string }> {
@@ -446,6 +501,14 @@ export class CitizensService {
             order: { created_at: 'DESC' },
           })
         : [];
+
+    if (allowedDistrictIds !== null) {
+      for (const item of items) {
+        item.applications = (item.applications || []).filter(
+          (a) => !a.is_deleted && a.district_id && allowedDistrictIds.includes(a.district_id),
+        );
+      }
+    }
 
     const workbook = await this.excelService.generateWorkbook(items);
     const dateStr = new Date().toISOString().slice(0, 10);
